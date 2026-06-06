@@ -1,0 +1,58 @@
+# Claude Code local state
+.claude/
+
+# 子目录 git worktrees（隔离开发用）
+# git worktree 元数据由 .git/worktrees/ 管理，工作目录本身在主仓库内不入库
+.worktrees/
+
+# macOS
+.DS_Store
+
+# Editors
+.vscode/
+.idea/
+*.swp
+
+# Rust 构建产物
+target/
+# 注意：Cargo.lock 必须入库（aitm 是可执行应用，不是库；spec §3.2 要求）
+
+# Node
+node_modules/
+dist/
+.vite/
+
+# Tauri build artifacts
+src-tauri/target/
+
+# Env / secrets
+.env
+.env.local
+*.key
+
+# Vite
+.vite/
+*.local
+
+# TypeScript 编译产物
+*.tsbuildinfo
+vite.config.d.ts
+vite.config.js
+
+# Tauri 构建产物
+src-tauri/gen/
+
+# 测试输出
+coverage/
+playwright-report/
+test-results/
+
+# 跨平台 release 产物聚合目录
+releases/
+
+# codegraph index
+.codegraph/
+
+.aitm/
+.agents/
+AGENTS.md

@@ -1,0 +1,110 @@
+name: 发布 Windows
+
+# v0.8.2：matrix 同时打 x86_64 + ARM64 两个 .msi/.exe，上传同一 GitHub Release。
+#
+# 严格按用户 ~/.claude/CLAUDE.md §13 触发规则：
+# - workflow_dispatch（手动触发，必给 tag input）
+# - push tag v* （release tag 推送时触发）
+# 严禁 on: push branches / on: pull_request / on: schedule。
+#
+# 月预计用量公式：
+#   ≤ 3 次/月 release × 20 min × 2x windows multiplier × 2 架构 = 240 included min/月
+#   远低于 1000 min/月 Windows 免费额度（个人 Free plan）
+#
+# 修改本文件触发条件或加 job 前，**必须先得用户授权**。
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag（如 v0.8.2；必须是已存在的 git tag）"
+        required: true
+        type: string
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write  # 给 softprops/action-gh-release 上传 asset
+
+concurrency:
+  group: release-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: 打包 Windows ${{ matrix.arch }}
+    runs-on: windows-latest  # 2x multiplier，免费档 1000 min/月
+    timeout-minutes: 30  # 防卡死烧 quota；正常 build ≤ 20 min
+
+    strategy:
+      fail-fast: false  # 一个架构失败不取消另一个（独立 build）
+      matrix:
+        include:
+          - arch: x86_64
+            target: x86_64-pc-windows-msvc
+          - arch: arm64
+            target: aarch64-pc-windows-msvc
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: 安装 pnpm
+        # 不传 version：让 action 自动读 package.json 的 packageManager 字段（pnpm@10.33.0）
+        # 避免 "Multiple versions of pnpm specified" 错误
+        uses: pnpm/action-setup@v4
+
+      - name: 安装 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: 安装 Rust（msvc target ${{ matrix.target }}）
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: 缓存 cargo 编译产物（按 target 隔离）
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          # cache key 含 matrix.target 避免 x64 / arm64 互相覆盖
+          key: ${{ runner.os }}-cargo-${{ matrix.target }}-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-${{ matrix.target }}-
+
+      - name: 安装前端依赖
+        run: pnpm install --frozen-lockfile
+
+      - name: 跑 Tauri build（出 .msi + .exe）
+        run: pnpm tauri build --target ${{ matrix.target }}
+
+      - name: 列出产物（便于排查路径）
+        shell: pwsh
+        run: |
+          Get-ChildItem -Recurse src-tauri/target/${{ matrix.target }}/release/bundle/
+
+      - name: 上传 .msi + .exe 到 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          files: |
+            src-tauri/target/${{ matrix.target }}/release/bundle/msi/*.msi
+            src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*.exe
+          fail_on_unmatched_files: false
+
+      - name: 上传 .msi 作 workflow artifact（手动 dispatch 时方便下载）
+        uses: actions/upload-artifact@v4
+        with:
+          name: aitm-windows-${{ matrix.arch }}-installer
+          path: |
+            src-tauri/target/${{ matrix.target }}/release/bundle/msi/*.msi
+            src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*.exe
+          retention-days: 14

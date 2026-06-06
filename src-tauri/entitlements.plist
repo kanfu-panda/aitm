@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- WKWebView (Tauri 前端) 在 hardened runtime 下需要 JIT + 可执行内存 -->
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+
+    <!-- 终端 spawn shell / 子进程加载动态库需要关闭库验证 -->
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+
+    <!-- shell 子进程依赖 DYLD_* 等环境变量 -->
+    <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+    <true/>
+
+    <!-- 注意：不启用 App Sandbox。aitm 通过 Developer ID 公证分发，
+         需要自由访问用户文件系统和 spawn 任意 shell 进程，
+         App Sandbox 会破坏 PTY 终端核心功能（参见 iTerm2 不上 App Store 的原因）。 -->
+</dict>
+</plist>

@@ -1,0 +1,271 @@
+/* =============================================================================
+ * v0.4.1 UI 体系化设计 token
+ * -----------------------------------------------------------------------------
+ * 单一来源 (single source of truth) for color / typography / spacing /
+ * radius / shadow / motion / z-index 等设计基元。
+ *
+ * 使用规范：
+ * - 组件文件禁止写 magic number；颜色 / 间距 / 圆角等必须引用 var(--*)
+ *   或经 src/index.css @theme 映射后的 Tailwind utility（bg-zinc-900 等）
+ * - 第三方库适配层例外（必须加注释说明）
+ *
+ * 主题切换：
+ * - 默认 :root = dark mode（与 v0.4.0 既有 zinc 视觉等价）
+ * - light mode 通过 [data-theme="light"] selector 覆盖
+ * - applyTheme(mode) (src/lib/theme.ts) 写 documentElement.dataset.theme
+ * ========================================================================== */
+
+/* ---------------------------------------------------------------------------
+ * §2.1 颜色 Token — Dark mode (默认)
+ * 注：v0.9.0 T1 调整 —— 对照 Terax 提升对比度。背景改纯黑（#000），
+ * v0.9.0 H3 回调：T1 纯黑 + 提亮 muted 真机晃眼，回到舒适中间值。
+ * 对比度 (vs --c-bg-base #0a0a0a)：
+ *   text-base 19.7:1  text-muted 9.6:1  text-dim 5.7:1  text-faint 2.9:1
+ * --c-text-faint 仅 disabled 用，不能当活跃文字色
+ * ------------------------------------------------------------------------- */
+:root {
+  /* —— 中性色（Surface / Text）—— */
+  --c-bg-base:       #0a0a0a;  /* 近黑（v0.9.0 H3：T1 纯黑 #000 真机晃眼，回一档） */
+  --c-bg-elev-1:     #141414;  /* 侧栏 / 面板 */
+  --c-bg-elev-2:     #1f1f1f;  /* hover / active */
+  --c-bg-elev-3:     #2a2a2a;  /* 边框 / 分隔线 */
+
+  --c-text-base:     #fafafa;  /* zinc-50  主文字 */
+  --c-text-muted:    #a1a1aa;  /* zinc-400 次要文字（v0.9.0 H3：回 v0.8.2 原值，T1 zinc-300 过亮） */
+  --c-text-dim:      #71717a;  /* zinc-500 弱化文字（v0.9.0 H3：回 v0.8.2 原值） */
+  --c-text-faint:    #52525b;  /* zinc-600 占位/disabled */
+
+  --c-border:        #1a1a1a;  /* 跟 bg-elev-2 一致（v0.9.0 T1） */
+  --c-border-strong: #2a2a2a;  /* 跟 bg-elev-3 一致（v0.9.0 T1） */
+
+  /* —— 语义色（Status）—— */
+  --c-success:       #10b981;  /* emerald-500 成功 / CTA / active */
+  --c-success-bg:    rgba(16, 185, 129, 0.12);  /* emerald-500/12 hover bg */
+  --c-success-fg:    #34d399;  /* emerald-400 hover fg */
+
+  --c-warn:          #f59e0b;  /* amber-500  警告 / suspended */
+  --c-error:         #f43f5e;  /* rose-500   错误 / 危险操作 */
+  --c-info:          #0ea5e9;  /* sky-500    运行中 / 提示 */
+
+  /* —— Focus / Selection —— */
+  --c-focus-ring:    rgba(16, 185, 129, 0.40);  /* emerald-500/40 */
+  --c-selection:     rgba(16, 185, 129, 0.22);  /* emerald-500/22 */
+
+  /* —— Syntax 高亮（CodeMirror）—— VS Code Dark+ 调色板
+   * v0.10.5 hotfix：从 cm-theme.ts 的硬编码 hex 抽到 CSS 变量，
+   * 让 light mode 通过 [data-theme="light"] 覆盖即可，无需 Compartment 切换 */
+  --c-syntax-keyword:    #569CD6;
+  --c-syntax-control:    #C586C0;
+  --c-syntax-string:     #CE9178;
+  --c-syntax-regexp:     #D16969;
+  --c-syntax-number:     #B5CEA8;
+  --c-syntax-function:   #DCDCAA;
+  --c-syntax-class:      #4EC9B0;
+  --c-syntax-property:   #9CDCFE;
+  --c-syntax-variable:   #9CDCFE;
+  --c-syntax-comment:    #6A9955;
+  --c-syntax-operator:   #D4D4D4;
+  --c-syntax-tag:        #569CD6;
+  --c-syntax-attr-name:  #9CDCFE;
+  --c-syntax-attr-value: #CE9178;
+  --c-syntax-heading:    #569CD6;
+  --c-syntax-link:       #3794FF;
+  --c-syntax-inserted:   #B5CEA8;
+  --c-syntax-deleted:    #CE9178;
+
+  /* -----------------------------------------------------------------------
+   * §2.2 字体 Token
+   * --------------------------------------------------------------------- */
+  --f-mono: 'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace;
+  --f-sans: 'IBM Plex Sans', -apple-system, 'Segoe UI', system-ui, sans-serif;
+
+  /* 字号阶梯（4px 基准，模数 1.125） */
+  --t-xs:   11px;  /* line-height: 16px */
+  --t-sm:   12px;  /* line-height: 16px — UI label 默认 */
+  --t-base: 13px;  /* line-height: 20px — UI body 默认 */
+  --t-md:   14px;  /* line-height: 20px — 略大文字 / 工具气泡 */
+  --t-lg:   16px;  /* line-height: 24px — 标题 */
+  --t-xl:   18px;  /* line-height: 28px — 大标题 */
+  --t-2xl:  24px;  /* line-height: 32px — 设置面板段落标题 */
+
+  /* -----------------------------------------------------------------------
+   * §2.3 间距 Token (4px 基准)
+   * --------------------------------------------------------------------- */
+  --s-0:  0px;
+  --s-1:  4px;
+  --s-2:  8px;
+  --s-3:  12px;
+  --s-4:  16px;
+  --s-5:  20px;
+  --s-6:  24px;
+  --s-8:  32px;
+  --s-10: 40px;
+  --s-12: 48px;
+
+  /* -----------------------------------------------------------------------
+   * §2.4 圆角 / 阴影 Token
+   * dark theme 阴影 = 黑色透明叠加，不用模糊光晕
+   * --------------------------------------------------------------------- */
+  --r-sm:   2px;   /* 输入框/小按钮 */
+  --r-md:   4px;   /* 按钮 / icon button / tab */
+  --r-lg:   6px;   /* 卡片 / dialog */
+  --r-xl:   8px;   /* modal / 大卡片 */
+  --r-full: 9999px; /* badge / pill */
+
+  --sh-sm: 0 1px 2px rgba(0, 0, 0, 0.30);
+  --sh-md: 0 2px 6px rgba(0, 0, 0, 0.35);
+  --sh-lg: 0 8px 24px rgba(0, 0, 0, 0.45);
+
+  /* -----------------------------------------------------------------------
+   * §2.5 动效 Token
+   * 默认 transition： var(--d-base) var(--e-out)
+   * 颜色 hover：     var(--d-fast)（< 150ms 不眩晕）
+   * 大区块（panel resize / modal）：var(--d-slow)
+   * 必须 `transition-property` 显式列出（不要 `transition: all`）
+   * --------------------------------------------------------------------- */
+  --d-fast:   100ms;  /* hover bg / 颜色 */
+  --d-base:   180ms;  /* 默认 transition */
+  --d-slow:   300ms;  /* panel 展开 / modal */
+  --e-out:    cubic-bezier(0.16, 1, 0.3, 1);   /* ease-out spring-like */
+  --e-in-out: cubic-bezier(0.4, 0, 0.2, 1);    /* material standard */
+
+  /* -----------------------------------------------------------------------
+   * §2.6 z-index Token
+   * 严禁 z-[9999] arbitrary 写法
+   * --------------------------------------------------------------------- */
+  --z-base:    0;
+  --z-panel:  10;   /* 普通 panel 区分层级 */
+  --z-sticky: 20;   /* sticky header / activity bar */
+  --z-overlay:30;   /* dropdown / tooltip */
+  --z-modal:  50;   /* dialog / modal */
+  --z-toast:  60;   /* toast notification */
+
+  /* -----------------------------------------------------------------------
+   * §3.2 图标尺寸 Token
+   * 三档制：xs(12) / sm(16) / md(20)
+   * 扩展位（v0.4.1 不启用，预留给 v0.5.0+）：
+   *   --i-lg: 24px;  v0.5.0+ dialog header / 大型 modal 标题 / 启动屏
+   *   --i-xl: 28px;  v0.6.0+ 高亮交互（如 AI 思考中大动画 icon）
+   * 启用前请评估：是否真有 use case 用不了 icon-md？
+   * 滥加档位会回到"大小不一"的旧问题。
+   * --------------------------------------------------------------------- */
+  --i-xs: 12px;
+  --i-sm: 16px;
+  --i-md: 20px;
+  /* --i-lg: 24px;  禁用 — 见上方扩展条款 */
+  /* --i-xl: 28px;  禁用 — 见上方扩展条款 */
+}
+
+/* ---------------------------------------------------------------------------
+ * §12.2 Light mode 覆盖
+ * 注：v0.9.0 H3 回调 —— T1 纯白 + 加深 muted 真机过对比，回 v0.8.2 暖白 + zinc-600 原值。
+ * 对比度 (vs --c-bg-base #fafafa)：
+ *   text-base 18.7:1  text-muted 7.6:1  text-dim 5.0:1
+ *   success   3.8:1   text-faint 2.6:1（仅 disabled）
+ * §9 R8: success 在 light 下不能当 body 文字色用
+ *   → --c-success-text 单独定义为 emerald-700 (#047857) 5.6:1 ✓
+ * ------------------------------------------------------------------------- */
+[data-theme="light"] {
+  /* —— 中性色（暖白基调） —— */
+  --c-bg-base:       #fafafa;  /* zinc-50  主背景（v0.9.0 H3：回 v0.8.2 暖白） */
+  --c-bg-elev-1:     #ffffff;  /* white    panel */
+  --c-bg-elev-2:     #f4f4f5;  /* zinc-100 hover */
+  --c-bg-elev-3:     #e4e4e7;  /* zinc-200 边框 */
+
+  --c-text-base:     #18181b;  /* zinc-900 主文字 */
+  --c-text-muted:    #52525b;  /* zinc-600 次要（v0.9.0 H3：回 v0.8.2 原值） */
+  --c-text-dim:      #71717a;  /* zinc-500 弱化 */
+  --c-text-faint:    #a1a1aa;  /* zinc-400 disabled */
+
+  --c-border:        #e4e4e7;  /* zinc-200 */
+  --c-border-strong: #d4d4d8;  /* zinc-300 */
+
+  /* —— 语义色：light 下 emerald 调暗一档保对比度 —— */
+  --c-success:       #059669;  /* emerald-600 light 下 bg/icon/button */
+  --c-success-bg:    rgba(5, 150, 105, 0.10);
+  --c-success-fg:    #047857;  /* emerald-700 hover fg */
+  /* §9 R8: light mode body 文字用的成功色（normal text 5.6:1 ≥ 4.5:1） */
+  --c-success-text:  #047857;  /* emerald-700 */
+
+  --c-warn:          #d97706;  /* amber-600 */
+  --c-error:         #e11d48;  /* rose-600  */
+  --c-info:          #0284c7;  /* sky-600   */
+
+  --c-focus-ring:    rgba(5, 150, 105, 0.40);
+  --c-selection:     rgba(5, 150, 105, 0.18);
+
+  /* —— Syntax 高亮（CodeMirror）—— VS Code Light+ 调色板
+   * 对比度（vs --c-bg-base #fafafa）：
+   *   keyword #0000FF 8.6:1  string #A31515 7.9:1  number #098658 5.0:1
+   *   function #795E26 6.7:1  class #267F99 5.4:1  variable #001080 16.5:1
+   *   comment #008000 italic 5.1:1  operator #000000 19.0:1
+   * 全部 >= 4.5:1 满足 WCAG AA */
+  --c-syntax-keyword:    #0000FF;
+  --c-syntax-control:    #AF00DB;
+  --c-syntax-string:     #A31515;
+  --c-syntax-regexp:     #811F3F;
+  --c-syntax-number:     #098658;
+  --c-syntax-function:   #795E26;
+  --c-syntax-class:      #267F99;
+  --c-syntax-property:   #001080;
+  --c-syntax-variable:   #001080;
+  --c-syntax-comment:    #008000;
+  --c-syntax-operator:   #000000;
+  --c-syntax-tag:        #800000;
+  --c-syntax-attr-name:  #E50000;
+  --c-syntax-attr-value: #0451A5;
+  --c-syntax-heading:    #800000;
+  --c-syntax-link:       #006AB1;
+  --c-syntax-inserted:   #098658;
+  --c-syntax-deleted:    #A31515;
+}
+
+/* ---------------------------------------------------------------------------
+ * §2.5 prefers-reduced-motion 内置
+ * 用户系统开启"减少动画"时，统一把动效时长归零；
+ * 组件无需各自判断（仅引用 var(--d-*) 即可自动生效）
+ * ------------------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --d-fast: 0ms;
+    --d-base: 0ms;
+    --d-slow: 0ms;
+  }
+}
+
+/* ===========================================================================
+ * §13 全局滚动隔离 + 自定义滚动条（v0.9.0 加）
+ * --------------------------------------------------------------------------
+ * 主窗体永不滚（避免拖屏 + Windows webview2 OS 默认大滚动条）。
+ * 内部 pane 必须显式 overflow:auto 才能滚。
+ * ========================================================================= */
+html, body, #root {
+  overflow: hidden;
+  height: 100%;
+  width: 100%;
+}
+
+/* 自定义滚动条（dark + light 都用 token） */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--c-bg-elev-3);
+  border-radius: var(--r-md);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--c-text-dim);
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Firefox / Windows webview2 部分支持 */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--c-bg-elev-3) transparent;
+}

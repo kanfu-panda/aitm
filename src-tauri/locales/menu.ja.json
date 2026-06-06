@@ -1,0 +1,34 @@
+{
+  "menu.app.title": "aitm",
+  "menu.app.about": "aitm について",
+  "menu.app.settings": "設定…",
+  "menu.app.quit": "aitm を終了",
+
+  "menu.file.title": "ファイル",
+  "menu.file.newTab": "新規タブ",
+  "menu.file.closeTab": "タブを閉じる",
+  "menu.file.closeWindow": "ウインドウを閉じる",
+
+  "menu.edit.title": "編集",
+  "menu.edit.undo": "取り消す",
+  "menu.edit.redo": "やり直す",
+  "menu.edit.cut": "カット",
+  "menu.edit.copy": "コピー",
+  "menu.edit.paste": "ペースト",
+  "menu.edit.selectAll": "すべてを選択",
+
+  "menu.view.title": "表示",
+  "menu.view.fontIncrease": "文字を大きく",
+  "menu.view.fontDecrease": "文字を小さく",
+  "menu.view.fontReset": "文字サイズをリセット",
+  "menu.view.fullscreen": "フルスクリーン切り替え",
+
+  "menu.window.title": "ウインドウ",
+  "menu.window.minimize": "しまう",
+  "menu.window.zoom": "拡大／縮小",
+
+  "menu.help.title": "ヘルプ",
+  "menu.help.about": "aitm について",
+  "menu.help.documentation": "ドキュメント",
+  "menu.help.reportIssue": "問題を報告"
+}

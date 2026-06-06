@@ -1,0 +1,69 @@
+@import "tailwindcss";
+@import "./styles/tokens.css";
+
+/* v0.4.1: token → Tailwind 颜色 / 字体变量映射
+ * 让 bg-zinc-900 / text-emerald-400 等 utility 全走 token，
+ * 改 tokens.css 即全 app 颜色系统一次切换；不需逐组件改 class。
+ * Plan §6.3 */
+@theme {
+  --color-zinc-50:  var(--c-text-base);
+  --color-zinc-400: var(--c-text-muted);
+  --color-zinc-500: var(--c-text-dim);
+  --color-zinc-800: var(--c-bg-elev-2);
+  --color-zinc-900: var(--c-bg-elev-1);
+  --color-zinc-950: var(--c-bg-base);
+  --color-emerald-400: var(--c-success-fg);
+  --color-emerald-500: var(--c-success);
+
+  --font-sans: var(--f-sans);
+  --font-mono: var(--f-mono);
+}
+
+html, body, #root {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
+/* === Phase 3A T3：MarkdownPreviewDialog 排版样式 ===
+ * v0.6.0：颜色切到 tokens.css 变量（light/dark 自动适配，原 zinc-* hardcode 在
+ *   light 模式几乎不可读 — 维护者反馈）。
+ * react-markdown 默认输出原生 HTML（h1/p/code/pre 等），无内置样式；
+ * 这里给容器加 .prose-md，用 @apply 注入调色板 + 阅读字号。
+ * 不上 @tailwindcss/typography（会带其它 reset，不必要）。 */
+.prose-md h1 { @apply mt-4 mb-2 text-2xl font-bold text-[var(--c-text-base)]; }
+.prose-md h2 { @apply mt-4 mb-2 text-xl font-bold text-[var(--c-text-base)]; }
+.prose-md h3 { @apply mt-3 mb-2 text-lg font-semibold text-[var(--c-text-base)]; }
+.prose-md h4 { @apply mt-3 mb-2 text-base font-semibold text-[var(--c-text-base)]; }
+.prose-md p  { @apply my-2 leading-relaxed text-[var(--c-text-base)]; }
+.prose-md a  { @apply text-[var(--c-info)] underline hover:opacity-80; }
+.prose-md code { @apply rounded bg-[var(--c-bg-elev-2)] px-1 py-0.5 text-[0.9em] font-mono text-[var(--c-text-base)]; }
+.prose-md pre { @apply my-3 overflow-x-auto rounded bg-[var(--c-bg-elev-2)] p-3 text-xs font-mono text-[var(--c-text-base)]; }
+.prose-md pre code { @apply bg-transparent p-0; }
+.prose-md ul { @apply my-2 list-disc pl-6 text-[var(--c-text-base)]; }
+.prose-md ol { @apply my-2 list-decimal pl-6 text-[var(--c-text-base)]; }
+.prose-md li { @apply my-1; }
+.prose-md blockquote { @apply my-2 border-l-2 border-[var(--c-border)] pl-3 text-[var(--c-text-muted)]; }
+.prose-md table { @apply my-3 w-full border-collapse text-sm; }
+.prose-md th { @apply border border-[var(--c-border)] bg-[var(--c-bg-elev-2)] px-2 py-1 text-left text-[var(--c-text-base)]; }
+.prose-md td { @apply border border-[var(--c-border)] px-2 py-1 text-[var(--c-text-base)]; }
+.prose-md hr { @apply my-4 border-[var(--c-border)]; }
+.prose-md img { @apply my-3 max-w-full rounded; }
+.prose-md strong { @apply font-semibold text-[var(--c-text-base)]; }
+.prose-md em { @apply italic; }
+
+/* === v0.4.2 T2c：长 inline code 防中文 label 拖累 ===
+ * AI 输出形如 "工作目录：`/very/long/path`" 时，长 code 整段视作
+ * 不可断的 inline 元素，让 react-markdown 把前面的中文 label 在中间断行。
+ * 渲染层（MessageBubble code 组件）已给长 code 加 inline-block + break-all；
+ * 这里再 belt-and-braces 给 markdown-body / prose-md 容器内的 li/p/td 下
+ * 所有 inline code 兜底，让超出宽度的 code 在容器边界换行。 */
+.markdown-body li code,
+.markdown-body p code,
+.markdown-body td code,
+.prose-md li code,
+.prose-md p code,
+.prose-md td code {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}

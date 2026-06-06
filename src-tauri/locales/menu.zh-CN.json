@@ -1,0 +1,34 @@
+{
+  "menu.app.title": "aitm",
+  "menu.app.about": "关于 aitm",
+  "menu.app.settings": "设置…",
+  "menu.app.quit": "退出 aitm",
+
+  "menu.file.title": "文件",
+  "menu.file.newTab": "新建标签页",
+  "menu.file.closeTab": "关闭标签页",
+  "menu.file.closeWindow": "关闭窗口",
+
+  "menu.edit.title": "编辑",
+  "menu.edit.undo": "撤销",
+  "menu.edit.redo": "重做",
+  "menu.edit.cut": "剪切",
+  "menu.edit.copy": "复制",
+  "menu.edit.paste": "粘贴",
+  "menu.edit.selectAll": "全选",
+
+  "menu.view.title": "视图",
+  "menu.view.fontIncrease": "放大字号",
+  "menu.view.fontDecrease": "缩小字号",
+  "menu.view.fontReset": "重置字号",
+  "menu.view.fullscreen": "切换全屏",
+
+  "menu.window.title": "窗口",
+  "menu.window.minimize": "最小化",
+  "menu.window.zoom": "缩放",
+
+  "menu.help.title": "帮助",
+  "menu.help.about": "关于 aitm",
+  "menu.help.documentation": "文档",
+  "menu.help.reportIssue": "反馈问题"
+}

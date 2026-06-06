@@ -1,0 +1,443 @@
+{
+  "common": {
+    "confirm": "確認",
+    "cancel": "キャンセル",
+    "save": "保存",
+    "discard": "破棄",
+    "delete": "削除",
+    "rename": "名前変更",
+    "close": "閉じる",
+    "refresh": "更新",
+    "open": "開く",
+    "settings": "設定",
+    "language": "言語",
+    "loading": "読み込み中...",
+    "search": "検索",
+    "new": "新規"
+  },
+  "activityBar": {
+    "ai": "AI アシスタント",
+    "browser": "ブラウザ",
+    "fileTree": "ファイルツリー",
+    "filePreview": "ファイルプレビュー",
+    "filePreviewEmpty": "ファイルプレビュー（開いているファイルなし）",
+    "settings": "設定",
+    "browserContextNoTabs": "すべてのタブを閉じる ({{count}})",
+    "browserContextConfirm": "{{count}} 個のブラウザタブをすべて閉じますか？\n\nこの操作は取り消せず、URL とスクロール位置は失われます。"
+  },
+  "quitDialog": {
+    "title": "aitm を終了しますか？",
+    "description": "すべてのターミナルセッションと未保存の編集内容は失われます。",
+    "cancel": "キャンセル",
+    "confirm": "終了"
+  },
+  "fileTree": {
+    "title": "ファイルツリー",
+    "noActiveCwd": "現在のディレクトリが検出されません",
+    "headerNoCwd": "(cwd なし)",
+    "loadFailed": "読み込み失敗：{{error}}",
+    "empty": "(空)",
+    "refreshTitle": "ファイルツリーを更新",
+    "menu": {
+      "newFile": "新規ファイル",
+      "newFolder": "新規フォルダ",
+      "rename": "名前変更",
+      "delete": "削除",
+      "refresh": "更新"
+    }
+  },
+  "inputDialog": {
+    "newFileTitle": "新規ファイル",
+    "newFileLabel": "場所：{{path}}",
+    "newFilePlaceholder": "例: README.md",
+    "newFolderTitle": "新規フォルダ",
+    "newFolderPlaceholder": "例: src",
+    "renameTitle": "{{kind}} の名前変更",
+    "renameLabel": "元の名前：{{name}}",
+    "renameOk": "名前変更",
+    "createOk": "作成",
+    "errorEmpty": "名前は空にできません",
+    "errorSeparator": "名前にパス区切り文字を含めることはできません",
+    "errorSameName": "新しい名前が元の名前と同じです"
+  },
+  "fsDeleteDialog": {
+    "titleFile": "ファイルを削除しますか？",
+    "titleDir": "フォルダを削除しますか？",
+    "descriptionFile": "{{name}} は完全に削除され、元に戻せません。",
+    "descriptionDir": "{{name}} とそのすべての内容は完全に削除され、元に戻せません。"
+  },
+  "closeFileDialog": {
+    "title": "未保存の変更",
+    "description": "{{name}} に未保存の変更があります。",
+    "saveAndClose": "保存して閉じる",
+    "discard": "変更を破棄",
+    "cancel": "キャンセル"
+  },
+  "statusBar": {
+    "branch": "git ブランチ：{{name}}",
+    "sessions": "{{count}} セッション",
+    "noFile": "ファイルなし",
+    "encoding": "UTF-8",
+    "lineEnding": "LF",
+    "ariaLabel": "システムリソースモニター",
+    "loadingPlaceholderAria": "読み込み中",
+    "rssTitle": "aitm 全プロセスの RSS 合計（PTY shell・ブラウザ webview・ユーザーが起動したコマンドを含む）",
+    "cpuTitle": "aitm 全プロセスの CPU 使用率合計",
+    "sessionsTitle": "アクティブな PTY セッション数",
+    "gotoLinePrompt": "ジャンプする行番号：",
+    "gotoLineTitle": "クリックで指定行へジャンプ（stub）",
+    "copyPathTitle": "クリックでパスをコピー：{{path}}",
+    "gitBranchTitle": "git ブランチ：{{name}}",
+    "networkOnline": "オンライン",
+    "networkOffline": "オフライン",
+    "diskUsageTitle": "ディスク使用率 {{pct}}%（残り {{free}} / 合計 {{total}} GB）"
+  },
+  "tabs": {
+    "newTab": "新規タブ",
+    "newTabTitle": "新規タブ (⌘T)",
+    "newTabDoubleClickHint": "ダブルクリックで新規タブを開く",
+    "close": "タブを閉じる",
+    "doubleClickRenameHint": "ダブルクリックで名前変更",
+    "titleInputAria": "タブタイトル編集",
+    "contextMenuAria": "タブのコンテキストメニュー",
+    "contextMenu": {
+      "close": "閉じる",
+      "closeOthers": "他を閉じる",
+      "closeRight": "右側を閉じる",
+      "closeAll": "すべて閉じる"
+    },
+    "resetAutoTitle": "ディレクトリ自動追従にリセット",
+    "unreadAria": "未読 {{count}} 件",
+    "notification": "通知：{{level}}"
+  },
+  "settingsModal": {
+    "title": "設定",
+    "tablistLabel": "設定カテゴリ",
+    "sections": {
+      "appearance": "外観",
+      "terminal": "ターミナル",
+      "shell": "Shell",
+      "ai": "AI プロバイダ",
+      "browser": "ブラウザ",
+      "safety": "セキュリティ",
+      "keybindings": "ショートカット",
+      "language": "言語",
+      "privacy": "プライバシー",
+      "notifications": "通知"
+    },
+    "languageHelp": "再起動不要、UI は即座に更新されます。"
+  },
+  "appearance": {
+    "layout": "レイアウト",
+    "activityBarPosition": "ActivityBar の位置",
+    "position": {
+      "left": "左",
+      "right": "右",
+      "top": "上",
+      "bottom": "下"
+    },
+    "activityBarHelp": "切り替えは即時反映されます。パネル内のアイコンは位置に応じて自動的に方向が変わります",
+    "activityBarAriaItem": "ActivityBar {{label}}",
+    "themeMode": "テーマモード",
+    "themeModeHelpHeader": "aitm 全体の配色を選択（ターミナルの xterm テーマは対応するダーク／ライト版へ自動切替）",
+    "themeModeOption": {
+      "auto": "システムに従う",
+      "dark": "ダーク",
+      "light": "ライト"
+    },
+    "themeModeAriaItem": "テーマモード {{label}}",
+    "themeModeFooter": "切り替えは即時反映。ショートカット ⌘⇧L でダーク／ライトを素早く切替",
+    "sidePanelLayout": "サイドパネルのレイアウト",
+    "aiSidebarPosition": "AI サイドバーの位置",
+    "fileTreePosition": "ファイルツリーの位置",
+    "sidePanelHelp": "切り替えは即時反映。ActivityBar と同じ側にある場合、ActivityBar は常に最も外側に表示されます",
+    "sidePanelAriaItem": "{{label}} {{position}}",
+    "general": "一般",
+    "confirmQuitLabel": "終了時に確認する",
+    "confirmQuitHelp": "アプリを閉じる前に「終了確認」ダイアログを表示します。オフの場合は赤い × ボタン／Cmd+Q で即座に終了します",
+    "confirmQuitAria": "終了時に確認する",
+    "notifications": "通知",
+    "notificationSoundLabel": "システム通知音",
+    "notificationSoundHelp": "AI の承認待ち／完了／エラー時にシステム通知を鳴らします。オフにすると通知は無音のままです",
+    "notificationSoundAria": "システム通知音"
+  },
+  "terminal": {
+    "font": "フォント",
+    "fontFamilyLabel": "フォントファミリ",
+    "fontFamilyHelp": "プリセットを選択するか、CSS フォントスタックを入力",
+    "fontFamilyPlaceholder": "CSS フォントスタック（例：'Fira Code', monospace）",
+    "fontFamilyFooter": "入力欄は選択中のフォントで描画されます。文字の見た目が変わらない場合はそのフォントが未インストールです。指定が無効な場合は monospace に静かにフォールバックします",
+    "fontPresetMenloDefault": "Menlo（デフォルト）",
+    "fontPresetCustomLabel": "── カスタム（下で編集）──",
+    "fontSize": "フォントサイズ",
+    "lineHeight": "行の高さ",
+    "cursor": "カーソル",
+    "cursorStyle": {
+      "block": "■ ブロック",
+      "underline": "_ アンダーライン",
+      "bar": "| バー"
+    },
+    "theme": "テーマ",
+    "themeRadioGroupAria": "ターミナルテーマ",
+    "themeAriaItem": "テーマ {{name}}",
+    "themeHelp": "切り替えは即時反映。配色は Dracula / Solarized / One Dark などコミュニティ公式のオリジナル",
+    "shell": "Shell",
+    "shellDefaultLabel": "デフォルト shell のパス（空欄なら $SHELL を継承）",
+    "shellPlaceholder": "例：/bin/zsh、/opt/homebrew/bin/fish",
+    "shellHelp": "次に開くタブから適用されます。既存タブは影響を受けません"
+  },
+  "settings": {
+    "editor": {
+      "title": "エディタ",
+      "fontSize": "フォントサイズ",
+      "fontSizeHelp": "CodeMirror のフォントサイズ（px）。エディタにフォーカスがあるとき、Cmd+= / Cmd+- / Cmd+0 でも調整できます"
+    }
+  },
+  "safety": {
+    "descriptionBefore": "ホワイトリストに一致する ",
+    "descriptionAfter": " は自動承認されます（確認ダイアログなし）。ただし DESTRUCTIVE クラスのコマンド（sudo、git push --force など）は常に確認ダイアログを表示し、ホワイトリストでは上書きできません。",
+    "emptyHint": "（エントリなし。下のボタンから追加してください）",
+    "listAriaLabel": "ホワイトリスト一覧",
+    "removePatternAriaLabel": "パターンを削除：{{pattern}}",
+    "addButton": "+ パターン追加",
+    "draftPlaceholder": "例：git status *",
+    "draftAriaLabel": "新しいホワイトリストパターン",
+    "draftCancel": "キャンセル",
+    "draftErrorAriaLabel": "パターン構文エラー",
+    "showBadgeLabel": "自動承認時にツールバブルへバッジを表示",
+    "patternTesterTitle": "マッチテスト",
+    "patternTesterPlaceholder": "例：git status -sb",
+    "patternTesterInputAriaLabel": "マッチテスト入力",
+    "patternTesterResultAriaLabel": "マッチテスト結果",
+    "patternTesterHit": "✓ 一致：{{pattern}}",
+    "patternTesterMiss": "✗ 一致なし（HIGH クラスの確認ダイアログが表示されます）"
+  },
+  "privacy": {
+    "optInLabel": "匿名利用統計に参加する",
+    "optInLabelRecommended": "匿名利用統計に参加する（推奨）",
+    "descLine1Prefix": "aitm が送信するのは起動回数 / 機能の利用回数 / エラー情報のみで、",
+    "descLine1Strong": "送信しません",
+    "descLine1Suffix": "コマンド、ファイル、会話内容は一切。",
+    "descLine2": "開発者がどの機能を改善すべきか把握するのに役立ちます。いつでもオフにできます。",
+    "descLine3Prefix": "データは Aptabase（オープンソースのプライバシー重視アナリティクス）で処理されます："
+  },
+  "browser": {
+    "resourceBudget": "リソース予算",
+    "resourceBudgetHelp": "組み込みブラウザはアクティブタブごとに約 {{mb}} MB のメモリを使用します。ブラウザパネルを畳むとすべての webview がまとめて破棄され、メモリ使用量はゼロに戻ります。",
+    "activeLimit": "アクティブ上限",
+    "activeLimitLabel": "同時にアクティブにできる数",
+    "activeLimitAria": "同時にアクティブにできる数",
+    "activeLimitHelp": "範囲 {{min}}〜{{max}}。これを超えると、最も古い非ピン留めタブが自動的にサスペンドされメモリを解放します",
+    "suspendTitle": "非アクティブ時の自動サスペンド",
+    "suspendLabel": "非アクティブのタイムアウト（分）",
+    "suspendAria": "非アクティブ時の自動サスペンド時間（分）",
+    "suspendHelp": "範囲 {{min}}〜{{max}} 分。非アクティブかつ非ピン留めのタブが、最後にフォアグラウンドへ来てからこの時間を超えると自動サスペンドされます",
+    "currentBudgetLabel": "現在のメモリ予算 ≈",
+    "currentBudgetHelp": "アクティブ上限を増やすとメモリ使用量も大きく増えます。3〜5 程度を推奨。メモリが厳しい場合は、ブラウザパネル（アドレスバー右の畳むボタン）を畳むと一括解放できます。"
+  },
+  "keybindings": {
+    "title": "ショートカット",
+    "resetAll": "すべてデフォルトに戻す",
+    "intro": "「編集」をクリックして新しいキー組み合わせを押してください。競合は赤くハイライトされます。変更は即時反映され、settings.toml に永続化されます。",
+    "columnAction": "アクション",
+    "columnBinding": "ショートカット",
+    "columnOps": "操作",
+    "overriddenBadge": "(変更済)",
+    "overriddenBadgeTitle": "ユーザーが上書き",
+    "conflictBadge": "競合",
+    "edit": "編集",
+    "resetOne": "デフォルトに戻す",
+    "conflictWarning": "{{count}} 件のショートカット競合があります。同じキーは最初に一致したアクションのみがトリガーされます。",
+    "captureTitle": "ショートカットを編集：{{action}}",
+    "captureDescription": "新しいキー組み合わせを押してください（Esc でキャンセル）",
+    "captureCurrentLabel": "現在",
+    "captureCurrentEmpty": "未設定",
+    "captureNewLabel": "新しい",
+    "capturePlaceholder": "キーを押してください...",
+    "captureCancel": "キャンセル",
+    "captureConfirm": "確認",
+    "actions": {
+      "newTab": "新規タブ",
+      "closeTab": "タブを閉じる",
+      "nextTab": "次のタブ",
+      "prevTab": "前のタブ",
+      "openSettings": "設定を開く",
+      "toggleSidebar": "AI サイドバーを切替",
+      "toggleBrowser": "ブラウザパネルを切替",
+      "toggleFilePreview": "ファイルプレビューを切替",
+      "splitVertical": "左右に分割",
+      "splitHorizontal": "上下に分割",
+      "closePane": "分割を閉じる"
+    }
+  },
+  "providers": {
+    "loading": "読み込み中…",
+    "empty": "利用可能なプロバイダがありません",
+    "keySourceEnv": "shell env",
+    "keySourceDotenv": ".env ファイル",
+    "keySourceConfig": "設定済み",
+    "apiKeyLabel": "API Key",
+    "apiKeyMaskedSuffix": "（設定済み：{{masked}}、空欄なら現在の値を保持）",
+    "apiKeyInputAria": "{{name}} API Key",
+    "baseUrlLabelPrefix": "Base URL（デフォルト：",
+    "baseUrlLabelSuffix": "）",
+    "baseUrlInputAria": "{{name}} Base URL",
+    "showKey": "表示",
+    "hideKey": "非表示",
+    "showKeyAria": "API Key を表示",
+    "hideKeyAria": "API Key を非表示",
+    "saving": "保存中…",
+    "save": "保存",
+    "alreadyUpToDate": "最新です",
+    "testing": "テスト中…",
+    "testConnection": "接続テスト",
+    "savedFlash": "✓ 保存しました",
+    "savedFlashAria": "保存成功"
+  },
+  "fileStaleBanner": {
+    "message": "ファイルが外部から変更されました。現在の編集は失われます（保存しない限り）。",
+    "reload": "再読み込み",
+    "keepMine": "現在のまま保持"
+  },
+  "aiSidebar": {
+    "collapseAria": "AI サイドバーを畳む",
+    "collapseTitle": "畳む (⌘/)",
+    "loading": "読み込み中…",
+    "emptyAria": "AI アシスタント空状態",
+    "emptyTitle": "まず AI プロバイダを設定してください",
+    "emptyDescPrefix": "次の場所に API キーを追加します：",
+    "emptyDescSuffix": "例：",
+    "emptyHint": "設定後、aitm を再起動して反映されます",
+    "envExampleComment": "# プロキシ／国際版を使う場合は _BASE_URL を追加：",
+    "providerSelectAria": "プロバイダを選択",
+    "modelSelectAria": "モデルを選択",
+    "errorUnauthorized": "認証失敗：API キーを確認してください",
+    "errorGeneric": "エラー",
+    "errorSeparator": "：",
+    "emptyChatHint": "AI との会話を始めましょう…",
+    "inputPlaceholder": "メッセージを入力（Enter で送信、Shift+Enter で改行）",
+    "tokensLabel": "tokens：in {{input}} · out {{output}}"
+  },
+  "sessionRestore": {
+    "dialogAria": "前回のセッションを復元",
+    "title": "前回のセッションを復元しますか？",
+    "description": "前回 {{count}} 個のタブが開かれていました。復元しますか？",
+    "restoreBtn": "前回のセッションを復元（{{count}} 個のタブ）",
+    "freshBtn": "新しく開始（スナップショットを消去）",
+    "skipBtn": "一度スキップ（次回また確認）"
+  },
+  "closeTabDialog": {
+    "dialogAria": "タブを閉じる確認",
+    "title": "タブ \"{{title}}\" を閉じますか？",
+    "description": "このタブにはコマンドが実行中です（npm install / cargo test などの長時間処理）。閉じると shell に SIGHUP が送られ、未完了のコマンドが強制中断されます。",
+    "cancel": "キャンセル",
+    "forceClose": "強制的に閉じる"
+  },
+  "closeFileConfirm": {
+    "dialogAria": "ファイルを閉じる確認",
+    "title": "\"{{name}}\" への変更を保存しますか？",
+    "description": "このファイルには未保存の変更があります。タブを閉じると失われます。"
+  },
+  "updateBadge": {
+    "available": "v{{version}} が利用可能",
+    "ariaLabel": "v{{version}} にアップグレード",
+    "tooltipWithNotes": "現在 {{current}} → 新 {{latest}}\n\n{{notes}}",
+    "tooltipNoNotes": "現在 {{current}} → 新 {{latest}}"
+  },
+  "browserTabBar": {
+    "newTabAria": "新しいブラウザタブ",
+    "newTabTitle": "新しいタブ（URL バーで Cmd+Enter を押すと入力した URL を新規タブで開けます）",
+    "closeTabAria": "タブ {{label}} を閉じる",
+    "stateLabel": {
+      "pinned": "ピン留め",
+      "suspended": "サスペンド",
+      "active": "アクティブ"
+    }
+  },
+  "filePreviewDialog": {
+    "dialogAria": "プレビュー {{name}}",
+    "closeAria": "プレビューを閉じる",
+    "descLabel": "ファイルプレビュー：{{name}}",
+    "loading": "読み込み中…",
+    "readError": "読み込み失敗：{{error}}",
+    "unsupportedPrefix": "プレビュー未対応",
+    "reasonLabel": "理由：{{reason}}",
+    "openWithDefault": "既定のアプリで開く",
+    "opening": "開いています…",
+    "openFailed": "開けませんでした：{{error}}",
+    "truncated": "内容は切り詰められました（サイズ上限に到達）",
+    "tooLargeReason": "ファイル {{size}}MB は {{max}}MB の上限を超えています"
+  },
+  "messageBubble": {
+    "copyCode": "コピー",
+    "copyCodeAria": "コードをコピー"
+  },
+  "toolCallBubble": {
+    "status": {
+      "awaitingApproval": "承認待ち…",
+      "running": "実行中…",
+      "done": "完了",
+      "error": "エラー",
+      "rejected": "拒否済み"
+    },
+    "autoApproved": "✓ 自動承認",
+    "autoApprovedAria": "自動承認の理由",
+    "argsLabel": "パラメータ",
+    "resultLabel": "結果",
+    "errorResultLabel": "エラー結果",
+    "noArgs": "(パラメータなし)"
+  },
+  "fileEditor": {
+    "mdPreview": "プレビュー",
+    "mdRaw": "原文"
+  },
+  "tabMetadata": {
+    "branchLabel": "ブランチ：{{name}}",
+    "branchDirty": "（dirty）",
+    "branchUnpushed": "（未プッシュ {{count}} commits）",
+    "cwdLabel": "cwd：{{path}}",
+    "portsLabel": "ポート待受：{{ports}}",
+    "gitBranchAria": "git ブランチ",
+    "dirtyAria": "dirty",
+    "portsAria": "ポート待受"
+  },
+  "browserUrlBar": {
+    "placeholderActive": "URL を入力、Enter で開く / Cmd+Enter で新規タブ",
+    "placeholderEmpty": "URL を入力、Enter で新規タブを開く",
+    "addressBarAria": "ブラウザのアドレスバー"
+  },
+  "conversationSwitcher": {
+    "switchAria": "会話を切替",
+    "loadingTitle": "読み込み中",
+    "loadingPlaceholder": "読み込み中…",
+    "currentScopeAria": "現在のスコープ",
+    "countSuffix": "{{count}} 件の会話",
+    "newAria": "新規会話",
+    "newItem": "+ 新規会話",
+    "titleEditAria": "会話タイトル編集",
+    "renameTitle": "名前変更",
+    "switchToAria": "会話 {{title}} に切替",
+    "renameToAria": "会話 {{title}} の名前を変更",
+    "deleteToAria": "会話 {{title}} を削除"
+  },
+  "chat": {
+    "newConversationTitle": "新規会話 {{n}}"
+  },
+  "scope": {
+    "global": "グローバル",
+    "globalTooltip": "グローバルスコープ（特定プロジェクトに属さない）",
+    "globalAria": "現在のスコープ：グローバル",
+    "needsInit": "未決定",
+    "needsInitTooltip": "初期化待ち：{{cwd}}",
+    "needsInitAria": "現在のスコープ：未決定",
+    "projectTooltip": "プロジェクト：{{name}}\nパス：{{path}}",
+    "projectAria": "現在のスコープ：プロジェクト {{name}}"
+  },
+  "splitDivider": {
+    "defaultAria": "幅を調整",
+    "fileTreeWidth": "ファイルツリーの幅を調整",
+    "aiSidebarWidth": "AI サイドバーの幅を調整",
+    "terminalEditorHeight": "ターミナル / エディタ分割の高さを調整",
+    "terminalBrowserRatio": "ターミナル / ブラウザの比率を調整"
+  }
+}

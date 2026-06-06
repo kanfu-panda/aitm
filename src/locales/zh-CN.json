@@ -1,0 +1,441 @@
+{
+  "common": {
+    "confirm": "确认",
+    "cancel": "取消",
+    "save": "保存",
+    "discard": "丢弃",
+    "delete": "删除",
+    "rename": "重命名",
+    "close": "关闭",
+    "refresh": "刷新",
+    "open": "打开",
+    "settings": "设置",
+    "language": "语言",
+    "loading": "加载中...",
+    "search": "搜索",
+    "new": "新建"
+  },
+  "activityBar": {
+    "ai": "AI 助手",
+    "browser": "浏览器",
+    "fileTree": "文件树",
+    "filePreview": "文件预览",
+    "filePreviewEmpty": "文件预览（无打开的文件）",
+    "settings": "设置",
+    "browserContextNoTabs": "关闭所有标签 ({{count}})",
+    "browserContextConfirm": "确定关闭全部 {{count}} 个浏览器标签？\n\n此操作不可撤销，所有标签的 URL/滚动位置都会丢失。"
+  },
+  "quitDialog": {
+    "title": "确认退出 aitm？",
+    "description": "所有终端会话和未保存的文件编辑将会丢失。",
+    "cancel": "取消",
+    "confirm": "退出"
+  },
+  "fileTree": {
+    "title": "文件树",
+    "noActiveCwd": "未检测到当前目录",
+    "headerNoCwd": "(无 cwd)",
+    "loadFailed": "读取失败：{{error}}",
+    "empty": "(空)",
+    "refreshTitle": "刷新文件树",
+    "menu": {
+      "newFile": "新建文件",
+      "newFolder": "新建文件夹",
+      "rename": "重命名",
+      "delete": "删除",
+      "refresh": "刷新"
+    }
+  },
+  "inputDialog": {
+    "newFileTitle": "新建文件",
+    "newFileLabel": "位置：{{path}}",
+    "newFilePlaceholder": "如 README.md",
+    "newFolderTitle": "新建文件夹",
+    "newFolderPlaceholder": "如 src",
+    "renameTitle": "重命名 {{kind}}",
+    "renameLabel": "原名：{{name}}",
+    "renameOk": "重命名",
+    "createOk": "创建",
+    "errorEmpty": "名称不能为空",
+    "errorSeparator": "名称不能包含路径分隔符",
+    "errorSameName": "新名与原名相同"
+  },
+  "fsDeleteDialog": {
+    "titleFile": "删除文件？",
+    "titleDir": "删除文件夹？",
+    "descriptionFile": "{{name}} 将被永久删除，无法撤销。",
+    "descriptionDir": "{{name}} 及其所有内容将被永久删除，无法撤销。"
+  },
+  "closeFileDialog": {
+    "title": "未保存的更改",
+    "description": "{{name}} 有未保存的更改。",
+    "saveAndClose": "保存并关闭",
+    "discard": "丢弃改动",
+    "cancel": "取消"
+  },
+  "statusBar": {
+    "branch": "git 分支：{{name}}",
+    "sessions": "{{count}} 个会话",
+    "noFile": "无文件",
+    "encoding": "UTF-8",
+    "lineEnding": "LF",
+    "ariaLabel": "系统资源监控",
+    "loadingPlaceholderAria": "加载中",
+    "rssTitle": "aitm 全部进程 RSS 总和（含 PTY shell + 浏览器 webview + 用户 spawn 的命令）",
+    "cpuTitle": "aitm 全部进程 CPU 占用总和",
+    "sessionsTitle": "活跃 PTY session 数",
+    "gotoLinePrompt": "跳转到行号：",
+    "gotoLineTitle": "点击跳转到指定行（stub）",
+    "copyPathTitle": "点击复制路径：{{path}}",
+    "gitBranchTitle": "git 分支：{{name}}",
+    "networkOnline": "网络在线",
+    "networkOffline": "网络离线",
+    "diskUsageTitle": "磁盘已用 {{pct}}%（剩余 {{free}} / 共 {{total}} GB）"
+  },
+  "tabs": {
+    "newTab": "新建标签",
+    "newTabTitle": "新建标签 (⌘T)",
+    "newTabDoubleClickHint": "双击此处新建标签",
+    "close": "关闭标签",
+    "doubleClickRenameHint": "双击重命名",
+    "titleInputAria": "标签标题编辑",
+    "contextMenuAria": "Tab 上下文菜单",
+    "contextMenu": {
+      "close": "关闭",
+      "closeOthers": "关闭其他",
+      "closeRight": "关闭右侧",
+      "closeAll": "全部关闭"
+    },
+    "resetAutoTitle": "重置为自动跟随目录",
+    "unreadAria": "{{count}} 条未读",
+    "notification": "通知：{{level}}"
+  },
+  "settingsModal": {
+    "title": "设置",
+    "tablistLabel": "设置分类",
+    "sections": {
+      "appearance": "外观",
+      "terminal": "终端",
+      "shell": "Shell",
+      "ai": "AI 提供商",
+      "browser": "浏览器",
+      "safety": "安全",
+      "keybindings": "快捷键",
+      "language": "语言",
+      "privacy": "隐私",
+      "notifications": "通知"
+    },
+    "languageHelp": "无需重启，UI 即刻更新。"
+  },
+  "appearance": {
+    "layout": "布局",
+    "activityBarPosition": "ActivityBar 位置",
+    "position": {
+      "left": "左侧",
+      "right": "右侧",
+      "top": "顶部",
+      "bottom": "底部"
+    },
+    "activityBarHelp": "切换立即生效；面板内的图标会根据位置自动切方向",
+    "activityBarAriaItem": "ActivityBar {{label}}",
+    "themeMode": "主题模式",
+    "themeModeHelpHeader": "选择 aitm 整体配色（终端 xterm 会自动切配对的深 / 浅版）",
+    "themeModeOption": {
+      "auto": "跟随系统",
+      "dark": "深色",
+      "light": "浅色"
+    },
+    "themeModeAriaItem": "主题模式 {{label}}",
+    "themeModeFooter": "切换立即生效；快捷键 ⌘⇧L 在深色 / 浅色之间快速切",
+    "sidePanelLayout": "侧栏布局",
+    "aiSidebarPosition": "AI 侧栏位置",
+    "fileTreePosition": "文件树位置",
+    "sidePanelHelp": "切换立即生效；跟 ActivityBar 同侧时 ActivityBar 永远在最外侧",
+    "sidePanelAriaItem": "{{label}} {{position}}",
+    "general": "通用",
+    "confirmQuitLabel": "退出时确认",
+    "confirmQuitHelp": "关闭应用前弹\"确认退出\"对话框；关掉后红叉 / Cmd+Q 直接退出",
+    "notifications": "通知",
+    "notificationSoundLabel": "系统通知声音",
+    "notificationSoundHelp": "AI 等审批 / 完成 / 出错时弹系统通知；关掉只静默推送"
+  },
+  "terminal": {
+    "font": "字体",
+    "fontFamilyLabel": "字体族",
+    "fontFamilyHelp": "下拉选预设 · 或手输 CSS 字体栈",
+    "fontFamilyPlaceholder": "CSS 字体栈，如 'Fira Code', monospace",
+    "fontFamilyFooter": "输入框按当前字体渲染——若字符不变美就是字体未装到系统；输错会静默回退 monospace",
+    "fontPresetMenloDefault": "Menlo（默认）",
+    "fontPresetCustomLabel": "── 自定义（在下方编辑）──",
+    "fontSize": "字号",
+    "lineHeight": "行高",
+    "cursor": "光标",
+    "cursorStyle": {
+      "block": "■ 方块",
+      "underline": "_ 下划线",
+      "bar": "| 竖线"
+    },
+    "theme": "主题",
+    "themeRadioGroupAria": "终端主题",
+    "themeAriaItem": "主题 {{name}}",
+    "themeHelp": "切换立即生效；颜色来自 Dracula / Solarized / One Dark 社区原版",
+    "shell": "Shell",
+    "shellDefaultLabel": "默认 shell 路径（留空 = 跟随系统 $SHELL）",
+    "shellPlaceholder": "例如：/bin/zsh、/opt/homebrew/bin/fish",
+    "shellHelp": "修改后下次新开的标签生效；已有标签不受影响"
+  },
+  "settings": {
+    "editor": {
+      "title": "编辑器",
+      "fontSize": "字号",
+      "fontSizeHelp": "CodeMirror 字号（像素）。焦点在编辑器时也可以用 Cmd+= / Cmd+- / Cmd+0 调整"
+    }
+  },
+  "safety": {
+    "descriptionBefore": "命中白名单的 ",
+    "descriptionAfter": " 会自动批准（不弹窗）。但 DESTRUCTIVE 级命令（如 sudo / git push --force）仍会强制弹窗，白名单不能覆盖。",
+    "emptyHint": "（暂无条目；点下方按钮添加）",
+    "listAriaLabel": "白名单条目列表",
+    "removePatternAriaLabel": "删除模式 {{pattern}}",
+    "addButton": "+ 添加模式",
+    "draftPlaceholder": "例如：git status *",
+    "draftAriaLabel": "新白名单模式",
+    "draftCancel": "取消",
+    "draftErrorAriaLabel": "模式语法错误",
+    "showBadgeLabel": "自动批准时在工具气泡上显示徽章",
+    "patternTesterTitle": "命中测试",
+    "patternTesterPlaceholder": "试试看：git status -sb",
+    "patternTesterInputAriaLabel": "命中测试输入",
+    "patternTesterResultAriaLabel": "命中测试结果",
+    "patternTesterHit": "✓ 命中：{{pattern}}",
+    "patternTesterMiss": "✗ 不命中（会走 HIGH 弹窗）"
+  },
+  "privacy": {
+    "optInLabel": "参与匿名使用统计",
+    "optInLabelRecommended": "参与匿名使用统计（推荐）",
+    "descLine1Prefix": "aitm 仅上报启动 / 功能使用次数 / 错误信息，",
+    "descLine1Strong": "不会",
+    "descLine1Suffix": "收集你的命令、文件、对话内容。",
+    "descLine2": "帮助开发者了解哪些功能值得改进。可随时关闭。",
+    "descLine3Prefix": "数据由 Aptabase（开源隐私分析）处理："
+  },
+  "browser": {
+    "resourceBudget": "资源预算",
+    "resourceBudgetHelp": "内嵌浏览器每个 active tab 约占用 {{mb}} MB 内存。收起浏览器面板会一次性 destroy 全部 webview，恢复到 0 内存占用。",
+    "activeLimit": "活跃上限",
+    "activeLimitLabel": "同时 active 上限（个）",
+    "activeLimitAria": "同时 active 上限",
+    "activeLimitHelp": "范围 {{min}}-{{max}}；超过此数 → 最旧的非 pinned tab 自动 suspend 释放内存",
+    "suspendTitle": "失焦自动 suspend",
+    "suspendLabel": "失焦超时（分钟）",
+    "suspendAria": "失焦自动 suspend 时间（分钟）",
+    "suspendHelp": "范围 {{min}}-{{max}} 分钟；非 active 且非 pinned 的 tab 离上次切到前台超过该时间 → 自动 suspend",
+    "currentBudgetLabel": "当前内存预算 ≈",
+    "currentBudgetHelp": "增加 active 上限会显著增加内存占用；建议保持 3-5。内存吃紧时收起浏览器面板（地址栏右侧收起按钮）一次性释放全部。"
+  },
+  "keybindings": {
+    "title": "快捷键",
+    "resetAll": "全部恢复默认",
+    "intro": "点\"修改\"按下新按键组合；冲突会标红。修改立即生效并持久化到 settings.toml。",
+    "columnAction": "Action",
+    "columnBinding": "快捷键",
+    "columnOps": "操作",
+    "overriddenBadge": "(改)",
+    "overriddenBadgeTitle": "已被用户覆盖",
+    "conflictBadge": "冲突",
+    "edit": "修改",
+    "resetOne": "恢复默认",
+    "conflictWarning": "存在 {{count}} 组快捷键冲突，相同按键会触发第一个匹配的 action。",
+    "captureTitle": "修改快捷键：{{action}}",
+    "captureDescription": "按下新的按键组合（Esc 取消）",
+    "captureCurrentLabel": "当前",
+    "captureCurrentEmpty": "未设置",
+    "captureNewLabel": "新",
+    "capturePlaceholder": "按下按键...",
+    "captureCancel": "取消",
+    "captureConfirm": "确认",
+    "actions": {
+      "newTab": "新建标签",
+      "closeTab": "关闭标签",
+      "nextTab": "下一个标签",
+      "prevTab": "上一个标签",
+      "openSettings": "打开设置",
+      "toggleSidebar": "切换 AI 侧栏",
+      "toggleBrowser": "切换浏览器面板",
+      "toggleFilePreview": "切换文件预览面板",
+      "splitVertical": "左右分屏",
+      "splitHorizontal": "上下分屏",
+      "closePane": "关闭分屏"
+    }
+  },
+  "providers": {
+    "loading": "加载中…",
+    "empty": "无可用 provider",
+    "keySourceEnv": "shell env",
+    "keySourceDotenv": ".env 文件",
+    "keySourceConfig": "已配置",
+    "apiKeyLabel": "API Key",
+    "apiKeyMaskedSuffix": "（已配置：{{masked}}，留空保留原值）",
+    "apiKeyInputAria": "{{name}} API Key",
+    "baseUrlLabelPrefix": "Base URL（默认：",
+    "baseUrlLabelSuffix": "）",
+    "baseUrlInputAria": "{{name}} Base URL",
+    "showKey": "显示",
+    "hideKey": "隐藏",
+    "showKeyAria": "显示 API Key",
+    "hideKeyAria": "隐藏 API Key",
+    "saving": "保存中…",
+    "save": "保存",
+    "alreadyUpToDate": "已是最新",
+    "testing": "测试中…",
+    "testConnection": "测试连接",
+    "savedFlash": "✓ 已保存",
+    "savedFlashAria": "保存成功"
+  },
+  "fileStaleBanner": {
+    "message": "文件已被外部修改。你当前的编辑会丢失（除非保存它）。",
+    "reload": "重新加载",
+    "keepMine": "保留我的"
+  },
+  "aiSidebar": {
+    "collapseAria": "收起 AI 侧栏",
+    "collapseTitle": "收起 (⌘/)",
+    "loading": "加载中…",
+    "emptyAria": "AI 助手空态",
+    "emptyTitle": "请先配置 AI Provider",
+    "emptyDescPrefix": "在",
+    "emptyDescSuffix": "添加 API key，例如：",
+    "emptyHint": "配置后重启 aitm 生效",
+    "envExampleComment": "# 走代理 / 国际版可加 _BASE_URL：",
+    "providerSelectAria": "选择 provider",
+    "modelSelectAria": "选择模型",
+    "errorUnauthorized": "鉴权失败：检查 API key",
+    "errorGeneric": "错误",
+    "errorSeparator": "：",
+    "emptyChatHint": "和 AI 开始一段对话…",
+    "inputPlaceholder": "输入消息（Enter 发送，Shift+Enter 换行）",
+    "tokensLabel": "tokens：in {{input}} · out {{output}}"
+  },
+  "sessionRestore": {
+    "dialogAria": "恢复上次会话",
+    "title": "恢复上次会话？",
+    "description": "检测到上次有 {{count}} 个 tab 打开。要恢复它们吗？",
+    "restoreBtn": "恢复上次会话（{{count}} 个 tab）",
+    "freshBtn": "全新启动（清空记录）",
+    "skipBtn": "一次性跳过（下次再问）"
+  },
+  "closeTabDialog": {
+    "dialogAria": "关闭标签确认",
+    "title": "关闭标签 \"{{title}}\"？",
+    "description": "该标签里有命令正在运行（如 npm install / cargo test 等长任务）。关闭会向 shell 发 SIGHUP 强制中断未完成的命令。",
+    "cancel": "取消",
+    "forceClose": "强制关闭"
+  },
+  "closeFileConfirm": {
+    "dialogAria": "关闭文件确认",
+    "title": "保存对 \"{{name}}\" 的修改吗？",
+    "description": "该文件包含未保存的修改。关闭 tab 后未保存内容会丢失。"
+  },
+  "updateBadge": {
+    "available": "v{{version}} 可用",
+    "ariaLabel": "升级到 v{{version}}",
+    "tooltipWithNotes": "当前 {{current}} → 新 {{latest}}\n\n{{notes}}",
+    "tooltipNoNotes": "当前 {{current}} → 新 {{latest}}"
+  },
+  "browserTabBar": {
+    "newTabAria": "新建浏览器 tab",
+    "newTabTitle": "新建 tab（也可在 URL 栏按 Cmd+Enter 把输入的 URL 在新 tab 打开）",
+    "closeTabAria": "关闭 tab {{label}}",
+    "stateLabel": {
+      "pinned": "已固定",
+      "suspended": "已暂停",
+      "active": "活动中"
+    }
+  },
+  "filePreviewDialog": {
+    "dialogAria": "预览 {{name}}",
+    "closeAria": "关闭预览",
+    "descLabel": "文件预览：{{name}}",
+    "loading": "加载中…",
+    "readError": "读取失败：{{error}}",
+    "unsupportedPrefix": "暂不支持预览",
+    "reasonLabel": "原因：{{reason}}",
+    "openWithDefault": "用默认应用打开",
+    "opening": "打开中…",
+    "openFailed": "打开失败：{{error}}",
+    "truncated": "内容已截断（达到大小上限）",
+    "tooLargeReason": "文件 {{size}}MB 超过 {{max}}MB 上限"
+  },
+  "messageBubble": {
+    "copyCode": "复制",
+    "copyCodeAria": "复制代码"
+  },
+  "toolCallBubble": {
+    "status": {
+      "awaitingApproval": "等待批准…",
+      "running": "执行中…",
+      "done": "完成",
+      "error": "错误",
+      "rejected": "已拒绝"
+    },
+    "autoApproved": "✓ 自动批准",
+    "autoApprovedAria": "自动批准原因",
+    "argsLabel": "参数",
+    "resultLabel": "结果",
+    "errorResultLabel": "错误结果",
+    "noArgs": "(无参数)"
+  },
+  "fileEditor": {
+    "mdPreview": "预览",
+    "mdRaw": "原文"
+  },
+  "tabMetadata": {
+    "branchLabel": "分支：{{name}}",
+    "branchDirty": "（dirty）",
+    "branchUnpushed": "（{{count}} commits 未推送）",
+    "cwdLabel": "cwd：{{path}}",
+    "portsLabel": "监听端口：{{ports}}",
+    "gitBranchAria": "git 分支",
+    "dirtyAria": "dirty",
+    "portsAria": "监听端口"
+  },
+  "browserUrlBar": {
+    "placeholderActive": "输入 URL，Enter 跳转 / Cmd+Enter 在新 tab 打开",
+    "placeholderEmpty": "输入 URL，Enter 打开新 tab",
+    "addressBarAria": "浏览器地址栏"
+  },
+  "conversationSwitcher": {
+    "switchAria": "切换对话",
+    "loadingTitle": "加载中",
+    "loadingPlaceholder": "加载中…",
+    "currentScopeAria": "当前作用域",
+    "countSuffix": "{{count}} 个对话",
+    "newAria": "新建对话",
+    "newItem": "+ 新对话",
+    "titleEditAria": "对话标题编辑",
+    "renameTitle": "重命名",
+    "switchToAria": "切换到对话 {{title}}",
+    "renameToAria": "重命名对话 {{title}}",
+    "deleteToAria": "删除对话 {{title}}"
+  },
+  "chat": {
+    "newConversationTitle": "新对话 {{n}}"
+  },
+  "scope": {
+    "global": "全局",
+    "globalTooltip": "全局作用域（不属于任何项目）",
+    "globalAria": "当前作用域：全局",
+    "needsInit": "未决议",
+    "needsInitTooltip": "等待初始化：{{cwd}}",
+    "needsInitAria": "当前作用域：未决议",
+    "projectTooltip": "项目：{{name}}\n路径：{{path}}",
+    "projectAria": "当前作用域：项目 {{name}}"
+  },
+  "splitDivider": {
+    "defaultAria": "调整宽度",
+    "fileTreeWidth": "调整文件树宽度",
+    "aiSidebarWidth": "调整 AI 侧栏宽度",
+    "terminalEditorHeight": "拖拽调整终端 / 编辑器分屏高度",
+    "terminalBrowserRatio": "拖拽调整终端 / 浏览器分屏比例"
+  }
+}

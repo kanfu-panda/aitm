@@ -1,0 +1,443 @@
+{
+  "common": {
+    "confirm": "Confirm",
+    "cancel": "Cancel",
+    "save": "Save",
+    "discard": "Discard",
+    "delete": "Delete",
+    "rename": "Rename",
+    "close": "Close",
+    "refresh": "Refresh",
+    "open": "Open",
+    "settings": "Settings",
+    "language": "Language",
+    "loading": "Loading...",
+    "search": "Search",
+    "new": "New"
+  },
+  "activityBar": {
+    "ai": "AI Assistant",
+    "browser": "Browser",
+    "fileTree": "File Tree",
+    "filePreview": "File Preview",
+    "filePreviewEmpty": "File Preview (no open files)",
+    "settings": "Settings",
+    "browserContextNoTabs": "Close all tabs ({{count}})",
+    "browserContextConfirm": "Close all {{count}} browser tabs?\n\nThis cannot be undone; URLs and scroll positions will be lost."
+  },
+  "quitDialog": {
+    "title": "Quit aitm?",
+    "description": "All terminal sessions and unsaved file edits will be lost.",
+    "cancel": "Cancel",
+    "confirm": "Quit"
+  },
+  "fileTree": {
+    "title": "File Tree",
+    "noActiveCwd": "No active directory",
+    "headerNoCwd": "(no cwd)",
+    "loadFailed": "Read failed: {{error}}",
+    "empty": "(empty)",
+    "refreshTitle": "Refresh file tree",
+    "menu": {
+      "newFile": "New File",
+      "newFolder": "New Folder",
+      "rename": "Rename",
+      "delete": "Delete",
+      "refresh": "Refresh"
+    }
+  },
+  "inputDialog": {
+    "newFileTitle": "New File",
+    "newFileLabel": "Location: {{path}}",
+    "newFilePlaceholder": "e.g. README.md",
+    "newFolderTitle": "New Folder",
+    "newFolderPlaceholder": "e.g. src",
+    "renameTitle": "Rename {{kind}}",
+    "renameLabel": "Original: {{name}}",
+    "renameOk": "Rename",
+    "createOk": "Create",
+    "errorEmpty": "Name cannot be empty",
+    "errorSeparator": "Name cannot contain path separators",
+    "errorSameName": "New name is identical to original"
+  },
+  "fsDeleteDialog": {
+    "titleFile": "Delete file?",
+    "titleDir": "Delete folder?",
+    "descriptionFile": "{{name}} will be permanently deleted and cannot be undone.",
+    "descriptionDir": "{{name}} and all its contents will be permanently deleted and cannot be undone."
+  },
+  "closeFileDialog": {
+    "title": "Unsaved changes",
+    "description": "{{name}} has unsaved changes.",
+    "saveAndClose": "Save and Close",
+    "discard": "Discard",
+    "cancel": "Cancel"
+  },
+  "statusBar": {
+    "branch": "Git branch: {{name}}",
+    "sessions": "{{count}} sessions",
+    "noFile": "No file",
+    "encoding": "UTF-8",
+    "lineEnding": "LF",
+    "ariaLabel": "System resource monitor",
+    "loadingPlaceholderAria": "Loading",
+    "rssTitle": "Total RSS of all aitm processes (includes PTY shells + browser webviews + user-spawned commands)",
+    "cpuTitle": "Total CPU usage of all aitm processes",
+    "sessionsTitle": "Number of active PTY sessions",
+    "gotoLinePrompt": "Go to line number:",
+    "gotoLineTitle": "Click to jump to a line (stub)",
+    "copyPathTitle": "Click to copy path: {{path}}",
+    "gitBranchTitle": "Git branch: {{name}}",
+    "networkOnline": "Online",
+    "networkOffline": "Offline",
+    "diskUsageTitle": "Disk used {{pct}}% (free {{free}} / total {{total}} GB)"
+  },
+  "tabs": {
+    "newTab": "New Tab",
+    "newTabTitle": "New tab (⌘T)",
+    "newTabDoubleClickHint": "Double-click here to open a new tab",
+    "close": "Close tab",
+    "doubleClickRenameHint": "Double-click to rename",
+    "titleInputAria": "Tab title editor",
+    "contextMenuAria": "Tab context menu",
+    "contextMenu": {
+      "close": "Close",
+      "closeOthers": "Close Others",
+      "closeRight": "Close to the Right",
+      "closeAll": "Close All"
+    },
+    "resetAutoTitle": "Reset to auto-follow directory",
+    "unreadAria": "{{count}} unread",
+    "notification": "Notification: {{level}}"
+  },
+  "settingsModal": {
+    "title": "Settings",
+    "tablistLabel": "Settings categories",
+    "sections": {
+      "appearance": "Appearance",
+      "terminal": "Terminal",
+      "shell": "Shell",
+      "ai": "AI Provider",
+      "browser": "Browser",
+      "safety": "Safety",
+      "keybindings": "Keybindings",
+      "language": "Language",
+      "privacy": "Privacy",
+      "notifications": "Notifications"
+    },
+    "languageHelp": "Restart not required; UI updates instantly."
+  },
+  "appearance": {
+    "layout": "Layout",
+    "activityBarPosition": "ActivityBar position",
+    "position": {
+      "left": "Left",
+      "right": "Right",
+      "top": "Top",
+      "bottom": "Bottom"
+    },
+    "activityBarHelp": "Takes effect immediately; icons inside the panel auto-rotate to match the chosen side",
+    "activityBarAriaItem": "ActivityBar {{label}}",
+    "themeMode": "Theme mode",
+    "themeModeHelpHeader": "Pick the overall aitm color scheme (the terminal's xterm theme auto-switches to the paired dark/light variant)",
+    "themeModeOption": {
+      "auto": "Follow system",
+      "dark": "Dark",
+      "light": "Light"
+    },
+    "themeModeAriaItem": "Theme mode {{label}}",
+    "themeModeFooter": "Takes effect immediately; shortcut ⌘⇧L toggles between dark and light",
+    "sidePanelLayout": "Side panel layout",
+    "aiSidebarPosition": "AI sidebar position",
+    "fileTreePosition": "File tree position",
+    "sidePanelHelp": "Takes effect immediately; when on the same side as the ActivityBar, the ActivityBar stays on the outermost edge",
+    "sidePanelAriaItem": "{{label}} {{position}}",
+    "general": "General",
+    "confirmQuitLabel": "Confirm before quitting",
+    "confirmQuitHelp": "Show a confirmation dialog before closing the app; with this off, the red close button / Cmd+Q quits immediately",
+    "confirmQuitAria": "Confirm before quitting",
+    "notifications": "Notifications",
+    "notificationSoundLabel": "System notification sound",
+    "notificationSoundHelp": "Fires system notifications when an AI waits for approval / completes / errors; turning this off keeps notifications silent",
+    "notificationSoundAria": "System notification sound"
+  },
+  "terminal": {
+    "font": "Font",
+    "fontFamilyLabel": "Font family",
+    "fontFamilyHelp": "Pick a preset · or type a CSS font stack",
+    "fontFamilyPlaceholder": "CSS font stack, e.g. 'Fira Code', monospace",
+    "fontFamilyFooter": "The text field renders in the chosen font — if the glyphs don't change, that font isn't installed; invalid stacks silently fall back to monospace",
+    "fontPresetMenloDefault": "Menlo (default)",
+    "fontPresetCustomLabel": "── Custom (edit below) ──",
+    "fontSize": "Font size",
+    "lineHeight": "Line height",
+    "cursor": "Cursor",
+    "cursorStyle": {
+      "block": "■ Block",
+      "underline": "_ Underline",
+      "bar": "| Bar"
+    },
+    "theme": "Theme",
+    "themeRadioGroupAria": "Terminal theme",
+    "themeAriaItem": "Theme {{name}}",
+    "themeHelp": "Takes effect immediately; colors are the original Dracula / Solarized / One Dark community palettes",
+    "shell": "Shell",
+    "shellDefaultLabel": "Default shell path (leave empty to inherit $SHELL)",
+    "shellPlaceholder": "e.g. /bin/zsh, /opt/homebrew/bin/fish",
+    "shellHelp": "Applies to newly opened tabs; existing tabs are unaffected"
+  },
+  "settings": {
+    "editor": {
+      "title": "Editor",
+      "fontSize": "Font size",
+      "fontSizeHelp": "CodeMirror font size in pixels. Also adjustable with Cmd+= / Cmd+- / Cmd+0 when the editor has focus."
+    }
+  },
+  "safety": {
+    "descriptionBefore": "Whitelisted ",
+    "descriptionAfter": " calls are auto-approved (no prompt). DESTRUCTIVE commands (e.g. sudo / git push --force) still always prompt — the whitelist cannot override them.",
+    "emptyHint": "(No entries yet; click the button below to add one)",
+    "listAriaLabel": "Whitelist entries",
+    "removePatternAriaLabel": "Remove pattern {{pattern}}",
+    "addButton": "+ Add pattern",
+    "draftPlaceholder": "e.g. git status *",
+    "draftAriaLabel": "New whitelist pattern",
+    "draftCancel": "Cancel",
+    "draftErrorAriaLabel": "Pattern syntax error",
+    "showBadgeLabel": "Show a badge on the tool bubble when auto-approved",
+    "patternTesterTitle": "Match tester",
+    "patternTesterPlaceholder": "Try it: git status -sb",
+    "patternTesterInputAriaLabel": "Match tester input",
+    "patternTesterResultAriaLabel": "Match tester result",
+    "patternTesterHit": "✓ Matched: {{pattern}}",
+    "patternTesterMiss": "✗ No match (will fall through to the HIGH-risk prompt)"
+  },
+  "privacy": {
+    "optInLabel": "Share anonymous usage stats",
+    "optInLabelRecommended": "Share anonymous usage stats (recommended)",
+    "descLine1Prefix": "aitm only reports launches / feature usage counts / errors; it ",
+    "descLine1Strong": "does not",
+    "descLine1Suffix": " collect your commands, files, or conversation contents.",
+    "descLine2": "Helps the developers see which features are worth investing in. You can turn this off at any time.",
+    "descLine3Prefix": "Data is handled by Aptabase (open-source privacy analytics): "
+  },
+  "browser": {
+    "resourceBudget": "Resource budget",
+    "resourceBudgetHelp": "Each active embedded browser tab uses roughly {{mb}} MB of memory. Collapsing the browser panel destroys every webview at once, restoring memory to zero.",
+    "activeLimit": "Active limit",
+    "activeLimitLabel": "Max simultaneously active",
+    "activeLimitAria": "Max simultaneously active",
+    "activeLimitHelp": "Range {{min}}-{{max}}; tabs above this count → the oldest non-pinned tab auto-suspends to free memory",
+    "suspendTitle": "Auto-suspend when idle",
+    "suspendLabel": "Idle timeout (minutes)",
+    "suspendAria": "Auto-suspend idle timeout (minutes)",
+    "suspendHelp": "Range {{min}}-{{max}} minutes; a non-active, non-pinned tab that's been backgrounded longer than this auto-suspends",
+    "currentBudgetLabel": "Current memory budget ≈",
+    "currentBudgetHelp": "Raising the active limit raises memory usage significantly; 3-5 is the sweet spot. If memory is tight, collapse the browser panel (collapse button on the right of the address bar) to release everything at once."
+  },
+  "keybindings": {
+    "title": "Keybindings",
+    "resetAll": "Reset all to defaults",
+    "intro": "Click \"Edit\" and press a new key combination; conflicts are highlighted in red. Changes take effect immediately and persist to settings.toml.",
+    "columnAction": "Action",
+    "columnBinding": "Shortcut",
+    "columnOps": "Operations",
+    "overriddenBadge": "(edited)",
+    "overriddenBadgeTitle": "Overridden by user",
+    "conflictBadge": "conflict",
+    "edit": "Edit",
+    "resetOne": "Reset",
+    "conflictWarning": "{{count}} shortcut conflict group(s) found; identical keys will trigger only the first matching action.",
+    "captureTitle": "Edit shortcut: {{action}}",
+    "captureDescription": "Press the new key combination (Esc to cancel)",
+    "captureCurrentLabel": "Current",
+    "captureCurrentEmpty": "Not set",
+    "captureNewLabel": "New",
+    "capturePlaceholder": "Press a key...",
+    "captureCancel": "Cancel",
+    "captureConfirm": "Confirm",
+    "actions": {
+      "newTab": "New tab",
+      "closeTab": "Close tab",
+      "nextTab": "Next tab",
+      "prevTab": "Previous tab",
+      "openSettings": "Open settings",
+      "toggleSidebar": "Toggle AI sidebar",
+      "toggleBrowser": "Toggle browser panel",
+      "toggleFilePreview": "Toggle file preview panel",
+      "splitVertical": "Split left/right",
+      "splitHorizontal": "Split top/bottom",
+      "closePane": "Close split"
+    }
+  },
+  "providers": {
+    "loading": "Loading…",
+    "empty": "No providers available",
+    "keySourceEnv": "shell env",
+    "keySourceDotenv": ".env file",
+    "keySourceConfig": "configured",
+    "apiKeyLabel": "API Key",
+    "apiKeyMaskedSuffix": " (configured: {{masked}}, leave empty to keep)",
+    "apiKeyInputAria": "{{name}} API Key",
+    "baseUrlLabelPrefix": "Base URL (default: ",
+    "baseUrlLabelSuffix": ")",
+    "baseUrlInputAria": "{{name}} Base URL",
+    "showKey": "Show",
+    "hideKey": "Hide",
+    "showKeyAria": "Show API Key",
+    "hideKeyAria": "Hide API Key",
+    "saving": "Saving…",
+    "save": "Save",
+    "alreadyUpToDate": "Up to date",
+    "testing": "Testing…",
+    "testConnection": "Test connection",
+    "savedFlash": "✓ Saved",
+    "savedFlashAria": "Saved successfully"
+  },
+  "fileStaleBanner": {
+    "message": "File has been modified externally. Your edits will be lost (unless you save them).",
+    "reload": "Reload",
+    "keepMine": "Keep mine"
+  },
+  "aiSidebar": {
+    "collapseAria": "Collapse AI sidebar",
+    "collapseTitle": "Collapse (⌘/)",
+    "loading": "Loading…",
+    "emptyAria": "AI assistant empty state",
+    "emptyTitle": "Configure an AI provider first",
+    "emptyDescPrefix": "Add an API key in",
+    "emptyDescSuffix": ", for example:",
+    "emptyHint": "Restart aitm to apply the config",
+    "envExampleComment": "# For proxies / international endpoints, add _BASE_URL:",
+    "providerSelectAria": "Select provider",
+    "modelSelectAria": "Select model",
+    "errorUnauthorized": "Authentication failed: check your API key",
+    "errorGeneric": "Error",
+    "errorSeparator": ": ",
+    "emptyChatHint": "Start a conversation with AI…",
+    "inputPlaceholder": "Type a message (Enter to send, Shift+Enter for newline)",
+    "tokensLabel": "tokens: in {{input}} · out {{output}}"
+  },
+  "sessionRestore": {
+    "dialogAria": "Restore previous session",
+    "title": "Restore previous session?",
+    "description": "Detected {{count}} tab(s) open last time. Restore them?",
+    "restoreBtn": "Restore previous session ({{count}} tabs)",
+    "freshBtn": "Start fresh (clear snapshot)",
+    "skipBtn": "Skip once (ask again next time)"
+  },
+  "closeTabDialog": {
+    "dialogAria": "Confirm close tab",
+    "title": "Close tab \"{{title}}\"?",
+    "description": "This tab has a command running (e.g. npm install / cargo test). Closing will send SIGHUP to the shell to force-stop the unfinished command.",
+    "cancel": "Cancel",
+    "forceClose": "Force close"
+  },
+  "closeFileConfirm": {
+    "dialogAria": "Confirm close file",
+    "title": "Save changes to \"{{name}}\"?",
+    "description": "This file has unsaved changes. Closing the tab will discard them."
+  },
+  "updateBadge": {
+    "available": "v{{version}} available",
+    "ariaLabel": "Upgrade to v{{version}}",
+    "tooltipWithNotes": "Current {{current}} → New {{latest}}\n\n{{notes}}",
+    "tooltipNoNotes": "Current {{current}} → New {{latest}}"
+  },
+  "browserTabBar": {
+    "newTabAria": "New browser tab",
+    "newTabTitle": "New tab (or press Cmd+Enter in the address bar to open the typed URL in a new tab)",
+    "closeTabAria": "Close tab {{label}}",
+    "stateLabel": {
+      "pinned": "Pinned",
+      "suspended": "Suspended",
+      "active": "Active"
+    }
+  },
+  "filePreviewDialog": {
+    "dialogAria": "Preview {{name}}",
+    "closeAria": "Close preview",
+    "descLabel": "File preview: {{name}}",
+    "loading": "Loading…",
+    "readError": "Read failed: {{error}}",
+    "unsupportedPrefix": "Preview not supported",
+    "reasonLabel": "Reason: {{reason}}",
+    "openWithDefault": "Open with default app",
+    "opening": "Opening…",
+    "openFailed": "Open failed: {{error}}",
+    "truncated": "Content truncated (size limit reached)",
+    "tooLargeReason": "File {{size}}MB exceeds {{max}}MB limit"
+  },
+  "messageBubble": {
+    "copyCode": "Copy",
+    "copyCodeAria": "Copy code"
+  },
+  "toolCallBubble": {
+    "status": {
+      "awaitingApproval": "Awaiting approval…",
+      "running": "Running…",
+      "done": "Done",
+      "error": "Error",
+      "rejected": "Rejected"
+    },
+    "autoApproved": "✓ Auto-approved",
+    "autoApprovedAria": "Auto-approval reason",
+    "argsLabel": "Arguments",
+    "resultLabel": "Result",
+    "errorResultLabel": "Error result",
+    "noArgs": "(no arguments)"
+  },
+  "fileEditor": {
+    "mdPreview": "Preview",
+    "mdRaw": "Raw"
+  },
+  "tabMetadata": {
+    "branchLabel": "Branch: {{name}}",
+    "branchDirty": " (dirty)",
+    "branchUnpushed": " ({{count}} commits unpushed)",
+    "cwdLabel": "cwd: {{path}}",
+    "portsLabel": "Listening ports: {{ports}}",
+    "gitBranchAria": "Git branch",
+    "dirtyAria": "dirty",
+    "portsAria": "Listening ports"
+  },
+  "browserUrlBar": {
+    "placeholderActive": "Enter URL, Enter to go / Cmd+Enter for new tab",
+    "placeholderEmpty": "Enter URL, Enter to open new tab",
+    "addressBarAria": "Browser address bar"
+  },
+  "conversationSwitcher": {
+    "switchAria": "Switch conversation",
+    "loadingTitle": "Loading",
+    "loadingPlaceholder": "Loading…",
+    "currentScopeAria": "Current scope",
+    "countSuffix": "{{count}} conversations",
+    "newAria": "New conversation",
+    "newItem": "+ New conversation",
+    "titleEditAria": "Edit conversation title",
+    "renameTitle": "Rename",
+    "switchToAria": "Switch to conversation {{title}}",
+    "renameToAria": "Rename conversation {{title}}",
+    "deleteToAria": "Delete conversation {{title}}"
+  },
+  "chat": {
+    "newConversationTitle": "New conversation {{n}}"
+  },
+  "scope": {
+    "global": "Global",
+    "globalTooltip": "Global scope (not in any project)",
+    "globalAria": "Current scope: Global",
+    "needsInit": "Pending",
+    "needsInitTooltip": "Waiting for init: {{cwd}}",
+    "needsInitAria": "Current scope: Pending",
+    "projectTooltip": "Project: {{name}}\nPath: {{path}}",
+    "projectAria": "Current scope: project {{name}}"
+  },
+  "splitDivider": {
+    "defaultAria": "Resize",
+    "fileTreeWidth": "Resize file tree",
+    "aiSidebarWidth": "Resize AI sidebar",
+    "terminalEditorHeight": "Resize terminal / editor split",
+    "terminalBrowserRatio": "Resize terminal / browser ratio"
+  }
+}

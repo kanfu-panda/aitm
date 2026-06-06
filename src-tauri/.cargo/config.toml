@@ -1,0 +1,6 @@
+# v0.8.0-A：macOS 上 cross-compile 到 Windows GNU target 的 linker 配置
+# 使用 brew install mingw-w64 装的工具链
+# 触发：cargo check/build --target x86_64-pc-windows-gnu
+[target.x86_64-pc-windows-gnu]
+linker = "x86_64-w64-mingw32-gcc"
+ar = "x86_64-w64-mingw32-ar"

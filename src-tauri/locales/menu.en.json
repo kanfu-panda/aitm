@@ -1,0 +1,34 @@
+{
+  "menu.app.title": "aitm",
+  "menu.app.about": "About aitm",
+  "menu.app.settings": "Settings…",
+  "menu.app.quit": "Quit aitm",
+
+  "menu.file.title": "File",
+  "menu.file.newTab": "New Tab",
+  "menu.file.closeTab": "Close Tab",
+  "menu.file.closeWindow": "Close Window",
+
+  "menu.edit.title": "Edit",
+  "menu.edit.undo": "Undo",
+  "menu.edit.redo": "Redo",
+  "menu.edit.cut": "Cut",
+  "menu.edit.copy": "Copy",
+  "menu.edit.paste": "Paste",
+  "menu.edit.selectAll": "Select All",
+
+  "menu.view.title": "View",
+  "menu.view.fontIncrease": "Increase Font Size",
+  "menu.view.fontDecrease": "Decrease Font Size",
+  "menu.view.fontReset": "Reset Font Size",
+  "menu.view.fullscreen": "Toggle Full Screen",
+
+  "menu.window.title": "Window",
+  "menu.window.minimize": "Minimize",
+  "menu.window.zoom": "Zoom",
+
+  "menu.help.title": "Help",
+  "menu.help.about": "About aitm",
+  "menu.help.documentation": "Documentation",
+  "menu.help.reportIssue": "Report an Issue"
+}
