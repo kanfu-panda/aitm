@@ -6,12 +6,16 @@ import {
   fsDelete,
   fsRename,
   fsTree,
+  fsWatchStart,
+  fsWatchStop,
+  onFsChanged,
   sessionCurrentCwd,
   type TreeNode,
 } from "../lib/tauri";
 import { useTabsStore } from "../stores/tabs";
 import { useFileEditorStore } from "../stores/file-editor";
 import { usePaneLayoutStore } from "../stores/pane-layout";
+import { useSidebarStore } from "../stores/sidebar";
 import {
   dirHasDirty,
   dirIsIgnored,
@@ -171,6 +175,11 @@ export default function FileTree() {
   // 文件夹仍由 row 展开逻辑处理，不调到这里。
   // 失败：openFile IPC 抛出时 fail-soft —— 控制台 warn 不打断用户。
   const handleFileClick = (path: string) => {
+    // 用户之前把文件预览面板收起（filePreviewVisible=false）时，点文件虽会
+    // openFile 但 fileEditorActive=(openFiles>0 && filePreviewVisible) 仍 false，
+    // 面板不显示、用户看不到文件。点文件即"想看文件"，强制展开预览面板
+    // （对齐 VS Code 等工具：点文件树的文件必然显示内容）。
+    useSidebarStore.getState().setFilePreviewVisible(true);
     useFileEditorStore
       .getState()
       .openFile(path)
@@ -216,6 +225,54 @@ export default function FileTree() {
       console.warn("reload tree 失败", e);
     }
   }, [rootCwd]);
+
+  // v1.1.0 F5：目录树 fs 自动刷新 —— rootCwd 确定后启动后端 notify watcher
+  // （递归监听、跳过 .git/node_modules/target 等，见 fs.rs SKIP_NAMES），
+  // 收到 `fs:changed` 事件后前端再 debounce ~200ms 才刷新（后端已 400ms
+  // debounce；这里防止同一操作在极端情况下触发多个批次时前端连续 reload）。
+  //
+  // TODO(增强项)：当前用 reloadTree() 整树 reload（会 reset 已展开节点的
+  // 展开态，见 reloadTree 上方注释同款取舍）。更精细的做法是只刷新受影响
+  // 且已展开的子树以保留展开态；因改动复杂度高（需要维护"当前已展开路径
+  // 集合"+按路径前缀命中增量重拉），本批次（plan §8 F5 条目）先用保守方案，
+  // 增量刷新留作后续版本。
+  //
+  // cleanup（rootCwd 变化 / 组件卸载）：停旧 watcher + 取消旧事件订阅 +
+  // 清掉未触发的 debounce 定时器，避免残留定时器刷新到已切走的 cwd。
+  useEffect(() => {
+    if (!rootCwd) return;
+    let cancelled = false;
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+    let unlisten: (() => void) | null = null;
+
+    fsWatchStart(rootCwd).catch((e) => {
+      console.warn("fsWatchStart 失败（fail-soft，目录树退化为仅手动/轮询刷新）", e);
+    });
+
+    onFsChanged(() => {
+      if (cancelled) return;
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        void reloadTree();
+      }, 200);
+    }).then((fn) => {
+      if (cancelled) {
+        fn();
+        return;
+      }
+      unlisten = fn;
+    });
+
+    return () => {
+      cancelled = true;
+      if (debounceTimer) clearTimeout(debounceTimer);
+      if (unlisten) unlisten();
+      fsWatchStop().catch(() => {
+        // 静默：切 cwd 太快 / 组件已卸载时 stop 失败不影响功能
+        // （下一次 fsWatchStart 会覆盖后端唯一的 watcher 句柄）。
+      });
+    };
+  }, [rootCwd, reloadTree]);
 
   // 关右键菜单：全局 click / Escape
   useEffect(() => {

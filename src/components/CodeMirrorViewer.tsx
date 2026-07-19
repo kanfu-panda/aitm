@@ -20,9 +20,13 @@
  *   3. 更新内容用 dispatch transaction（changes），不要重建 EditorState
  *   4. lang-* import 必须 await（dynamic import 返回 promise）
  *   5. view.destroy() 是 sync，可以直接在 effect cleanup 调
+ *
+ * v1.1.0 F3（编辑器侧聚焦）：forwardRef 暴露 `focus()`，供
+ * FilePreviewWorkspace 在 activeId 切换 / tab 激活时调用 `view.focus()`，
+ * 跟终端侧的自动聚焦对称（详见 TerminalView.tsx 的 isActive effect）。
  * ========================================================================== */
 
-import { useEffect, useRef } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import { EditorState, Compartment } from "@codemirror/state";
 import type { Extension } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
@@ -48,6 +52,12 @@ export interface CodeMirrorViewerProps {
   className?: string;
 }
 
+/** v1.1.0 F3：通过 ref 暴露给父层的聚焦能力。 */
+export interface CodeMirrorViewerHandle {
+  /** 把键盘焦点交给内部 EditorView（对应 xterm 侧的 term.focus()）。 */
+  focus: () => void;
+}
+
 /**
  * CodeMirror 6 viewer / editor 组件。
  *
@@ -56,15 +66,13 @@ export interface CodeMirrorViewerProps {
  *   - readOnlyCompartment：readOnly prop 变时切换
  * 不用 Compartment 就只能重建整个 EditorState，会丢光标位置 / 滚动。
  */
-export function CodeMirrorViewer({
-  path,
-  content,
-  language,
-  readOnly,
-  onChange,
-  onCursorChange,
-  className,
-}: CodeMirrorViewerProps) {
+export const CodeMirrorViewer = forwardRef<
+  CodeMirrorViewerHandle,
+  CodeMirrorViewerProps
+>(function CodeMirrorViewer(
+  { path, content, language, readOnly, onChange, onCursorChange, className },
+  ref,
+) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const langCompartmentRef = useRef<Compartment>(new Compartment());
@@ -79,6 +87,17 @@ export function CodeMirrorViewer({
   useEffect(() => {
     onCursorChangeRef.current = onCursorChange;
   }, [onCursorChange]);
+
+  // v1.1.0 F3：把内部 EditorView 的 focus() 暴露给父层（FilePreviewWorkspace）。
+  useImperativeHandle(
+    ref,
+    () => ({
+      focus: () => {
+        viewRef.current?.focus();
+      },
+    }),
+    [],
+  );
 
   // ---------- mount / unmount：只跑一次 ----------
   useEffect(() => {
@@ -182,6 +201,6 @@ export function CodeMirrorViewer({
       className={className ?? "h-full w-full overflow-hidden"}
     />
   );
-}
+});
 
 export default CodeMirrorViewer;

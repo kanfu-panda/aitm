@@ -1,16 +1,22 @@
 import {
+  isValidElement,
   useCallback,
   useEffect,
   useMemo,
   useRef,
   useState,
+  type ComponentProps,
   type CSSProperties,
   type MouseEvent as ReactMouseEvent,
+  type ReactNode,
 } from "react";
 import { useTranslation } from "react-i18next";
 import { createPortal } from "react-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import rehypeHighlight from "rehype-highlight";
+import { remarkStripComments } from "../lib/remark-strip-comments";
+import { MarkdownLink } from "./MarkdownLink";
 
 import hljs from "highlight.js/lib/core";
 import bash from "highlight.js/lib/languages/bash";
@@ -33,7 +39,10 @@ import swift from "highlight.js/lib/languages/swift";
 import typescript from "highlight.js/lib/languages/typescript";
 import toml from "highlight.js/lib/languages/ini"; // ini 适合 toml
 import yaml from "highlight.js/lib/languages/yaml";
-import "highlight.js/styles/github-dark.css";
+// v1.1.0 F7 hljs 主题跟随修复：不再静态导入 highlight.js/styles/github-dark.css
+// （硬编码深底，light 模式刺眼且不跟随）。改用 src/index.css 里 token 化的
+// .hljs-* class 映射（--c-syntax-* 走 data-theme 自动切换），dark/light 都对，
+// 且跟 rehype-highlight（下方 MarkdownView）共用同一套样式，无需维护两份。
 
 import {
   fsReadPreview,
@@ -642,12 +651,62 @@ function PreviewBody({ result, path }: BodyProps) {
   }
 }
 
+/** 递归从 react-markdown/rehype 渲染出的 children 节点树里提取纯文本。
+ * rehype-highlight 把高亮 token 包成嵌套 <span>，不能直接 String(children)。
+ * （与 FileEditorPane.tsx 的同名 helper 逻辑一致，各文件独立一份避免跨文件耦合。） */
+function getNodeText(node: ReactNode): string {
+  if (node == null || typeof node === "boolean") return "";
+  if (typeof node === "string" || typeof node === "number") return String(node);
+  if (Array.isArray(node)) return node.map(getNodeText).join("");
+  if (isValidElement(node)) {
+    const props = node.props as { children?: ReactNode };
+    return getNodeText(props.children);
+  }
+  return "";
+}
+
+function langFromClassName(cls?: string): string | undefined {
+  return /language-(\S+)/.exec(cls ?? "")?.[1];
+}
+
+/** md 代码块容器：语言标签（CSS ::before 读 data-lang）+ 复制按钮。
+ * 高亮本身由 rehype-highlight 注入的 hljs-* class 渲染（见 index.css）。 */
+function MdPre({ children, className, ...rest }: ComponentProps<"pre">) {
+  const { t } = useTranslation();
+  const codeClassName = isValidElement(children)
+    ? (children.props as { className?: string }).className
+    : undefined;
+  const lang = langFromClassName(codeClassName);
+  const raw = getNodeText(children);
+  return (
+    <pre {...rest} className={`group ${className ?? ""}`} data-lang={lang}>
+      <button
+        type="button"
+        onClick={() => {
+          navigator.clipboard.writeText(raw).catch(() => {});
+        }}
+        className="absolute right-2 top-1.5 rounded bg-[var(--c-bg-elev-3)] px-1.5 py-0.5 text-[10px] text-[var(--c-text-muted)] opacity-0 hover:text-[var(--c-text-base)] group-hover:opacity-100"
+        aria-label={t("messageBubble.copyCodeAria")}
+      >
+        {t("messageBubble.copyCode")}
+      </button>
+      {children}
+    </pre>
+  );
+}
+
 function MarkdownView({ content, truncated }: { content: string; truncated: boolean }) {
   // v0.6.0：去掉 max-w-[800px] 让内容跟随 dialog 宽度撑满。维护者 真机：max
   // 状态 dialog ~1800px 但内容仍卡在 800px 居中显得空旷，max 失去意义
   return (
     <article className="prose-md px-6 py-4">
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm, remarkStripComments]}
+        rehypePlugins={[rehypeHighlight]}
+        components={{ pre: MdPre, a: MarkdownLink }}
+      >
+        {content}
+      </ReactMarkdown>
       {truncated && <TruncatedNotice />}
     </article>
   );

@@ -232,9 +232,16 @@ pub async fn session_open(
                         tracing::warn!("emit session:data 失败: {e}");
                     }
 
-                    // 2. v0.5.0-A：喂 notifications OSC parser，发解析出的通知
+                    // 2. v0.5.0-A：喂 notifications OSC parser，发解析出的通知。
+                    // 显式 emit_to(main webview)：Tauri 2 multi-webview 模式下裸 app.emit
+                    // 广播会漏到主 webview（OSC7 / v0.5.9 已踩过同一坑），通知此前漏改 →
+                    // bell / OSC 通知到不了前端 → tab 未读 + Dock 角标不亮。
                     for event in osc_parser.feed(&bytes) {
-                        if let Err(e) = app2.emit("notification:received", &event) {
+                        if let Err(e) = app2.emit_to(
+                            tauri::EventTarget::webview("main"),
+                            "notification:received",
+                            &event,
+                        ) {
                             tracing::warn!("emit notification:received 失败: {e}");
                         }
                     }

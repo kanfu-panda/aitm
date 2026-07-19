@@ -20,23 +20,25 @@ import {
   screen,
 } from "@testing-library/react";
 
-// mock CodeMirrorViewer：渲染 cm-stub-<path> + 显示 content / language（断言用）
-vi.mock("../CodeMirrorViewer", () => ({
-  __esModule: true,
-  default: ({
-    path,
-    content,
-    language,
-  }: {
-    path: string;
-    content: string;
-    language?: string;
-  }) => (
-    <div data-testid={`cm-stub-${path}`} data-language={language ?? ""}>
-      {content}
-    </div>
-  ),
-}));
+// mock CodeMirrorViewer：渲染 cm-stub-<path> + 显示 content / language（断言用）。
+// v1.1.0 F3：真实组件已是 forwardRef（暴露 focus()），mock 也必须用 forwardRef
+// 包一层，否则 React 会因为「函数组件不能接 ref」在渲染期打 console.error 警告，
+// 污染下面 "Cmd+S 保存失败" 用例对 console.error 调用顺序的断言。
+vi.mock("../CodeMirrorViewer", async () => {
+  const React = await import("react");
+  const Stub = React.forwardRef<
+    { focus: () => void },
+    { path: string; content: string; language?: string }
+  >(function CodeMirrorViewerStub({ path, content, language }, ref) {
+    React.useImperativeHandle(ref, () => ({ focus: () => {} }), []);
+    return (
+      <div data-testid={`cm-stub-${path}`} data-language={language ?? ""}>
+        {content}
+      </div>
+    );
+  });
+  return { __esModule: true, default: Stub };
+});
 
 vi.mock("../../lib/tauri", async (orig) => {
   const real = await orig<typeof import("../../lib/tauri")>();
@@ -242,6 +244,58 @@ describe("FileEditorPane T5e Markdown 双模式", () => {
     render(<FileEditorPane file={f} />);
     expect(screen.getByTestId(`md-mode-toolbar-${f.id}`)).toBeTruthy();
     expect(screen.getByTestId(`md-preview-${f.id}`)).toBeTruthy();
+  });
+});
+
+describe("FileEditorPane v1.1.0 F7 md 代码块语法高亮", () => {
+  it("fenced code block 挂 rehype-highlight → 语言标签 + hljs class + token span", () => {
+    const file = makeFile({
+      path: "/x/code.md",
+      content: "```js\nconst x = 1;\n```",
+      language: "md",
+      mdMode: "preview",
+    });
+    pushFile(file);
+    const { container } = render(<FileEditorPane file={file} />);
+    const pre = container.querySelector("pre");
+    expect(pre).not.toBeNull();
+    // data-lang 由 MdPre 从 code 的 language-js class 里提取，供 ::before 语言标签用
+    expect(pre!.getAttribute("data-lang")).toBe("js");
+    const code = pre!.querySelector("code");
+    expect(code).not.toBeNull();
+    expect(code!.className).toMatch(/language-js/);
+    expect(code!.className).toMatch(/hljs/);
+    // 至少一个 token 被 rehype-highlight 包成 hljs-* span，证明真的跑过高亮
+    expect(
+      pre!.querySelectorAll("span[class*='hljs-']").length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("代码块渲染复制按钮", () => {
+    const file = makeFile({
+      path: "/x/code2.md",
+      content: "```bash\necho hi\n```",
+      language: "md",
+      mdMode: "preview",
+    });
+    pushFile(file);
+    render(<FileEditorPane file={file} />);
+    // test-setup.ts 默认切到 zh-CN（i18n.changeLanguage("zh-CN")）
+    expect(screen.getByLabelText("复制代码")).toBeTruthy();
+  });
+
+  it("无 fenced language 的代码块不强行高亮（rehype-highlight detect:false 默认行为）", () => {
+    const file = makeFile({
+      path: "/x/code3.md",
+      content: "```\nplain text block\n```",
+      language: "md",
+      mdMode: "preview",
+    });
+    pushFile(file);
+    const { container } = render(<FileEditorPane file={file} />);
+    const pre = container.querySelector("pre");
+    expect(pre).not.toBeNull();
+    expect(pre!.textContent).toContain("plain text block");
   });
 });
 

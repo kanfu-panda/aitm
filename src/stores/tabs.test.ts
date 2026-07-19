@@ -12,7 +12,12 @@ const trackEventMock = trackEvent as unknown as ReturnType<typeof vi.fn>;
 
 describe("useTabsStore", () => {
   beforeEach(() => {
-    useTabsStore.setState({ tabs: [], activeId: null, unreadByTab: {} });
+    useTabsStore.setState({
+      tabs: [],
+      activeId: null,
+      unreadByTab: {},
+      windowFocused: true,
+    });
     trackEventMock.mockClear();
   });
 
@@ -70,11 +75,22 @@ describe("useTabsStore", () => {
   });
 
   describe("未读通知 (unreadByTab)", () => {
-    it("markUnread 打到 active tab → 不计数", () => {
-      const { addTab, markUnread } = useTabsStore.getState();
+    it("markUnread 打到 active tab 且窗口聚焦 → 不计数（用户正看着，噪声不 badge）", () => {
+      const { addTab, markUnread, setWindowFocused } = useTabsStore.getState();
       const a = addTab(); // a 自动 active
+      setWindowFocused(true);
       markUnread(a);
+      // v1.1.0 R1：活跃 tab + 窗口聚焦 = 用户正看着，tab 补全响铃等噪声不点角标
       expect(useTabsStore.getState().unreadByTab[a]).toBeUndefined();
+    });
+
+    it("markUnread 打到 active tab 但窗口失焦 → 计数（切到别的 app 完成要 badge）", () => {
+      const { addTab, markUnread, setWindowFocused } = useTabsStore.getState();
+      const a = addTab(); // a 自动 active
+      setWindowFocused(false); // 用户切到别的 app
+      markUnread(a);
+      // claude 在 active tab 完成、用户已切走 → 必须能亮角标
+      expect(useTabsStore.getState().unreadByTab[a]).toBe(1);
     });
 
     it("markUnread 打到非 active tab → +1", () => {
@@ -143,6 +159,35 @@ describe("useTabsStore", () => {
       expect(useTabsStore.getState().unreadByTab[b]).toBe(1);
       closeTab(b);
       expect(useTabsStore.getState().unreadByTab[b]).toBeUndefined();
+    });
+  });
+
+  describe("v1.1.0 R1：未读 badge 焦点门控 (bell-badge)", () => {
+    it("窗口聚焦时：active tab 不计、后台 tab 照计（补全响铃不误 badge active）", () => {
+      const { addTab, markUnread, setWindowFocused } = useTabsStore.getState();
+      const a = addTab();
+      const b = addTab(); // b 当前 active
+      setWindowFocused(true); // 用户正看着窗口
+      markUnread(b); // active + 聚焦 → 跳过（真机反馈：cd 补全响铃不该 badge）
+      markUnread(a); // 后台 tab → 计数
+      expect(useTabsStore.getState().unreadByTab[b]).toBeUndefined();
+      expect(useTabsStore.getState().unreadByTab[a]).toBe(1);
+    });
+
+    it("窗口失焦时：active tab 也计数（切到别的 app，claude 完成要 badge）", () => {
+      const { addTab, markUnread, setActive, setWindowFocused } =
+        useTabsStore.getState();
+      const a = addTab();
+      const b = addTab(); // b 当前 active
+      setWindowFocused(false); // 用户切到别的 app
+      markUnread(b);
+      markUnread(a);
+      expect(useTabsStore.getState().unreadByTab[b]).toBe(1);
+      expect(useTabsStore.getState().unreadByTab[a]).toBe(1);
+      // 清零仍靠 setActive：点 / 切回该 tab 才已读
+      setActive(b);
+      expect(useTabsStore.getState().unreadByTab[b]).toBeUndefined();
+      expect(useTabsStore.getState().unreadByTab[a]).toBe(1);
     });
   });
 

@@ -17,6 +17,24 @@
 
   --font-sans: var(--f-sans);
   --font-mono: var(--f-mono);
+
+  /* v1.1.0 F6：接线 Tailwind 内置 radius 变量到项目 --r-* token。
+   * rounded-sm/md/lg/xl 读 --radius-*，接到 tokens.css 一处调节，dark/light 都生效。
+   * 注意：Tailwind v4 里**裸 `rounded` 硬编码 0.25rem、不读 --radius-***，见下方
+   * 单独的 .rounded 覆盖。--radius-full 沿用 Tailwind 默认（9999px）。 */
+  --radius-sm: var(--r-sm);
+  --radius-md: var(--r-md);
+  --radius-lg: var(--r-lg);
+  --radius-xl: var(--r-xl);
+}
+
+/* v1.1.0 F6 修正：Tailwind v4 的裸 `.rounded` 是硬编码 0.25rem（不读任何变量），
+ * 全站 123 处裸 rounded 因此不受 @theme 影响、视觉停在 4px 硬角——这正是真机反馈
+ * “边缘没圆角”的根因。这里用 unlayered 规则（优先级高于 Tailwind @layer utilities）
+ * 把裸 rounded 抬到 --r-md，让最常见的按钮 / tab / 输入框 / 菜单一次圆润。
+ * 显式档位（rounded-sm/lg/xl / rounded-full）不受影响。 */
+.rounded {
+  border-radius: var(--r-md);
 }
 
 html, body, #root {
@@ -30,27 +48,94 @@ html, body, #root {
  *   light 模式几乎不可读 — 维护者反馈）。
  * react-markdown 默认输出原生 HTML（h1/p/code/pre 等），无内置样式；
  * 这里给容器加 .prose-md，用 @apply 注入调色板 + 阅读字号。
- * 不上 @tailwindcss/typography（会带其它 reset，不必要）。 */
-.prose-md h1 { @apply mt-4 mb-2 text-2xl font-bold text-[var(--c-text-base)]; }
-.prose-md h2 { @apply mt-4 mb-2 text-xl font-bold text-[var(--c-text-base)]; }
+ * 不上 @tailwindcss/typography（会带其它 reset，不必要）。
+ *
+ * v1.1.0 F7 系统化升级：
+ *   - FileEditorPane md 预览 / FilePreviewDialog MarkdownView 走 .prose-md；
+ *   - MessageBubble（AI 气泡）走 .markdown-body（气泡窄幅 + p/table/code 已按
+ *     气泡场景单独定制），标题/引用块/分隔线/图片等通用元素与 .prose-md 共用
+ *     同一套规则（选择器合并），做到"三处视觉统一、不重复维护两套调色"。
+ *   - 代码块语法高亮见下方 .hljs-* 段（rehype-highlight / highlight.js 共用）。
+ *   - 阅读宽度（max-w）不写进 .prose-md 本身：FilePreviewDialog 是可拖拽/最大化
+ *     到 90% 屏幕的浮窗，v0.6.0 已明确去掉过 max-w（真机反馈 max 状态下内容仍
+ *     卡 800px 显得空旷）；只在 FileEditorPane 的固定宽度编辑器面板上加，见该文件。 */
+
+.prose-md h1, .markdown-body h1 {
+  @apply mt-5 mb-3 border-b border-[var(--c-border)] pb-2 text-2xl font-bold text-[var(--c-text-base)];
+}
+.prose-md h2, .markdown-body h2 {
+  @apply mt-5 mb-2 border-b border-[var(--c-border)] pb-1.5 text-xl font-bold text-[var(--c-text-base)];
+}
 .prose-md h3 { @apply mt-3 mb-2 text-lg font-semibold text-[var(--c-text-base)]; }
 .prose-md h4 { @apply mt-3 mb-2 text-base font-semibold text-[var(--c-text-base)]; }
 .prose-md p  { @apply my-2 leading-relaxed text-[var(--c-text-base)]; }
 .prose-md a  { @apply text-[var(--c-info)] underline hover:opacity-80; }
-.prose-md code { @apply rounded bg-[var(--c-bg-elev-2)] px-1 py-0.5 text-[0.9em] font-mono text-[var(--c-text-base)]; }
-.prose-md pre { @apply my-3 overflow-x-auto rounded bg-[var(--c-bg-elev-2)] p-3 text-xs font-mono text-[var(--c-text-base)]; }
-.prose-md pre code { @apply bg-transparent p-0; }
-.prose-md ul { @apply my-2 list-disc pl-6 text-[var(--c-text-base)]; }
-.prose-md ol { @apply my-2 list-decimal pl-6 text-[var(--c-text-base)]; }
+.prose-md code { @apply rounded border border-[var(--c-border)] bg-[var(--c-bg-elev-2)] px-1 py-0.5 text-[0.9em] font-mono text-[var(--c-text-base)]; }
+/* group 标记类由组件的 <pre> JSX 直接加（Tailwind 4 不允许 @apply group）；
+ * 这里只出 relative（给复制按钮 absolute 定位）+ 其余外观。 */
+.prose-md pre {
+  /* v1.1.0 R6：字号用相对 0.9em（跟随正文、与外面一致），不用绝对 text-xs（12px
+   * 偏小、真机反馈"和外面不一致"）。 */
+  @apply relative my-3 overflow-x-auto rounded-lg border border-[var(--c-border)] bg-[var(--c-bg-elev-2)] p-3 pt-6 text-[0.9em] font-mono leading-relaxed text-[var(--c-text-base)];
+}
+.prose-md pre code { @apply rounded-none border-0 bg-transparent p-0; }
+.prose-md pre[data-lang]::before {
+  content: attr(data-lang);
+  @apply absolute left-2 top-1.5 text-[10px] uppercase tracking-wide text-[var(--c-text-dim)];
+}
+.prose-md ul { @apply my-2 list-disc space-y-1 pl-6 text-[var(--c-text-base)]; }
+.prose-md ol { @apply my-2 list-decimal space-y-1 pl-6 text-[var(--c-text-base)]; }
 .prose-md li { @apply my-1; }
-.prose-md blockquote { @apply my-2 border-l-2 border-[var(--c-border)] pl-3 text-[var(--c-text-muted)]; }
-.prose-md table { @apply my-3 w-full border-collapse text-sm; }
+.prose-md li > ul, .prose-md li > ol { @apply mt-1 mb-0; }
+/* GFM 任务列表（remark-gfm）：去掉默认 marker，checkbox 与文字水平对齐 */
+.prose-md li.task-list-item { @apply list-none -ml-6 flex items-start gap-1.5; }
+.prose-md li.task-list-item input[type="checkbox"] {
+  @apply mt-1 accent-[var(--c-success)];
+}
+.prose-md blockquote, .markdown-body blockquote {
+  @apply my-3 rounded-r border-l-2 border-[var(--c-border-strong)] bg-[var(--c-bg-elev-1)] py-1.5 pl-3 pr-2 text-[var(--c-text-muted)];
+}
+.prose-md table { @apply my-3 w-full overflow-hidden rounded-lg border border-[var(--c-border)] border-collapse text-sm; }
 .prose-md th { @apply border border-[var(--c-border)] bg-[var(--c-bg-elev-2)] px-2 py-1 text-left text-[var(--c-text-base)]; }
 .prose-md td { @apply border border-[var(--c-border)] px-2 py-1 text-[var(--c-text-base)]; }
-.prose-md hr { @apply my-4 border-[var(--c-border)]; }
-.prose-md img { @apply my-3 max-w-full rounded; }
+.prose-md tbody tr:nth-child(even) td { @apply bg-[var(--c-bg-elev-1)]; }
+.prose-md hr, .markdown-body hr { @apply my-4 border-[var(--c-border)]; }
+.prose-md img, .markdown-body img { @apply my-3 max-w-full rounded-lg border border-[var(--c-border)]; }
 .prose-md strong { @apply font-semibold text-[var(--c-text-base)]; }
 .prose-md em { @apply italic; }
+
+/* === hljs（highlight.js / rehype-highlight 共用）语法高亮 token 化 ===
+ * v1.1.0 F7 hljs 主题跟随修复：原先 FilePreviewDialog 硬编码
+ *   `highlight.js/styles/github-dark.css`，light 模式下深底刺眼、不跟随。
+ * 改法：不导入任何静态 hljs 主题 CSS，改在此处把 .hljs-* class 映射到
+ *   --c-syntax-* token（与 CodeMirror 的 cm-theme.ts 用同一套语义色源）。
+ *   dark/light 切换时 CSS 变量自动换值，.hljs-* 规则本身零改动即可跟随，
+ *   无需 JS 侦测 data-theme 再切两份样式表。
+ * 覆盖面：FilePreviewDialog 的 CodeView（hljs.highlightElement 直接跑）+
+ *   三处 react-markdown 挂的 rehype-highlight（同一套 hljs-* class 命名）。 */
+.hljs {
+  color: var(--c-text-base);
+  background: transparent;
+}
+.hljs-comment, .hljs-quote { color: var(--c-syntax-comment); font-style: italic; }
+.hljs-keyword, .hljs-selector-tag, .hljs-doctag, .hljs-meta .hljs-keyword {
+  color: var(--c-syntax-keyword);
+}
+.hljs-literal, .hljs-number, .hljs-type { color: var(--c-syntax-number); }
+.hljs-string, .hljs-regexp, .hljs-meta-string { color: var(--c-syntax-string); }
+.hljs-title, .hljs-title.class_, .hljs-section { color: var(--c-syntax-class); }
+.hljs-title.function_, .hljs-function .hljs-title { color: var(--c-syntax-function); }
+.hljs-attr, .hljs-attribute, .hljs-variable, .hljs-template-variable {
+  color: var(--c-syntax-property);
+}
+.hljs-symbol, .hljs-bullet, .hljs-link { color: var(--c-syntax-link); }
+.hljs-name, .hljs-tag { color: var(--c-syntax-tag); }
+.hljs-built_in, .hljs-builtin-name { color: var(--c-syntax-class); }
+.hljs-meta { color: var(--c-syntax-comment); }
+.hljs-addition { color: var(--c-syntax-inserted); }
+.hljs-deletion { color: var(--c-syntax-deleted); }
+.hljs-emphasis { font-style: italic; }
+.hljs-strong { font-weight: bold; }
 
 /* === v0.4.2 T2c：长 inline code 防中文 label 拖累 ===
  * AI 输出形如 "工作目录：`/very/long/path`" 时，长 code 整段视作

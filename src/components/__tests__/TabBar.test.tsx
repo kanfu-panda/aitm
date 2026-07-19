@@ -219,7 +219,7 @@ describe("TabBar", () => {
     fireEvent.click(screen.getByLabelText("关闭标签"));
     await screen.findByRole("dialog");
 
-    fireEvent.click(screen.getByRole("button", { name: "强制关闭" }));
+    fireEvent.click(screen.getByRole("button", { name: "关闭" }));
 
     await waitFor(() => {
       expect(useTabsStore.getState().tabs.find((t) => t.id === id)).toBeUndefined();

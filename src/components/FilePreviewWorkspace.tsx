@@ -19,6 +19,10 @@
  *   - 焦点在编辑器容器（hover 或 focus）→ 关编辑器 tab
  *   - 焦点在终端 → 让 useShortcuts.closeTab 关终端 tab
  * 用 hasFocus pattern（document.activeElement contained in editor）判断。
+ *
+ * v1.1.0 F3（编辑器侧聚焦，US-3）：activeId 变化时（切 tab / 激活）调
+ * FileEditorPane.focus() —— 跟终端侧 TerminalView 的 isActive→term.focus()
+ * 对称，消除"切完还得再点一下才能输入"的手感断裂。
  * ========================================================================== */
 
 import { useEffect, useRef, useState } from "react";
@@ -27,7 +31,7 @@ import { useFileEditorStore } from "../stores/file-editor";
 import { useFocusSurfaceStore } from "../stores/focus-surface";
 import { fsReadText, fsStat } from "../lib/tauri";
 import FileTabBar from "./FileTabBar";
-import FileEditorPane from "./FileEditorPane";
+import FileEditorPane, { type FileEditorPaneHandle } from "./FileEditorPane";
 import CloseFileConfirmDialog from "./CloseFileConfirmDialog";
 
 /** v0.10.3 #10：外部改动轮询间隔（ms）。3s 平衡及时性 + IPC 频率。 */
@@ -43,11 +47,23 @@ export default function FilePreviewWorkspace() {
   const closeFile = useFileEditorStore((s) => s.closeFile);
   const saveFile = useFileEditorStore((s) => s.saveFile);
   const rootRef = useRef<HTMLDivElement | null>(null);
+  const editorPaneRef = useRef<FileEditorPaneHandle | null>(null);
 
   /** dirty 关 tab 时弹窗确认的 pending path；null = 无 pending。 */
   const [pendingClose, setPendingClose] = useState<string | null>(null);
 
   const activeFile = openFiles.find((f) => f.id === activeId) ?? null;
+
+  // v1.1.0 F3：切 tab / 激活 tab 后聚焦当前 FileEditorPane（终端侧对称实现见
+  // TerminalView.tsx 的 isActive effect）。rAF 等一帧：activeId 变化常伴随
+  // CodeMirrorViewer 因 key={file.path} 变化而重新 mount，需等新 view ready。
+  useEffect(() => {
+    if (!activeId) return;
+    const raf = requestAnimationFrame(() => {
+      editorPaneRef.current?.focus();
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [activeId]);
 
   /** 关 tab：dirty → 弹弹窗；non-dirty → 直接 close。 */
   const requestClose = (id: string) => {
@@ -278,7 +294,7 @@ export default function FilePreviewWorkspace() {
         </div>
       )}
       <div className="flex-1 min-h-0 min-w-0 overflow-hidden">
-        {activeFile && <FileEditorPane file={activeFile} />}
+        {activeFile && <FileEditorPane ref={editorPaneRef} file={activeFile} />}
       </div>
       <CloseFileConfirmDialog
         pendingPath={pendingClose}

@@ -19,7 +19,7 @@ test.beforeEach(async ({ page }) => {
 async function openSettings(page: import("@playwright/test").Page) {
   await page.getByLabel("设置").click();
   // B-1：SettingsModal 改 Tab 布局后，Safety 内容默认隐藏在 Safety tab；先切过去
-  await page.getByRole("tab", { name: "Safety" }).click();
+  await page.getByRole("tab", { name: "安全" }).click();
 }
 
 test("Safety tab 默认空白名单", async ({ page }) => {

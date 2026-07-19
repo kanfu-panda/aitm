@@ -747,6 +747,14 @@ export async function installTauriMock(
           };
         }
 
+        // === v1.1.0 F5：目录树 fs 自动刷新（notify watcher）stub ===
+        // e2e 环境没有真实后端 watcher；no-op 即可。真实触发靠 spec 调
+        // `window.__emitMockEvent("fs:changed", { paths: [...] })`（事件机制通用，
+        // 见文件顶部说明，无需额外 mock）。
+        if (cmd === "fs_watch_start" || cmd === "fs_watch_stop") {
+          return null;
+        }
+
         // === Phase 4A T1：内嵌浏览器 IPC stub（最小） ===
         // T2/T3/T4/T5 各自加自己的语义；这里仅让默认 e2e 不破。
         if (cmd === "browser_open_tab") {

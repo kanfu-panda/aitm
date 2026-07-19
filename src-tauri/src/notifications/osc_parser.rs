@@ -45,6 +45,11 @@ enum ParserState {
     InsideOsc,
     /// 在 OSC 内看到 ESC，等下一字符看是不是 `\`（ST）
     InsideOscEsc,
+    /// OSC 超长被丢弃后，吞掉剩余 payload 直到终结符（BEL 或 ST）。
+    /// 不能直接回 Normal：否则被丢弃 OSC 的终结符 BEL 会被误判成孤立响铃
+    DiscardOsc,
+    /// 在 DiscardOsc 内看到 ESC，等下一字符看是不是 `\`（ST）
+    DiscardOscEsc,
 }
 
 pub struct OscParser {
@@ -65,12 +70,27 @@ impl OscParser {
     /// 增量喂入字节，返回本次解析出的 0 个或多个事件。
     pub fn feed(&mut self, bytes: &[u8]) -> Vec<NotificationEvent> {
         let mut events = Vec::new();
+        // 同一 chunk 内多个孤立 BEL 合并为 1 个 Bell 事件，防 PTY 刷屏
+        // （如 `printf '\a\a\a'`）触发事件风暴；前端 markUnread 另有 200ms 节流
+        let mut bell_seen = false;
 
         for &b in bytes {
             match self.state {
                 ParserState::Normal => {
                     if b == ESC {
                         self.state = ParserState::SeenEsc;
+                    } else if b == BEL && !bell_seen {
+                        // 孤立 BEL = 终端响铃（OSC 内的 BEL 是终结符，走 InsideOsc
+                        // 分支不会到这里）。macOS Terminal 以响铃点亮 Dock 角标，
+                        // Claude Code 等 CLI 完成时正是靠它提示，aitm 对齐该语义
+                        bell_seen = true;
+                        events.push(NotificationEvent {
+                            session_id: self.session_id.clone(),
+                            level: NotificationLevel::Done,
+                            message: String::new(),
+                            source: NotificationSource::Bell,
+                            timestamp_ms: now_ms(),
+                        });
                     }
                     // 其他普通字符透传，不收集
                 }
@@ -94,8 +114,8 @@ impl OscParser {
                     } else {
                         self.buffer.push(b);
                         if self.buffer.len() > MAX_OSC_LEN {
-                            // 防 DoS：超长直接丢弃 + 回 Normal
-                            self.reset();
+                            // 防 DoS：超长丢弃，进 DiscardOsc 吞到终结符为止
+                            self.discard();
                         }
                     }
                 }
@@ -112,8 +132,24 @@ impl OscParser {
                         self.buffer.push(b);
                         self.state = ParserState::InsideOsc;
                         if self.buffer.len() > MAX_OSC_LEN {
-                            self.reset();
+                            self.discard();
                         }
+                    }
+                }
+                ParserState::DiscardOsc => {
+                    if b == BEL {
+                        self.reset();
+                    } else if b == ESC {
+                        self.state = ParserState::DiscardOscEsc;
+                    }
+                    // 其他字节继续吞
+                }
+                ParserState::DiscardOscEsc => {
+                    if b == BACKSLASH {
+                        // ESC \ = ST，被丢弃 OSC 终于结束
+                        self.reset();
+                    } else {
+                        self.state = ParserState::DiscardOsc;
                     }
                 }
             }
@@ -158,6 +194,12 @@ impl OscParser {
     fn reset(&mut self) {
         self.buffer.clear();
         self.state = ParserState::Normal;
+    }
+
+    /// 超长 OSC 丢弃：清 buffer + 进 DiscardOsc 吞掉剩余 payload 和终结符
+    fn discard(&mut self) {
+        self.buffer.clear();
+        self.state = ParserState::DiscardOsc;
     }
 }
 
@@ -335,7 +377,8 @@ mod tests {
         input.extend(vec![b'a'; 8200]); // 超长 message
         input.push(BEL);
         let events = p.feed(&input);
-        // 超长被截断 → parser reset → BEL 时已不在 InsideOsc，不发 event
+        // 超长被丢弃 → DiscardOsc 吞剩余 payload；终结符 BEL 也被吞，
+        // 不发 OSC event 也不误判成孤立响铃
         assert_eq!(events.len(), 0);
         // 后续正常 OSC 应能解析（state 已回 Normal）
         let events2 = p.feed(b"\x1b]9;recovered\x07");
@@ -395,6 +438,52 @@ mod tests {
         let events = p.feed(b"\x1b[31mred\x1b[0m\x1b]9;after csi\x07");
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].message, "after csi");
+    }
+
+    #[test]
+    fn 孤立_bel_产生_bell_事件() {
+        let mut p = parser();
+        let events = p.feed(b"command done\x07");
+        assert_eq!(events.len(), 1);
+        let e = &events[0];
+        assert_eq!(e.session_id, "test-session");
+        assert_eq!(e.source, NotificationSource::Bell);
+        assert_eq!(e.level, NotificationLevel::Done);
+        assert_eq!(e.message, "");
+    }
+
+    #[test]
+    fn osc_终结符_bel_不产生_bell_事件() {
+        let mut p = parser();
+        // OSC 9 以 BEL 结尾：只出 1 个 Osc9 事件，BEL 不能再被当响铃
+        let events = p.feed(b"\x1b]9;done\x07");
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].source, NotificationSource::Osc9);
+    }
+
+    #[test]
+    fn 同_chunk_多_bel_合并为一个事件() {
+        let mut p = parser();
+        let events = p.feed(b"\x07beep\x07boop\x07");
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].source, NotificationSource::Bell);
+    }
+
+    #[test]
+    fn 跨_chunk_bel_各自产生事件() {
+        let mut p = parser();
+        assert_eq!(p.feed(b"\x07").len(), 1);
+        assert_eq!(p.feed(b"\x07").len(), 1);
+    }
+
+    #[test]
+    fn 同_chunk_bell_与_osc_9_并存() {
+        let mut p = parser();
+        let events = p.feed(b"\x07\x1b]9;build ok\x07");
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].source, NotificationSource::Bell);
+        assert_eq!(events[1].source, NotificationSource::Osc9);
+        assert_eq!(events[1].message, "build ok");
     }
 
     #[test]

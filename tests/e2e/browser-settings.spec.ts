@@ -24,8 +24,8 @@ test("SettingsModal 显示全部 tab（外观 / 终端 / AI Provider / Safety / 
   // v0.4.1 T2 加了"外观"tab；其余保持
   await expect(page.getByRole("tab", { name: "外观" })).toBeVisible();
   await expect(page.getByRole("tab", { name: "终端" })).toBeVisible();
-  await expect(page.getByRole("tab", { name: "AI Provider" })).toBeVisible();
-  await expect(page.getByRole("tab", { name: "Safety" })).toBeVisible();
+  await expect(page.getByRole("tab", { name: "AI 提供商" })).toBeVisible();
+  await expect(page.getByRole("tab", { name: "安全" })).toBeVisible();
   await expect(page.getByRole("tab", { name: "浏览器" })).toBeVisible();
 });
 

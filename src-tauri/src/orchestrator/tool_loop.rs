@@ -821,12 +821,15 @@ mod tests {
 
     struct FakeProvider {
         responses: StdMutex<Vec<Vec<ChatChunk>>>,
+        /// true → stream_chat 直接返回 Err（模拟 provider 失败，验证 emit Error）。
+        fail: bool,
     }
 
     impl FakeProvider {
         fn new(responses: Vec<Vec<ChatChunk>>) -> Self {
             Self {
                 responses: StdMutex::new(responses),
+                fail: false,
             }
         }
 
@@ -836,6 +839,16 @@ mod tests {
             let many = (0..100).map(|_| chunks.clone()).collect();
             Self {
                 responses: StdMutex::new(many),
+                fail: false,
+            }
+        }
+
+        /// stream_chat 必失败（用于验证 provider 错误 → emit Error 通知）。
+        /// 不能用空 responses 模拟：空队列会兜底返回 Done(EndTurn) 而非报错。
+        fn failing() -> Self {
+            Self {
+                responses: StdMutex::new(vec![]),
+                fail: true,
             }
         }
     }
@@ -858,6 +871,9 @@ mod tests {
             &self,
             _req: ChatRequest,
         ) -> Result<BoxStream<'static, ChatChunk>, ProviderError> {
+            if self.fail {
+                return Err(ProviderError::Other("fake provider 注入失败".into()));
+            }
             let chunks = {
                 let mut g = self.responses.lock().unwrap();
                 if g.is_empty() {
@@ -1475,8 +1491,11 @@ mod tests {
 
     #[tokio::test]
     async fn notification_ask_user_emit_waiting() {
-        // 调一个 high 风险工具 → ask_user 弹审批前应 emit Waiting
-        // 用 list_files 默认 Low；改用 run_command 触发 high
+        // 调一个 high 风险工具 → ask_user 弹审批前应 emit Waiting。
+        // ⚠️ cmd 必须是 High 风险：safety::risk::classify 把 echo/ls 等只读命令
+        // 判 Low 自动批准（不弹审批 → 不 emit tool_request），那样 spawn_responder
+        // 会永久空转等不到请求导致测试 hang。用 npm run build（非 low 前缀、
+        // 非 destructive）→ 默认 High，真走 ask_user 审批路径。
         let provider = Arc::new(FakeProvider::new(vec![
             vec![
                 ChatChunk::ToolUseStart {
@@ -1485,7 +1504,7 @@ mod tests {
                 },
                 ChatChunk::ToolUseArgsDelta {
                     call_id: "tc1".into(),
-                    json_partial: r#"{"cmd":"echo hi"}"#.into(),
+                    json_partial: r#"{"cmd":"npm run build"}"#.into(),
                 },
                 ChatChunk::ToolUseEnd {
                     call_id: "tc1".into(),
@@ -1548,8 +1567,10 @@ mod tests {
 
     #[tokio::test]
     async fn notification_provider_失败_emit_error() {
-        // 让 FakeProvider 队列空（next stream_chat 会失败）→ collect_one_turn 返 Err
-        let provider = Arc::new(FakeProvider::new(vec![]));
+        // FakeProvider 注入失败（stream_chat 返 Err）→ collect_one_turn 返 Err
+        // → 应 emit Error 通知。注意不能用空 responses：空队列会兜底返回
+        // Done(EndTurn) 而非报错（这正是本测试此前一直 FAILED 的原因）。
+        let provider = Arc::new(FakeProvider::failing());
         let sink = Arc::new(MockSink::default());
         let tools = Arc::new(ToolRegistry::with_defaults());
         let handle = Arc::new(ToolLoopHandle::new());

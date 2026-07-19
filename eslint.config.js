@@ -65,5 +65,10 @@ export default [
     },
     settings: { react: { version: "detect" } },
   },
+  {
+    // Node 环境跑的配置文件：process 等 node globals 合法
+    files: ["playwright.config.ts"],
+    languageOptions: { globals: { process: "readonly" } },
+  },
   { ignores: ["dist/", "src-tauri/target/", "node_modules/", "playwright-report/"] },
 ];

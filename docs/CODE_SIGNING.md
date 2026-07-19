@@ -27,9 +27,9 @@ spctl -a -t open --context context:primary-signature -v aitm_<version>_aarch64.d
 
 ## Signing Process
 
-All release builds are produced via GitHub Actions workflows in this repository. The signing process is automated and tied to tagged releases only — no ad-hoc signing occurs outside of the official release pipeline.
+**Windows** binaries are built and signed via a GitHub Actions workflow that runs only on tagged releases. Signing requests are submitted through SignPath.io and require manual approval by the project maintainer before a certificate is applied.
 
-Signing requests for Windows are submitted through SignPath.io and require manual approval by the project maintainer before a certificate is applied.
+**macOS** disk images are signed with the Developer ID certificate and notarized by Apple **locally by the maintainer** as part of the release process, then attached to the corresponding GitHub Release. There is no macOS CI workflow; macOS signing and notarization are performed on the maintainer's own machine.
 
 ## Verification
 
