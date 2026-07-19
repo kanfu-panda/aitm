@@ -6,11 +6,11 @@ aitm uses code signing to ensure the integrity and authenticity of its release b
 
 ## Windows
 
-Windows binaries (`.exe` and `.msi` installers) are signed using a certificate provided by the **[SignPath Foundation](https://signpath.org)** — a non-profit organization that provides free code signing for open-source projects.
+Windows binaries (`.exe` and `.msi` installers) are **not yet code-signed**. Code signing via the **[SignPath Foundation](https://signpath.org)** — a non-profit that provides free code signing for open-source projects — is planned for a future release. Until then, Windows SmartScreen / Defender may warn on first run ("Windows protected your PC" → **More info → Run anyway**).
 
-The certificate is issued in the name of SignPath Foundation and identifies aitm as the signed software. SignPath Foundation acts as a trusted intermediary between the project and the certificate authority.
+Once signing is in place, the certificate will be issued in the name of SignPath Foundation and identify aitm as the signed software, with SignPath acting as a trusted intermediary between the project and the certificate authority.
 
-**Signed artifacts:**
+**Artifacts to be signed (once enabled):**
 - `aitm_<version>_x64_en-US.msi`
 - `aitm_<version>_x64-setup.exe`
 - `aitm_<version>_arm64_en-US.msi`
@@ -27,13 +27,13 @@ spctl -a -t open --context context:primary-signature -v aitm_<version>_aarch64.d
 
 ## Signing Process
 
-**Windows** binaries are built and signed via a GitHub Actions workflow that runs only on tagged releases. Signing requests are submitted through SignPath.io and require manual approval by the project maintainer before a certificate is applied.
+**Windows** binaries are built via a GitHub Actions workflow that runs only on tagged releases. Code signing is not yet enabled; once SignPath signing is set up, signing requests will be submitted through SignPath.io and require manual approval by the maintainer before a certificate is applied.
 
 **macOS** disk images are signed with the Developer ID certificate and notarized by Apple **locally by the maintainer** as part of the release process, then attached to the corresponding GitHub Release. There is no macOS CI workflow; macOS signing and notarization are performed on the maintainer's own machine.
 
 ## Verification
 
-Every release on the [Releases page](https://github.com/kanfu-panda/aitm/releases) includes the signed binaries. You can verify the Windows code signature using:
+Every release on the [Releases page](https://github.com/kanfu-panda/aitm/releases) includes the platform binaries. Once Windows code signing is enabled, you can verify the signature using:
 
 ```powershell
 # Windows PowerShell
