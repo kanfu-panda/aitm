@@ -504,8 +504,9 @@ export async function onNotificationReceived(
   );
 }
 
-// bell-badge：窗口焦点改用 webview 原生 window blur/focus 事件（见 App.tsx）。
-// Tauri 2 multi-webview 的 getCurrentWindow().onFocusChanged 真机不触发，已弃用。
+// bell-badge：窗口聚焦状态由后端 WindowEvent::Focused emit 的 `window:focus-changed`
+// 事件驱动（见下方 onWindowFocusChanged 与 src-tauri/src/lib.rs）。早期试过
+// getCurrentWindow().onFocusChanged，Tauri 2 multi-webview 真机不触发，已弃用。
 
 // === v0.5.0-B Tab 元信息 ===
 

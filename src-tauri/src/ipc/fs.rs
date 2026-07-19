@@ -18,6 +18,7 @@
 //!   不让整次调用失败。
 //! - 隐藏文件（`.foo`）默认显示；只有 [`SKIP_NAMES`] 里的精确名字过滤。
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::Duration;
@@ -695,6 +696,9 @@ where
                 // watcher 内部错误（如监听目标被删除）：静默丢弃，不阻塞后续批次。
                 Err(_) => return,
             };
+            // HashSet 去重（保持首次出现顺序）：一次批次可能含大量路径（批量
+            // rename / checkout / 生成产物），用 Vec::contains 去重是 O(n²)。
+            let mut seen: HashSet<String> = HashSet::new();
             let mut paths: Vec<String> = Vec::new();
             for event in &events {
                 for p in &event.paths {
@@ -702,7 +706,7 @@ where
                         continue;
                     }
                     let s = p.to_string_lossy().into_owned();
-                    if !paths.contains(&s) {
+                    if seen.insert(s.clone()) {
                         paths.push(s);
                     }
                 }
