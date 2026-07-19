@@ -115,6 +115,70 @@ describe("FilePreviewDialog", () => {
     });
   });
 
+  // v1.1.0 F7：hljs.highlightElement 直跑（非 react-markdown 路径）也应打上 hljs
+  // class；配色走 index.css 的 .hljs-* token 映射，不再依赖静态 github-dark.css。
+  it("kind=code → hljs.highlightElement 打上 hljs class（token 化配色接管，无需静态主题 CSS）", async () => {
+    mockPreview.mockResolvedValue({
+      kind: "code",
+      content: "fn main() {}",
+      language: "rust",
+      truncated: false,
+    });
+    render(<FilePreviewDialog />);
+    setPath("/tmp/main2.rs");
+
+    await waitFor(() => {
+      const code = document.body.querySelector("code.language-rust");
+      expect(code?.className).toMatch(/hljs/);
+    });
+  });
+
+  // v1.1.0 F7 hljs 主题跟随修复：.hljs-* 规则走 --c-syntax-* CSS 变量，理论上
+  // dark/light 切换零 DOM 结构改动（纯 CSS 变量重新取值）。这里断言 data-theme
+  // 切换前后 highlighted DOM 的 class 结构保持一致 —— 证明高亮不是靠 JS 侦测
+  // data-theme 再手动换 class / 换样式表实现的（避免回归成硬编码单档）。
+  it("data-theme 切 light 前后，hljs 高亮 DOM 结构不变（纯 CSS 变量驱动，无需 JS 分支）", async () => {
+    mockPreview.mockResolvedValue({
+      kind: "code",
+      content: "fn main() {}",
+      language: "rust",
+      truncated: false,
+    });
+    document.documentElement.dataset.theme = "dark";
+    render(<FilePreviewDialog />);
+    setPath("/tmp/main3.rs");
+
+    const classBefore = await waitFor(() => {
+      const code = document.body.querySelector("code.language-rust");
+      expect(code).not.toBeNull();
+      return code!.className;
+    });
+
+    document.documentElement.dataset.theme = "light";
+    await waitFor(() => {
+      const code = document.body.querySelector("code.language-rust");
+      expect(code!.className).toBe(classBefore);
+    });
+    document.documentElement.dataset.theme = "dark";
+  });
+
+  it("kind=markdown fenced code block → react-markdown 侧也走 rehype-highlight（hljs class + 语言标签）", async () => {
+    mockPreview.mockResolvedValue({
+      kind: "markdown",
+      content: "```ts\nconst x: number = 1;\n```",
+      truncated: false,
+    });
+    render(<FilePreviewDialog />);
+    setPath("/tmp/x2.md");
+
+    await waitFor(() => {
+      const pre = document.body.querySelector("pre[data-lang='ts']");
+      expect(pre).not.toBeNull();
+      const code = pre!.querySelector("code");
+      expect(code?.className).toMatch(/hljs/);
+    });
+  });
+
   it("kind=text → 渲染 <pre> 纯文本", async () => {
     mockPreview.mockResolvedValue({
       kind: "text",

@@ -4,6 +4,7 @@ import {
   type NotificationEvent,
   type NotificationLevel,
   priority,
+  setMarkUnreadHook,
   setSystemNotificationHook,
   useNotificationsStore,
 } from "./notifications";
@@ -156,6 +157,33 @@ describe("useNotificationsStore", () => {
         expect(hook).toHaveBeenCalledWith(event);
       },
     );
+
+    it("source=bell 不调 systemNotificationHook（响铃只点未读 + Dock 角标，不弹横幅）", () => {
+      const hook = vi.fn();
+      setSystemNotificationHook(hook);
+      useNotificationsStore
+        .getState()
+        .emitNotification("tab-1", baseEvent({ source: "bell", message: "" }));
+      expect(hook).not.toHaveBeenCalled();
+      // 但 tab 状态环仍更新（done 级别）
+      expect(useNotificationsStore.getState().byTab["tab-1"].level).toBe(
+        "done",
+      );
+    });
+
+    it("source=bell 仍触发 markUnreadHook（未读计数 → Dock 角标路径）", () => {
+      const mark = vi.fn();
+      setMarkUnreadHook(mark);
+      try {
+        useNotificationsStore
+          .getState()
+          .emitNotification("tab-1", baseEvent({ source: "bell" }));
+        expect(mark).toHaveBeenCalledTimes(1);
+        expect(mark).toHaveBeenCalledWith("tab-1");
+      } finally {
+        setMarkUnreadHook(null);
+      }
+    });
 
     it("hook 未注入时 emitNotification 不炸（safe call）", () => {
       setSystemNotificationHook(null);

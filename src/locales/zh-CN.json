@@ -327,9 +327,9 @@
   "closeTabDialog": {
     "dialogAria": "关闭标签确认",
     "title": "关闭标签 \"{{title}}\"？",
-    "description": "该标签里有命令正在运行（如 npm install / cargo test 等长任务）。关闭会向 shell 发 SIGHUP 强制中断未完成的命令。",
+    "description": "有任务正在运行，确定关闭吗？",
     "cancel": "取消",
-    "forceClose": "强制关闭"
+    "forceClose": "关闭"
   },
   "closeFileConfirm": {
     "dialogAria": "关闭文件确认",

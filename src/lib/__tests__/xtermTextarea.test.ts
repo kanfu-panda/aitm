@@ -4,6 +4,7 @@ import {
   disableSystemTextInput,
   isWebKitRuntime,
   shouldFixSwallowedShiftKey,
+  shouldInjectSwallowedSpace,
 } from "../xtermTextarea";
 
 describe("disableSystemTextInput", () => {
@@ -197,5 +198,158 @@ describe("shouldFixSwallowedShiftKey", () => {
         shouldFixSwallowedShiftKey({ ...baseEvent, key: "_" }, now - 200, now),
       ).toBe(true);
     });
+  });
+});
+
+describe("shouldInjectSwallowedSpace（v1.1.0 F4，空格吞键补发）", () => {
+  const NEG = -1e9; // 时间戳初值（还没发生过的事件）
+  const WIN = 35; // 定时器窗口 ms
+  // 定时器在 spaceDownTime + WIN 触发
+  const fire = (spaceDownTime: number) => spaceDownTime + WIN;
+
+  it("被吞的 ASCII 空格：窗口内无空格 onData、也无近端 compositionend → 补发", () => {
+    // 真机样本 t=18498：上一次空格 onData 在 t=16007（2491ms 前），无 COMP_END
+    const spaceDownTime = 18498;
+    expect(
+      shouldInjectSwallowedSpace(
+        {
+          spaceDownTime,
+          lastSpaceOnDataTime: 16007,
+          lastCompEndTime: NEG,
+        },
+        fire(spaceDownTime),
+      ),
+    ).toBe(true);
+  });
+
+  it("成功的 ASCII 空格：onData 早于 keydown ~1ms（窗口内有空格 onData）→ 不补", () => {
+    // 真机样本 t=16008 keydown，t=16007 onData(" ")
+    const spaceDownTime = 16008;
+    expect(
+      shouldInjectSwallowedSpace(
+        {
+          spaceDownTime,
+          lastSpaceOnDataTime: 16007,
+          lastCompEndTime: NEG,
+        },
+        fire(spaceDownTime),
+      ),
+    ).toBe(false);
+  });
+
+  it("中文确认候选词的空格：紧跟 ≤50ms 内 compositionend（标志全 false）→ 不补", () => {
+    // 真机样本 t=3486 keydown，t=3485 COMP_END("要")，onData 吐的是"要"不是空格
+    const spaceDownTime = 3486;
+    expect(
+      shouldInjectSwallowedSpace(
+        {
+          spaceDownTime,
+          lastSpaceOnDataTime: NEG, // 从没吐过空格 onData
+          lastCompEndTime: 3485,
+        },
+        fire(spaceDownTime),
+      ),
+    ).toBe(false);
+  });
+
+  it("compositionend 恰好 50ms 前（边界内）→ 仍判为确认，不补", () => {
+    const spaceDownTime = 5000;
+    expect(
+      shouldInjectSwallowedSpace(
+        {
+          spaceDownTime,
+          lastSpaceOnDataTime: NEG,
+          lastCompEndTime: spaceDownTime - 50,
+        },
+        fire(spaceDownTime),
+      ),
+    ).toBe(false);
+  });
+
+  it("compositionend 在 51ms 前（窗口外）+ 无空格 onData → 判被吞，补发", () => {
+    // 中文早已结束、用户又敲了个真空格被吞的场景
+    const spaceDownTime = 5000;
+    expect(
+      shouldInjectSwallowedSpace(
+        {
+          spaceDownTime,
+          lastSpaceOnDataTime: NEG,
+          lastCompEndTime: spaceDownTime - 51,
+        },
+        fire(spaceDownTime),
+      ),
+    ).toBe(true);
+  });
+
+  it("等待期内 compositionend 才刚触发（keydown 后、nowMs 前）→ 不补（合成收尾）", () => {
+    const spaceDownTime = 5000;
+    expect(
+      shouldInjectSwallowedSpace(
+        {
+          spaceDownTime,
+          lastSpaceOnDataTime: NEG,
+          lastCompEndTime: spaceDownTime + 10, // 定时器等待期内合成才结束
+        },
+        fire(spaceDownTime),
+      ),
+    ).toBe(false);
+  });
+
+  it("空格 onData 恰好 keydown 前 5ms（边界内）→ 已注册，不补", () => {
+    const spaceDownTime = 5000;
+    expect(
+      shouldInjectSwallowedSpace(
+        {
+          spaceDownTime,
+          lastSpaceOnDataTime: spaceDownTime - 5,
+          lastCompEndTime: NEG,
+        },
+        fire(spaceDownTime),
+      ),
+    ).toBe(false);
+  });
+
+  it("空格 onData 早于 keydown 6ms（窗口外）+ 无 COMP_END → 判被吞，补发", () => {
+    // 6ms 已超出"成功空格 onData 早于 keydown ≤2ms"的实测范围，视为上一次的旧值
+    const spaceDownTime = 5000;
+    expect(
+      shouldInjectSwallowedSpace(
+        {
+          spaceDownTime,
+          lastSpaceOnDataTime: spaceDownTime - 6,
+          lastCompEndTime: NEG,
+        },
+        fire(spaceDownTime),
+      ),
+    ).toBe(true);
+  });
+
+  it("空格 onData 在等待期内到达（keydown 后 20ms）→ 已注册，不补（时序无关）", () => {
+    // 验证方案对"onData 晚于 keydown"也稳——虽然真机是早于，但不赌时序
+    const spaceDownTime = 5000;
+    expect(
+      shouldInjectSwallowedSpace(
+        {
+          spaceDownTime,
+          lastSpaceOnDataTime: spaceDownTime + 20,
+          lastCompEndTime: NEG,
+        },
+        fire(spaceDownTime),
+      ),
+    ).toBe(false);
+  });
+
+  it("初始态（从未有过 onData / COMP_END）第一个空格被吞 → 补发", () => {
+    const spaceDownTime = 500;
+    expect(
+      shouldInjectSwallowedSpace(
+        {
+          spaceDownTime,
+          lastSpaceOnDataTime: NEG,
+          lastCompEndTime: NEG,
+        },
+        fire(spaceDownTime),
+      ),
+    ).toBe(true);
   });
 });

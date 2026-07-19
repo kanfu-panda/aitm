@@ -18,9 +18,15 @@
 //!   不让整次调用失败。
 //! - 隐藏文件（`.foo`）默认显示；只有 [`SKIP_NAMES`] 里的精确名字过滤。
 
-use std::path::Path;
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::time::Duration;
 
+use notify::{RecommendedWatcher, RecursiveMode, Watcher};
+use notify_debouncer_full::{new_debouncer, DebounceEventResult, Debouncer, FileIdMap};
 use serde::Serialize;
+use tauri::{AppHandle, Emitter, State};
 
 /// 硬编码跳过名单。命中精确 name 即不进树。
 const SKIP_NAMES: &[&str] = &[
@@ -635,6 +641,140 @@ pub fn git_current_branch(cwd: String) -> Result<Option<String>, String> {
     Ok(head.shorthand().map(|s| s.to_string()))
 }
 
+// ====== v1.1.0 F5：目录树 fs 自动刷新（notify watcher → fs:changed）======
+
+/// fs watcher 句柄状态。Tauri `State` 管理，`Mutex<Option<...>>` 允许：
+/// - `fs_watch_start` 覆盖旧 watcher（赋值瞬间旧值被 drop —— `Debouncer::drop`
+///   内部 `set_stop`，后台线程下个 tick 内自行退出，不阻塞调用方）
+/// - `fs_watch_stop` / 找不到活跃 watcher 时置 `None`
+pub struct FsWatcherState(pub Mutex<Option<Debouncer<RecommendedWatcher, FileIdMap>>>);
+
+impl FsWatcherState {
+    pub fn new() -> Self {
+        Self(Mutex::new(None))
+    }
+}
+
+impl Default for FsWatcherState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// `fs:changed` 事件 payload：一次 debounce 批次内涉及的（已过滤）绝对路径。
+#[derive(Debug, Clone, Serialize)]
+pub struct FsChangedPayload {
+    pub paths: Vec<String>,
+}
+
+/// 判断路径的任一段是否命中 [`SKIP_NAMES`]。跟 `fs_tree`/`read_children`
+/// 共用同一份跳过名单，防止 `.git`/`node_modules`/`target` 内的事件风暴
+/// 触发前端刷新（大 repo 下这些目录改动极频繁，CPU/IO 都扛不住）。
+fn path_has_skipped_component(path: &Path) -> bool {
+    path.components().any(|c| {
+        let s = c.as_os_str().to_string_lossy();
+        SKIP_NAMES.contains(&s.as_ref())
+    })
+}
+
+/// 核心 watch 逻辑：不依赖 `AppHandle`，方便单测直接验证 debounce + 过滤行为。
+/// `on_batch` 在每个 debounce 周期（收到至少一条未被过滤路径时）回调一次，
+/// 参数是本批次去重后的绝对路径列表。
+///
+/// debounce 窗口 400ms：足够合并一次 `mv`（等价 remove+create 两个事件）、
+/// 一次编辑器保存（可能触发多次 modify），又不会让用户感觉刷新延迟明显。
+fn start_watcher<F>(watch_path: &Path, on_batch: F) -> Result<Debouncer<RecommendedWatcher, FileIdMap>, String>
+where
+    F: Fn(Vec<String>) + Send + 'static,
+{
+    let mut debouncer = new_debouncer(
+        Duration::from_millis(400),
+        None,
+        move |result: DebounceEventResult| {
+            let events = match result {
+                Ok(events) => events,
+                // watcher 内部错误（如监听目标被删除）：静默丢弃，不阻塞后续批次。
+                Err(_) => return,
+            };
+            // HashSet 去重（保持首次出现顺序）：一次批次可能含大量路径（批量
+            // rename / checkout / 生成产物），用 Vec::contains 去重是 O(n²)。
+            let mut seen: HashSet<String> = HashSet::new();
+            let mut paths: Vec<String> = Vec::new();
+            for event in &events {
+                for p in &event.paths {
+                    if path_has_skipped_component(p) {
+                        continue;
+                    }
+                    let s = p.to_string_lossy().into_owned();
+                    if seen.insert(s.clone()) {
+                        paths.push(s);
+                    }
+                }
+            }
+            if paths.is_empty() {
+                return;
+            }
+            on_batch(paths);
+        },
+    )
+    .map_err(|e| format!("创建 fs watcher 失败：{e}"))?;
+
+    debouncer
+        .watcher()
+        .watch(watch_path, RecursiveMode::Recursive)
+        .map_err(|e| format!("watch 失败：{}：{e}", watch_path.display()))?;
+
+    Ok(debouncer)
+}
+
+/// 开始监听 `path`（递归）。已有活跃 watcher 时直接覆盖（旧的自动 drop 停止）。
+///
+/// - macOS 走 notify 的 `RecommendedWatcher`（FSEvents 后端），目录级递归开销低。
+/// - debounce 批次后 `emit_to(main webview)`（**不能**裸 `emit`——本项目多 webview，
+///   裸 emit 会广播不到 / 漏到 main，历史上 OSC7/通知都踩过这个坑，参见
+///   `ipc::session` 里同款注释）。
+#[tauri::command]
+pub fn fs_watch_start(
+    path: String,
+    app: AppHandle,
+    state: State<'_, FsWatcherState>,
+) -> Result<(), String> {
+    let watch_path = PathBuf::from(&path);
+    if !watch_path.exists() {
+        return Err(format!("路径不存在：{path}"));
+    }
+
+    let app_for_handler = app.clone();
+    let debouncer = start_watcher(&watch_path, move |paths| {
+        let payload = FsChangedPayload { paths };
+        if let Err(e) = app_for_handler.emit_to(
+            tauri::EventTarget::webview("main"),
+            "fs:changed",
+            &payload,
+        ) {
+            tracing::warn!("emit fs:changed 失败: {e}");
+        }
+    })?;
+
+    let mut guard = state
+        .0
+        .lock()
+        .map_err(|_| "fs watcher 状态锁中毒".to_string())?;
+    *guard = Some(debouncer);
+    Ok(())
+}
+
+/// 停止当前活跃 watcher（若有）。没有活跃 watcher 时 no-op（不报错）。
+#[tauri::command]
+pub fn fs_watch_stop(state: State<'_, FsWatcherState>) -> Result<(), String> {
+    let mut guard = state
+        .0
+        .lock()
+        .map_err(|_| "fs watcher 状态锁中毒".to_string())?;
+    *guard = None;
+    Ok(())
+}
+
 // ====== 单测：避开真实 PTY；只用 tempfile 假目录树 ======
 
 #[cfg(test)]
@@ -1227,5 +1367,91 @@ mod tests {
         assert!(!is_blacklisted_path(std::path::Path::new(
             r"D:\Projects\aitm\a.rs"
         )));
+    }
+
+    // ====== v1.1.0 F5：fs watcher 单测 ======
+
+    /// `path_has_skipped_component` 是纯函数，跟真实 watcher/debounce 无关——
+    /// 确定性单测（不依赖计时器 / 文件系统事件时序）。
+    #[test]
+    fn path_has_skipped_component_命中跳过名单() {
+        assert!(path_has_skipped_component(Path::new(
+            "/repo/node_modules/foo/index.js"
+        )));
+        assert!(path_has_skipped_component(Path::new("/repo/.git/HEAD")));
+        assert!(path_has_skipped_component(Path::new(
+            "/repo/target/debug/build"
+        )));
+        assert!(path_has_skipped_component(Path::new(
+            "/repo/a/b/dist/bundle.js"
+        )));
+    }
+
+    #[test]
+    fn path_has_skipped_component_正常路径不命中() {
+        assert!(!path_has_skipped_component(Path::new(
+            "/repo/src/main.rs"
+        )));
+        assert!(!path_has_skipped_component(Path::new("/repo/README.md")));
+        // 隐藏文件但不在名单里（.env）不应被跳过
+        assert!(!path_has_skipped_component(Path::new("/repo/.env")));
+    }
+
+    /// 真实 watcher 集成测试：TempDir 建目录 → 真建/删文件 → debounce 后
+    /// 收到批次事件；`node_modules` 内的改动被过滤不触发回调。
+    ///
+    /// debounce 是异步的（内部起 std::thread），用 mpsc channel + `recv_timeout`
+    /// 等待批次到达，避免 sleep 固定时长导致偶发 flaky。
+    #[test]
+    fn start_watcher_真建删文件_debounce后收到事件() {
+        let tmp = TempDir::new().unwrap();
+        // macOS `/tmp` 是指向 `/private/tmp` 的 symlink；FSEvents 上报的路径是
+        // canonicalize 后的（`/private/var/...`），跟 `tmp.path()`（`/var/...`）
+        // 字符串不等值。这里先 canonicalize 一次，让期望路径跟 watcher 实际收到
+        // 的路径可以直接字符串比较。
+        let root = fs::canonicalize(tmp.path()).unwrap();
+        fs::create_dir(root.join("node_modules")).unwrap();
+
+        let (tx, rx) = std::sync::mpsc::channel::<Vec<String>>();
+        let _debouncer = start_watcher(&root, move |paths| {
+            let _ = tx.send(paths);
+        })
+        .expect("start_watcher 应成功");
+
+        // 给 watcher 后台线程一点启动时间再触发文件事件，避免真机上第一批
+        // 事件在 watcher 完全就绪前发生而丢失（FSEvents 注册有微小延迟）。
+        std::thread::sleep(Duration::from_millis(200));
+
+        let target = root.join("a.txt");
+        fs::write(&target, "hello").unwrap();
+        // 顺手在 node_modules 里也写一个文件：应被过滤，不产生独立触发文件的批次
+        fs::write(root.join("node_modules/noise.js"), "// noise").unwrap();
+
+        // debounce 窗口 400ms，留够余量等待第一批事件（最多等 3s，避免真机偶发慢导致挂死）
+        let batch = rx
+            .recv_timeout(Duration::from_secs(3))
+            .expect("应在 debounce 窗口后收到至少一批事件");
+
+        let target_str = target.to_string_lossy().into_owned();
+        assert!(
+            batch.iter().any(|p| p == &target_str),
+            "批次应包含新建的 a.txt，实际：{batch:?}"
+        );
+        assert!(
+            !batch.iter().any(|p| p.contains("node_modules")),
+            "node_modules 内的路径应被过滤，实际：{batch:?}"
+        );
+    }
+
+    #[test]
+    fn start_watcher_不存在的目录_watch_失败() {
+        let (tx, _rx) = std::sync::mpsc::channel::<Vec<String>>();
+        let res = start_watcher(
+            Path::new("/this/path/should/never/exist/aitm-watch"),
+            move |paths| {
+                let _ = tx.send(paths);
+            },
+        );
+        assert!(res.is_err(), "监听不存在路径应返回 Err");
     }
 }

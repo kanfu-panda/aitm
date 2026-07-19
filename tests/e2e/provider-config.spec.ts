@@ -15,7 +15,7 @@ test.beforeEach(async ({ page }) => {
 /** B-1：SettingsModal 改 Tab 后，Provider 内容默认隐藏在 "AI Provider" tab 下 */
 async function openProvidersTab(page: import("@playwright/test").Page) {
   await page.getByLabel("设置").click();
-  await page.getByRole("tab", { name: "AI Provider" }).click();
+  await page.getByRole("tab", { name: "AI 提供商" }).click();
 }
 
 test("打开设置 → AI Provider tab 渲染 6 行", async ({ page }) => {

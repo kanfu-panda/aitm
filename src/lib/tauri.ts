@@ -1,6 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 
 export type SessionId = string;
 
@@ -491,7 +490,7 @@ export interface NotificationReceivedPayload {
   session_id: string;
   level: "running" | "waiting" | "done" | "error";
   message: string;
-  source: "ai_tool_loop" | "osc_9" | "osc_99" | "osc_777";
+  source: "ai_tool_loop" | "osc_9" | "osc_99" | "osc_777" | "bell";
   timestamp_ms: number;
 }
 
@@ -504,6 +503,10 @@ export async function onNotificationReceived(
     (e) => cb(e.payload),
   );
 }
+
+// bell-badge：窗口聚焦状态由后端 WindowEvent::Focused emit 的 `window:focus-changed`
+// 事件驱动（见下方 onWindowFocusChanged 与 src-tauri/src/lib.rs）。早期试过
+// getCurrentWindow().onFocusChanged，Tauri 2 multi-webview 真机不触发，已弃用。
 
 // === v0.5.0-B Tab 元信息 ===
 
@@ -885,17 +888,20 @@ export async function fsStat(path: string): Promise<FileMeta> {
 // === v0.10.3 HR9-2 扩展：macOS Dock icon 红色数字角标 ===
 
 /**
- * 设置 app 全局 dock badge count（macOS）。
- * count=0 / undefined → 清掉角标。Windows 不支持（Tauri 文档明示）。
- * Linux 行为依赖桌面环境（Unity / KDE 有些支持）。
+ * 设置 app 全局 Dock 角标（macOS 红色数字）。
+ *
+ * 走后端原生 `set_dock_badge`（AppKit NSDockTile.setBadgeLabel），**不**用
+ * Tauri 的 `Window.setBadgeCount`——后者在 macOS 上有 bug（tauri#13905 真机
+ * 不显示）。count=0 / undefined → 清掉角标。
  *
  * 失败静默 console.warn —— badge 是辅助 UX，不该让上游崩。
  */
 export async function setAppBadgeCount(count?: number): Promise<void> {
   try {
-    await getCurrentWindow().setBadgeCount(count && count > 0 ? count : undefined);
+    const label = count && count > 0 ? String(count) : null;
+    await invoke("set_dock_badge", { label });
   } catch (e) {
-    console.warn("[badge] setBadgeCount 失败", e);
+    console.warn("[badge] set_dock_badge 失败", e);
   }
 }
 
@@ -940,6 +946,41 @@ export interface TreeNode {
  * - hidden 文件不显示；后端硬编码跳过 .git / node_modules / target / dist 等 */
 export async function fsTree(path: string, maxDepth: number): Promise<TreeNode> {
   return await invoke<TreeNode>("fs_tree", { path, maxDepth });
+}
+
+// === v1.1.0 F5：目录树 fs 自动刷新（notify watcher + fs:changed）===
+
+/** `fs:changed` 事件 payload：一次 debounce 批次内涉及的（已过滤跳过名单）绝对路径。 */
+export interface FsChangedEvent {
+  paths: string[];
+}
+
+/** 开始监听 `path`（递归）。已有活跃 watcher 时后端会直接覆盖。
+ *  FileTree 在 rootCwd 确定后调用；切 cwd 前应先 [`fsWatchStop`] 再对新 cwd 调用。 */
+export async function fsWatchStart(path: string): Promise<void> {
+  await invoke("fs_watch_start", { path });
+}
+
+/** 停止当前活跃 watcher（若无则 no-op）。FileTree 卸载 / 切 cwd 时调用。 */
+export async function fsWatchStop(): Promise<void> {
+  await invoke("fs_watch_stop");
+}
+
+/** 订阅后端 fs watcher debounce 后 emit 的 `fs:changed` 事件。 */
+export async function onFsChanged(
+  cb: (e: FsChangedEvent) => void,
+): Promise<UnlistenFn> {
+  return await listen<FsChangedEvent>("fs:changed", (e) => cb(e.payload));
+}
+
+/**
+ * v1.1.0 R1：订阅主窗口 OS 级聚焦状态（后端 WindowEvent::Focused → `window:focus-changed`）。
+ * payload = 是否聚焦。用于 markUnread 门控（活跃 tab && 窗口聚焦 → 不 badge）。
+ */
+export async function onWindowFocusChanged(
+  cb: (focused: boolean) => void,
+): Promise<UnlistenFn> {
+  return await listen<boolean>("window:focus-changed", (e) => cb(e.payload));
 }
 
 // === v0.9.1 HR3-6：Git 状态（FileTree 文件名按 git status 染色）===

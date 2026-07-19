@@ -1,6 +1,6 @@
 [package]
 name = "aitm"
-version = "1.0.0"
+version = "1.1.1"
 description = "AI Terminal — Rust + Tauri"
 authors = ["kanfu-panda"]
 license = "Apache-2.0"
@@ -53,6 +53,24 @@ globset = "0.4"
 time = { version = "0.3", features = ["macros", "formatting"] }
 git2 = { version = "0.19", default-features = false }
 tempfile = "3"
+# v1.1.0 F5：目录树 fs 自动刷新。macOS 走 FSEvents 后端（notify 默认 recommended
+# watcher），debouncer-full 把突发事件聚合成批次，避免大 repo 一次性刷屏。
+notify = "6"
+notify-debouncer-full = "0.3"
+
+# macOS 原生 Dock 角标：直接走 AppKit NSDockTile.setBadgeLabel，绕开
+# Tauri Window::setBadgeCount 在 macOS 的 bug（tauri#13905）。objc2 系列已由
+# Tauri 间接引入，这里显式声明所需 feature。
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = [
+    "NSApplication",
+    "NSDockTile",
+    "NSResponder",
+] }
+objc2-foundation = { version = "0.3", default-features = false, features = [
+    "NSString",
+] }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }

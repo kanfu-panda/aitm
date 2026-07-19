@@ -17,10 +17,12 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { useState } from "react";
+import { createRef, useState } from "react";
 import { EditorView } from "@codemirror/view";
 
-import CodeMirrorViewer from "../CodeMirrorViewer";
+import CodeMirrorViewer, {
+  type CodeMirrorViewerHandle,
+} from "../CodeMirrorViewer";
 
 afterEach(() => {
   cleanup();
@@ -211,5 +213,44 @@ describe("CodeMirrorViewer", () => {
     expect(view.state.doc.toString()).toBe("const x = 1;");
     // syntaxHighlighting 通过 facet 注册，view 创建未抛错即代表 extension 列表合法
     expect(container.querySelector(".cm-editor")).not.toBeNull();
+  });
+
+  // v1.1.0 F3：编辑器侧聚焦 —— CodeMirrorViewer 需通过 ref 暴露 focus()，
+  // 供 FilePreviewWorkspace 在 activeId 切换时调用，跟终端侧 term.focus() 对称。
+  describe("v1.1.0 F3 编辑器侧聚焦", () => {
+    it("ref.focus() 让内部 EditorView 拿到键盘焦点", () => {
+      const ref = createRef<CodeMirrorViewerHandle>();
+      const { container } = render(
+        <CodeMirrorViewer ref={ref} path="foo.txt" content="abc" />,
+      );
+      const view = getEditorView(container);
+      expect(view.hasFocus).toBe(false);
+
+      act(() => {
+        ref.current?.focus();
+      });
+
+      expect(view.hasFocus).toBe(true);
+    });
+
+    it("未挂载时调用 ref.focus() 不抛错（防御性：unmount 后仍可能被父层残留调用）", () => {
+      const ref = createRef<CodeMirrorViewerHandle>();
+      function Wrapper() {
+        const [mounted, setMounted] = useState(true);
+        return (
+          <div>
+            <button onClick={() => setMounted(false)}>unmount</button>
+            {mounted && (
+              <CodeMirrorViewer ref={ref} path="foo.txt" content="x" />
+            )}
+          </div>
+        );
+      }
+      const { getByText } = render(<Wrapper />);
+      act(() => {
+        fireEvent.click(getByText("unmount"));
+      });
+      expect(() => ref.current?.focus()).not.toThrow();
+    });
   });
 });

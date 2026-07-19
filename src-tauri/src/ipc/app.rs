@@ -32,3 +32,37 @@ pub fn app_quit_confirmed(app: AppHandle) {
     QUIT_CONFIRMED.store(true, Ordering::SeqCst);
     app.exit(0);
 }
+
+/// v1.0.1：原生设置 macOS Dock 角标（红色数字 / 文本）。
+///
+/// 不走 Tauri `Window::setBadgeCount`——它在 macOS 上有 bug（tauri#13905 未修，
+/// 真机不显示）。这里直接调 AppKit `NSApp.dockTile().setBadgeLabel()`，是 macOS
+/// 所有原生 app（含系统终端）的标准做法，不受该 bug 影响。
+///
+/// - `label` 为 `None` / 空串 → 清除角标；否则显示该字符串（如未读数 `"3"`）。
+/// - AppKit 必须主线程调用，用 `app.run_on_main_thread` 派发。
+/// - 非 macOS 平台为 no-op。
+#[tauri::command]
+pub fn set_dock_badge(app: AppHandle, label: Option<String>) {
+    #[cfg(target_os = "macos")]
+    {
+        // 空串视为清除，避免 Dock 显示空白气泡
+        let label = label.filter(|s| !s.is_empty());
+        let _ = app.run_on_main_thread(move || {
+            use objc2::MainThreadMarker;
+            use objc2_app_kit::NSApplication;
+            use objc2_foundation::NSString;
+            let Some(mtm) = MainThreadMarker::new() else {
+                return;
+            };
+            let ns_app = NSApplication::sharedApplication(mtm);
+            let dock_tile = ns_app.dockTile();
+            let ns_label = label.as_deref().map(NSString::from_str);
+            dock_tile.setBadgeLabel(ns_label.as_deref());
+        });
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (app, label);
+    }
+}

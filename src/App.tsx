@@ -27,6 +27,7 @@ import {
   onNotificationReceived,
   onPtyCwdChanged,
   sessionClose,
+  onWindowFocusChanged,
   sessionSnapshotClear,
   sessionSnapshotLoad,
   sessionSnapshotSave,
@@ -303,7 +304,8 @@ export default function App() {
   }, []);
 
   // v0.10.3 HR9-2 扩展：所有 tab 未读总数 → macOS Dock icon 红色数字角标。
-  // 跟系统 NSDockTile.setBadgeLabel 走 Tauri 2 的 setBadgeCount API。
+  // v1.0.1：走后端原生 set_dock_badge（NSDockTile.setBadgeLabel），不用 Tauri
+  // 的 setBadgeCount（macOS 有 bug tauri#13905）。
   // 用 zustand.subscribe 在 store 变化时直接调，不通过 React render（badge
   // 不影响 UI，没必要重渲染）。
   useEffect(() => {
@@ -316,6 +318,19 @@ export default function App() {
       void setAppBadgeCount(sum(state.unreadByTab));
     });
     return () => unsub();
+  }, []);
+
+  // v1.1.0 R1：订阅后端主窗口聚焦事件 → 写 tabs store 的 windowFocused。
+  // markUnread 用它门控：用户正看着某活跃 tab（窗口聚焦）时，tab 补全响铃等
+  // 噪声 BEL 不点角标；切到别的 app（失焦）后台完成才 badge。
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    void onWindowFocusChanged((focused) => {
+      useTabsStore.getState().setWindowFocused(focused);
+    }).then((fn) => {
+      unlisten = fn;
+    });
+    return () => unlisten?.();
   }, []);
 
   useShortcuts({
@@ -332,6 +347,12 @@ export default function App() {
       const idx = tabs.findIndex((t) => t.id === activeId);
       const next = tabs[(idx + 1) % tabs.length];
       setActive(next.id);
+      // F3：同步目标 tab 所在 group 的 active_tab_id，否则键盘切 tab 后
+      // TerminalPaneGroup 算出的 isActive 仍指向旧 tab，自动聚焦会指错目标。
+      // tab 不在当前焦点 group 内时 setActiveTabInGroup 内部 no-op，安全。
+      const { active_group_id, setActiveTabInGroup } =
+        usePaneLayoutStore.getState();
+      if (active_group_id) setActiveTabInGroup(active_group_id, next.id);
     },
     prevTab: () => {
       const { tabs, activeId, setActive } = useTabsStore.getState();
@@ -339,6 +360,9 @@ export default function App() {
       const idx = tabs.findIndex((t) => t.id === activeId);
       const prev = tabs[(idx - 1 + tabs.length) % tabs.length];
       setActive(prev.id);
+      const { active_group_id, setActiveTabInGroup } =
+        usePaneLayoutStore.getState();
+      if (active_group_id) setActiveTabInGroup(active_group_id, prev.id);
     },
     openSettings: () => setSettingsOpen(true),
     toggleSidebar: () => useSidebarStore.getState().toggle(),

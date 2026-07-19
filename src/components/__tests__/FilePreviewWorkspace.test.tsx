@@ -23,13 +23,32 @@ import {
   waitFor,
 } from "@testing-library/react";
 
-// mock CodeMirrorViewer 避免在 jsdom 起重；只渲染 stub
-vi.mock("../CodeMirrorViewer", () => ({
-  __esModule: true,
-  default: ({ path }: { path: string }) => (
-    <div data-testid={`cm-stub-${path}`}>{path}</div>
-  ),
-}));
+// mock CodeMirrorViewer 避免在 jsdom 起重；只渲染 stub。
+// v1.1.0 F3：真实组件已是 forwardRef（暴露 focus()），stub 也 forwardRef 包一层，
+// 并把 focus() 转发到 stub 自身 DOM 节点的 .focus()——这样可以用
+// document.activeElement 真实断言"切 tab 后编辑器侧确实拿到焦点"（US-3），
+// 而不是仅仅 mock 掉整条链路。
+vi.mock("../CodeMirrorViewer", async () => {
+  const React = await import("react");
+  const Stub = React.forwardRef<{ focus: () => void }, { path: string }>(
+    function CodeMirrorViewerStub({ path }, ref) {
+      const elRef = React.useRef<HTMLDivElement>(null);
+      React.useImperativeHandle(
+        ref,
+        () => ({
+          focus: () => elRef.current?.focus(),
+        }),
+        [],
+      );
+      return (
+        <div ref={elRef} tabIndex={-1} data-testid={`cm-stub-${path}`}>
+          {path}
+        </div>
+      );
+    },
+  );
+  return { __esModule: true, default: Stub };
+});
 
 // tauri 层 partial mock：保留 browserHideAllActive 等 useBrowserModalGuard 依赖；
 // 只覆盖本测试关心的 fsReadText / settings 路径，避免误把 dialog modal-guard 打断。
@@ -313,6 +332,39 @@ describe("FilePreviewWorkspace", () => {
     fireEvent.click(screen.getByTestId("file-tab-ctx-close-all"));
     await waitFor(() => {
       expect(useFileEditorStore.getState().openFiles).toHaveLength(0);
+    });
+  });
+
+  // ===== v1.1.0 F3 编辑器侧自动聚焦（US-3） =====
+
+  it("F3：打开文件后自动聚焦编辑器（跟终端侧 isActive→term.focus() 对称）", async () => {
+    pushFiles([{ path: "/x/a.ts" }], "/x/a.ts");
+    render(<FilePreviewWorkspace />);
+    await waitFor(() => {
+      expect(document.activeElement).toBe(
+        screen.getByTestId("cm-stub-/x/a.ts"),
+      );
+    });
+  });
+
+  it("F3：切 tab 后焦点跟随到新的 active 编辑器，不用再点一下才能输入", async () => {
+    pushFiles(
+      [{ path: "/x/a.ts" }, { path: "/y/b.rs" }],
+      "/x/a.ts",
+    );
+    render(<FilePreviewWorkspace />);
+    await waitFor(() => {
+      expect(document.activeElement).toBe(
+        screen.getByTestId("cm-stub-/x/a.ts"),
+      );
+    });
+
+    fireEvent.click(screen.getByTestId("file-tab-/y/b.rs"));
+
+    await waitFor(() => {
+      expect(document.activeElement).toBe(
+        screen.getByTestId("cm-stub-/y/b.rs"),
+      );
     });
   });
 

@@ -329,9 +329,9 @@
   "closeTabDialog": {
     "dialogAria": "タブを閉じる確認",
     "title": "タブ \"{{title}}\" を閉じますか？",
-    "description": "このタブにはコマンドが実行中です（npm install / cargo test などの長時間処理）。閉じると shell に SIGHUP が送られ、未完了のコマンドが強制中断されます。",
+    "description": "タスクが実行中です。閉じますか？",
     "cancel": "キャンセル",
-    "forceClose": "強制的に閉じる"
+    "forceClose": "閉じる"
   },
   "closeFileConfirm": {
     "dialogAria": "ファイルを閉じる確認",

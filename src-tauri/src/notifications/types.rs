@@ -31,6 +31,10 @@ pub enum NotificationSource {
     Osc99,
     /// PTY 输出解析到 OSC 777（urxvt notify 流派）
     Osc777,
+    /// PTY 输出中的孤立 BEL (0x07) — 终端响铃。Claude Code 等 CLI 完成时响铃；
+    /// macOS Terminal 以响铃点亮 Dock 角标，aitm 对齐该语义。
+    /// 前端只点未读 + Dock 角标，**不**发系统通知横幅（响铃可能高频，如补全提示音）
+    Bell,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

@@ -1,5 +1,5 @@
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import MessageBubble from "../MessageBubble";
 import type { AssistantMessage, UserMessage } from "../../stores/chat";
 
@@ -64,5 +64,56 @@ describe("MessageBubble - 长 inline code 整行换行（T2c）", () => {
     const { container } = render(<MessageBubble message={user(md)} />);
     // user 消息直接渲染原文，不应该有 <code> 元素
     expect(container.querySelector("code")).toBeNull();
+  });
+});
+
+describe("MessageBubble v1.1.0 F7 md 代码块语法高亮", () => {
+  it("带语言的 fenced code block → hljs class + 语言标签 + token span", () => {
+    const md = "```ts\nconst x: number = 1;\n```";
+    const { container } = render(<MessageBubble message={assistant(md)} />);
+    const pre = container.querySelector("pre");
+    expect(pre).not.toBeNull();
+    const code = pre!.querySelector("code");
+    expect(code).not.toBeNull();
+    expect(code!.className).toMatch(/language-ts/);
+    expect(code!.className).toMatch(/hljs/);
+    expect(
+      pre!.querySelectorAll("span[class*='hljs-']").length,
+    ).toBeGreaterThan(0);
+    // 语言标签（左上角小字）跟代码一起渲染在同一个 wrapper 内
+    expect(container.textContent).toContain("ts");
+  });
+
+  it("代码块复制按钮取的是纯文本（不含高亮 span 标签），点击写入剪贴板", () => {
+    const md = "```js\nconst greet = () => 'hi';\n```";
+    const { container } = render(<MessageBubble message={assistant(md)} />);
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, { clipboard: { writeText } });
+    const btn = container.querySelector("button");
+    expect(btn).not.toBeNull();
+    btn!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(writeText).toHaveBeenCalledWith("const greet = () => 'hi';");
+  });
+
+  it("无语言的 fenced code block 仍正常渲染（rehype-highlight detect:false 不强行猜语言）", () => {
+    const md = "```\nplain output\n```";
+    const { container } = render(<MessageBubble message={assistant(md)} />);
+    const pre = container.querySelector("pre");
+    expect(pre).not.toBeNull();
+    expect(pre!.textContent).toContain("plain output");
+  });
+
+  it("data-theme 切 light 前后，高亮 DOM class 结构不变（纯 CSS 变量驱动）", () => {
+    document.documentElement.dataset.theme = "dark";
+    const md = "```rust\nfn main() {}\n```";
+    const { container } = render(<MessageBubble message={assistant(md)} />);
+    const before = container.querySelector("code")!.className;
+
+    document.documentElement.dataset.theme = "light";
+    // 无需重渲染：高亮 class 本身不含主题信息，只是 hljs-* 语义 class，
+    // 颜色由 CSS 变量在 [data-theme="light"] 下重新取值。
+    const after = container.querySelector("code")!.className;
+    expect(after).toBe(before);
+    document.documentElement.dataset.theme = "dark";
   });
 });

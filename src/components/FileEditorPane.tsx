@@ -17,25 +17,93 @@
  *
  * 注意：CodeMirrorViewer mount 时按 key={path} 重建（而非 useEffect 内 reconfigure），
  * 切 tab 时 React 自动 unmount 旧 view + mount 新 view，避免跨文件 state 混。
+ *
+ * v1.1.0 F3（编辑器侧聚焦）：forwardRef 暴露 `focus()`；raw 模式转发到内部
+ * CodeMirrorViewer 的 EditorView.focus()，preview 模式（无 CodeMirror）聚焦
+ * 预览滚动容器本身。供 FilePreviewWorkspace 在 activeId 变化时调用。
  * ========================================================================== */
 
-import { useCallback, useEffect, useRef } from "react";
+import {
+  forwardRef,
+  isValidElement,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+} from "react";
+import type { ComponentProps, ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import CodeMirrorViewer from "./CodeMirrorViewer";
+import rehypeHighlight from "rehype-highlight";
+import CodeMirrorViewer, {
+  type CodeMirrorViewerHandle,
+} from "./CodeMirrorViewer";
 import { useFileEditorStore, type OpenFile } from "../stores/file-editor";
+import { remarkStripComments } from "../lib/remark-strip-comments";
+import { MarkdownLink } from "./MarkdownLink";
 
 interface Props {
   file: OpenFile;
 }
 
-export default function FileEditorPane({ file }: Props) {
+/** v1.1.0 F3：通过 ref 暴露给 FilePreviewWorkspace 的聚焦能力。 */
+export interface FileEditorPaneHandle {
+  focus: () => void;
+}
+
+/** 递归从 react-markdown/rehype 渲染出的 children 节点树里提取纯文本。
+ * rehype-highlight 把高亮 token 包成嵌套 <span>，不能直接 String(children)。 */
+function getNodeText(node: ReactNode): string {
+  if (node == null || typeof node === "boolean") return "";
+  if (typeof node === "string" || typeof node === "number") return String(node);
+  if (Array.isArray(node)) return node.map(getNodeText).join("");
+  if (isValidElement(node)) {
+    const props = node.props as { children?: ReactNode };
+    return getNodeText(props.children);
+  }
+  return "";
+}
+
+function langFromClassName(cls?: string): string | undefined {
+  return /language-(\S+)/.exec(cls ?? "")?.[1];
+}
+
+/** md 代码块容器：加语言标签（CSS ::before 读 data-lang）+ 复制按钮。
+ * 语法高亮本身由 rehype-highlight 注入的 hljs-* class 负责渲染（见 index.css）。 */
+function MdPre({ children, className, ...rest }: ComponentProps<"pre">) {
+  const { t } = useTranslation();
+  const codeClassName = isValidElement(children)
+    ? (children.props as { className?: string }).className
+    : undefined;
+  const lang = langFromClassName(codeClassName);
+  const raw = getNodeText(children);
+  return (
+    <pre {...rest} className={`group ${className ?? ""}`} data-lang={lang}>
+      <button
+        type="button"
+        onClick={() => {
+          navigator.clipboard.writeText(raw).catch(() => {});
+        }}
+        className="absolute right-2 top-1.5 rounded bg-[var(--c-bg-elev-3)] px-1.5 py-0.5 text-[10px] text-[var(--c-text-muted)] opacity-0 hover:text-[var(--c-text-base)] group-hover:opacity-100"
+        aria-label={t("messageBubble.copyCodeAria")}
+      >
+        {t("messageBubble.copyCode")}
+      </button>
+      {children}
+    </pre>
+  );
+}
+
+const FileEditorPane = forwardRef<FileEditorPaneHandle, Props>(
+  function FileEditorPane({ file }, ref) {
   const { t } = useTranslation();
   const updateContent = useFileEditorStore((s) => s.updateContent);
   const setCursor = useFileEditorStore((s) => s.setCursor);
   const setMdMode = useFileEditorStore((s) => s.setMdMode);
   const paneRef = useRef<HTMLDivElement | null>(null);
+  const cmRef = useRef<CodeMirrorViewerHandle>(null);
+  const previewRef = useRef<HTMLElement | null>(null);
 
   const onChange = useCallback(
     (content: string) => {
@@ -92,6 +160,21 @@ export default function FileEditorPane({ file }: Props) {
     file.language === "mdx";
   const showPreview = isMd && file.mdMode === "preview";
 
+  // v1.1.0 F3：preview 模式聚焦滚动容器，raw/代码模式转发到 CodeMirror。
+  useImperativeHandle(
+    ref,
+    () => ({
+      focus: () => {
+        if (showPreview) {
+          previewRef.current?.focus();
+        } else {
+          cmRef.current?.focus();
+        }
+      },
+    }),
+    [showPreview],
+  );
+
   return (
     <div
       ref={paneRef}
@@ -134,10 +217,18 @@ export default function FileEditorPane({ file }: Props) {
       <div className="flex-1 min-h-0 min-w-0 overflow-hidden">
         {showPreview ? (
           <article
-            className="prose-md h-full overflow-auto px-6 py-4"
+            ref={previewRef}
+            tabIndex={-1}
+            // v1.1.0 R6：去掉 max-w-[860px] 阅读宽度上限 + 居中（真机反馈：宽屏下
+            // 内容挤中间、两侧大片空白没利用）。改为 px-8 左右留白撑满面板宽度。
+            className="prose-md h-full overflow-auto px-8 py-4"
             data-testid={`md-preview-${file.id}`}
           >
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm, remarkStripComments]}
+              rehypePlugins={[rehypeHighlight]}
+              components={{ pre: MdPre, a: MarkdownLink }}
+            >
               {file.content}
             </ReactMarkdown>
           </article>
@@ -145,6 +236,7 @@ export default function FileEditorPane({ file }: Props) {
           <CodeMirrorViewer
             // key=path：切 tab 时强制重建 EditorView，避免跨文件 state 复用
             key={file.path}
+            ref={cmRef}
             path={file.path}
             content={file.content}
             language={file.language}
@@ -155,4 +247,7 @@ export default function FileEditorPane({ file }: Props) {
       </div>
     </div>
   );
-}
+  },
+);
+
+export default FileEditorPane;

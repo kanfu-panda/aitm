@@ -54,8 +54,8 @@ describe("CloseTabConfirmDialog", () => {
     const dialog = screen.getByRole("dialog");
     expect(dialog).toBeTruthy();
     expect(dialog.textContent).toContain("我的 npm install");
-    // 文案明确告知会强制中断
-    expect(dialog.textContent).toContain("强制中断");
+    // v1.1.0 R2：文案简化为"有任务正在运行，确定关闭吗？"
+    expect(dialog.textContent).toContain("确定关闭");
   });
 
   it("点取消 → onCancel 被调，onConfirm 不被调", () => {
@@ -86,7 +86,7 @@ describe("CloseTabConfirmDialog", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "强制关闭" }));
+    fireEvent.click(screen.getByRole("button", { name: "关闭" }));
 
     expect(onConfirm).toHaveBeenCalledTimes(1);
     expect(onCancel).not.toHaveBeenCalled();

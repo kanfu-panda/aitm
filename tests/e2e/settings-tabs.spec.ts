@@ -25,10 +25,10 @@ test("默认进入终端 tab，看到字体族 + 光标按钮", async ({ page })
 });
 
 test("切到 AI Provider → Provider 列表可见，字体族隐藏", async ({ page }) => {
-  await page.getByRole("tab", { name: "AI Provider" }).click();
+  await page.getByRole("tab", { name: "AI 提供商" }).click();
 
   await expect(
-    page.getByRole("tab", { name: "AI Provider" }),
+    page.getByRole("tab", { name: "AI 提供商" }),
   ).toHaveAttribute("aria-selected", "true");
 
   // Provider 行可见
@@ -40,10 +40,10 @@ test("切到 AI Provider → Provider 列表可见，字体族隐藏", async ({ 
 });
 
 test("切到 Safety → 白名单 + PatternTester 可见", async ({ page }) => {
-  await page.getByRole("tab", { name: "Safety" }).click();
+  await page.getByRole("tab", { name: "安全" }).click();
 
   await expect(
-    page.getByRole("tab", { name: "Safety" }),
+    page.getByRole("tab", { name: "安全" }),
   ).toHaveAttribute("aria-selected", "true");
 
   await expect(
@@ -58,9 +58,9 @@ test("关闭 modal 重新打开 → 记住上次选的 tab（plan §1.1 G4）", 
   page,
 }) => {
   // 切到 Safety
-  await page.getByRole("tab", { name: "Safety" }).click();
+  await page.getByRole("tab", { name: "安全" }).click();
   await expect(
-    page.getByRole("tab", { name: "Safety" }),
+    page.getByRole("tab", { name: "安全" }),
   ).toHaveAttribute("aria-selected", "true");
 
   // 关闭 modal
@@ -72,6 +72,6 @@ test("关闭 modal 重新打开 → 记住上次选的 tab（plan §1.1 G4）", 
   // 重新打开 — 应仍在 Safety（useState 保持组件态，不重置）
   await page.getByLabel("设置").click();
   await expect(
-    page.getByRole("tab", { name: "Safety" }),
+    page.getByRole("tab", { name: "安全" }),
   ).toHaveAttribute("aria-selected", "true");
 });

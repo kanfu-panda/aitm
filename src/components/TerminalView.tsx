@@ -21,7 +21,10 @@ import {
   disableSystemTextInput,
   isWebKitRuntime,
   shouldFixSwallowedShiftKey,
+  shouldInjectSwallowedSpace,
 } from "../lib/xtermTextarea";
+import { altScrollSequence, shouldAltScroll } from "../lib/altScroll";
+import { computeScrollRestore, isScrolledUp } from "../lib/scrollLock";
 
 /** v0.4.1 T5：将 settings.ui.theme_mode (auto/dark/light) 解析为实际深浅模式。
  *  auto 时读 matchMedia 当前态；dark/light 直接透传。SSR 安全：window 不在
@@ -96,6 +99,15 @@ interface Props {
   initialCwd?: string | null;
   onSessionOpened?: (id: SessionId) => void;
   onExit?: (id: SessionId) => void;
+  /**
+   * F3（v1.1.0）：本 tab 当前是否为"该聚焦 group 的 active tab"。
+   *
+   * true 时把 xterm 光标聚焦过去，消除"切 tab / 分屏点另一 pane 后还要
+   * 再点一下终端正文才能输入"的手感断裂。由 [`TerminalPaneGroup`] 算出
+   * `t.id === activeTabId && isFocused` 传入，只在真正抢到焦点的 pane 里
+   * 触发 focus，避免后台 group 抢焦。
+   */
+  isActive?: boolean;
 }
 
 export default function TerminalView({
@@ -103,6 +115,7 @@ export default function TerminalView({
   initialCwd,
   onSessionOpened,
   onExit,
+  isActive = false,
 }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
@@ -132,6 +145,15 @@ export default function TerminalView({
     // WebKit workaround 用：onData 每次触发更新，customKeyEvent 据此判断
     // "本次 keydown 是否被吞了"（issue #5374，见 xtermTextarea.ts）
     let lastOnDataTime = 0;
+
+    // v1.1.0 F4：空格吞键补发所需的时间戳（真机 diag 数据驱动，见
+    // shouldInjectSwallowedSpace 注释）。用一个很小的初值表示"还没发生过"。
+    let lastSpaceOnDataTime = -1e9;
+    let lastCompEndTime = -1e9;
+    // 正在合成中（compositionstart..end 之间）→ 该期间的空格属于 IME，不补。
+    let composing = false;
+    // 已 arm 的空格补发定时器集合，卸载时统一清掉避免泄漏 / 卸载后写。
+    const spaceTimers = new Set<number>();
 
     const initialState = useSettingsStore.getState().settings;
     const initial = initialState.terminal;
@@ -174,12 +196,25 @@ export default function TerminalView({
     // 禁用 helper textarea 的 macOS 系统级文本辅助；详见 disableSystemTextInput 注释。
     // 5.x 仍保留 `term.textarea` 字段（标 deprecated 但未删），优先用它；
     // 兜底走 `.xterm-helper-textarea` 选择器。
-    disableSystemTextInput(
+    const helperTextarea =
       term.textarea ??
-        (containerRef.current.querySelector(
-          ".xterm-helper-textarea",
-        ) as HTMLTextAreaElement | null),
-    );
+      (containerRef.current.querySelector(
+        ".xterm-helper-textarea",
+      ) as HTMLTextAreaElement | null);
+    disableSystemTextInput(helperTextarea);
+
+    // v1.1.0 F4：跟踪 IME 合成态，供空格吞键补发判定用。中文确认候选词的空格
+    // 紧跟在 compositionend 后（标志已翻 false），必须靠 lastCompEndTime 才能
+    // 与真 ASCII 空格区分（真机 diag：28/28 确认空格 isComposing/composing 皆 false）。
+    const onCompStart = () => {
+      composing = true;
+    };
+    const onCompEnd = () => {
+      composing = false;
+      lastCompEndTime = performance.now();
+    };
+    helperTextarea?.addEventListener("compositionstart", onCompStart);
+    helperTextarea?.addEventListener("compositionend", onCompEnd);
 
     // attachCustomKeyEventHandler 处理两件事：
     //
@@ -191,7 +226,9 @@ export default function TerminalView({
     //    xterm 的 key 路径，无法阻止 browser 派发 paste 事件）。
     //
     // 2. **WKWebView Shift+键第一次被吞 workaround**（xterm.js issue #5374）。
-    //    详见 shouldFixSwallowedShiftKey 注释；只在 WebKit runtime 启用。
+    //    详见 shouldFixSwallowedShiftKey 注释；只在 WebKit runtime 启用。仅作用于
+    //    Shift+标点（非字母、非 IME），不碰普通空格 / 中文 —— 避免投机补键在
+    //    WKWebView 多样输入路径下（快丢 / 延迟 / IME 全角）误双发（v1.1.0 收手）。
     const webKitWorkaroundActive = isWebKitRuntime();
     term.attachCustomKeyEventHandler((e) => {
       if (e.type !== "keydown") return true;
@@ -223,7 +260,63 @@ export default function TerminalView({
           return false; // 阻 xterm 内部走默认避免双发（Safari case 下其实 onData 不来）
         }
       }
+
+      // v1.1.0 F4：WKWebView 快打时空格 keydown 被吞（"cd 后要按两次空格" #4）。
+      // 不在 keydown 当场判定（那会赌 onData 与 keydown 谁先谁后，是以前双发的根），
+      // 而是 arm 一个 35ms 定时器：等 onData 有机会到达后，由 shouldInjectSwallowedSpace
+      // 用「近端 compositionend」+「窗口内空格 onData」两个信号判定是否补发。
+      // 始终 return true 让 xterm 正常处理——成功的空格 xterm 自己上屏、定时器判定为
+      // 已注册不补；被吞的空格 xterm 无输出、定时器补发一个。非破坏性，不会双发。
+      if (
+        webKitWorkaroundActive &&
+        e.key === " " &&
+        !e.altKey &&
+        !composing &&
+        // 合成刚结束（≤50ms）→ 这是确认候选词的空格，交给 IME，别 arm
+        performance.now() - lastCompEndTime > 50
+      ) {
+        const spaceDownTime = performance.now();
+        const timer = window.setTimeout(() => {
+          spaceTimers.delete(timer);
+          const id = idRef.current;
+          if (!id) return;
+          if (
+            shouldInjectSwallowedSpace(
+              { spaceDownTime, lastSpaceOnDataTime, lastCompEndTime },
+              performance.now(),
+            )
+          ) {
+            sessionWrite(id, new TextEncoder().encode(" ")).catch((err) =>
+              console.error("空格补发 sessionWrite 失败", err),
+            );
+          }
+        }, 35);
+        spaceTimers.add(timer);
+      }
       return true;
+    });
+
+    // v1.1.0 R7：备用屏（全屏 TUI，如 Claude Code 长上下文 / vim / less）里把滚轮
+    // 转成方向键发给应用 —— 对齐 macOS Terminal / iTerm 默认的 alternate-scroll。
+    // 备用屏没有 scrollback，xterm 默认滚轮无动作（真机反馈"卡住只看一屏滚不动"）。
+    // 仅在应用未开启鼠标追踪时接管（开了则滚轮走鼠标上报交给应用）。返回 false
+    // 阻止 xterm 默认处理。
+    term.attachCustomWheelEventHandler((e) => {
+      if (
+        !shouldAltScroll(term.buffer.active.type, term.modes.mouseTrackingMode)
+      ) {
+        return true;
+      }
+      const id = idRef.current;
+      if (!id) return true;
+      const seq = altScrollSequence({
+        deltaY: e.deltaY,
+        deltaMode: e.deltaMode,
+        applicationCursorKeys: term.modes.applicationCursorKeysMode,
+      });
+      if (!seq) return true;
+      sessionWrite(id, new TextEncoder().encode(seq)).catch(() => {});
+      return false;
     });
 
     fit.fit();
@@ -267,13 +360,24 @@ export default function TerminalView({
       }
 
       unlistenData = await onSessionData(id, (bytes) => {
-        term.write(bytes);
-        // v0.10.5 hotfix：删 PTY 输出触发 markUnread 那行。
-        // 之前 维护者 真机所有 tab 都涨红色数字 badge（"2"/"4"/...）+ Dock 14。
-        // 根因：背景 tab 任何 PTY 输出（build / tail -f 等）都 +1，跟 macOS
-        // Terminal 的"BEL/通知触发" 语义不一致。
-        // 现在 unread 计数只由 notifications.ts emitNotification 触发 →
-        // 数字 badge 仅在真有 OSC 9/777 通知或 AI tool 完成时显示。
+        // v1.1.0 R8：滚动锁定（xterm.js issue #216 workaround）。
+        // xterm 的 write 会在异步 isUserScrolling 标记生效前把视口拽回底部，
+        // CC 忙时高频 write 导致用户滚上去立刻被拉回。这里写入前记住用户位置，
+        // 写完（write callback）后若用户本来滚离底部就 scrollToLine 拉回。
+        const before = term.buffer.active;
+        const wasScrolledUp = isScrolledUp(before);
+        const savedViewportY = before.viewportY;
+        term.write(bytes, () => {
+          const target = computeScrollRestore(
+            wasScrolledUp,
+            savedViewportY,
+            term.buffer.active,
+          );
+          if (target !== null) term.scrollToLine(target);
+        });
+        // v0.10.5 hotfix：删 PTY 输出触发 markUnread 那行（背景 tab 任何 PTY
+        // 输出都 +1 与 macOS Terminal 的"BEL/通知触发"语义不一致）。unread 现在
+        // 只由 notifications.ts emitNotification 触发。
       });
       unlistenExit = await onSessionExit(id, () => onExitRef.current?.(id!));
 
@@ -281,6 +385,8 @@ export default function TerminalView({
         // WebKit workaround 用：onData 触发瞬间标记时间。customKeyEvent 后续
         // 收到 keydown 时如果距离最近 onData > 50ms 就判定"被吞"（issue #5374）。
         lastOnDataTime = Date.now();
+        // v1.1.0 F4：xterm 正常吐出空格 → 记时刻，供空格吞键补发定时器判"已注册"。
+        if (d === " ") lastSpaceOnDataTime = performance.now();
         const enc = new TextEncoder().encode(d);
         sessionWrite(id!, enc).catch((e) => console.error("写入失败", e));
       });
@@ -295,6 +401,11 @@ export default function TerminalView({
 
     return () => {
       alive = false;
+      // v1.1.0 F4：清空格补发定时器 + 摘 composition 监听，避免卸载后写 PTY / 泄漏
+      spaceTimers.forEach((t) => window.clearTimeout(t));
+      spaceTimers.clear();
+      helperTextarea?.removeEventListener("compositionstart", onCompStart);
+      helperTextarea?.removeEventListener("compositionend", onCompEnd);
       unlistenData?.();
       unlistenExit?.();
       resizeObs?.disconnect();
@@ -368,6 +479,13 @@ export default function TerminalView({
     mq.addEventListener("change", handler);
     return () => mq.removeEventListener("change", handler);
   }, []);
+
+  // F3（v1.1.0）：isActive 变为 true（切 tab / 点其它 pane / 键盘 Cmd+Shift+]/[）
+  // → term.focus()，光标直接可键入。挂载时若已是 active 也会触发一次
+  // （term.open() 是同步执行的，早于本 effect 提交，termRef.current 已就绪）。
+  useEffect(() => {
+    if (isActive) termRef.current?.focus();
+  }, [isActive]);
 
   return (
     <div className="relative h-full w-full bg-[var(--c-bg-base)]">

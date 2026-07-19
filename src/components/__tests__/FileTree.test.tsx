@@ -12,6 +12,12 @@ import type { TreeNode } from "../../lib/tauri";
 const fsTreeMock = vi.fn();
 const sessionCurrentCwdMock = vi.fn();
 const gitStatusMock = vi.fn();
+// v1.1.0 F5：fs watcher mock。onFsChangedMock 记录最近一次注册的回调，
+// 测试里手动调用它模拟后端 emit `fs:changed`；返回的 unlisten 是可断言的 spy。
+const fsWatchStartMock = vi.fn();
+const fsWatchStopMock = vi.fn();
+const onFsChangedMock = vi.fn();
+const fsChangedUnlistenMock = vi.fn();
 vi.mock("../../lib/tauri", async (orig) => {
   const real = await orig<typeof import("../../lib/tauri")>();
   return {
@@ -22,6 +28,12 @@ vi.mock("../../lib/tauri", async (orig) => {
       sessionCurrentCwdMock(...args),
     gitStatus: (...args: Parameters<typeof real.gitStatus>) =>
       gitStatusMock(...args),
+    fsWatchStart: (...args: Parameters<typeof real.fsWatchStart>) =>
+      fsWatchStartMock(...args),
+    fsWatchStop: (...args: Parameters<typeof real.fsWatchStop>) =>
+      fsWatchStopMock(...args),
+    onFsChanged: (...args: Parameters<typeof real.onFsChanged>) =>
+      onFsChangedMock(...args),
   };
 });
 
@@ -29,6 +41,7 @@ import FileTree from "../FileTree";
 import { useTabsStore } from "../../stores/tabs";
 import { useFileEditorStore } from "../../stores/file-editor";
 import { useGitStatusStore } from "../../stores/git-status";
+import { useSidebarStore } from "../../stores/sidebar";
 import {
   INITIAL_GROUP_ID,
   usePaneLayoutStore,
@@ -69,6 +82,12 @@ describe("FileTree", () => {
     gitStatusMock.mockReset();
     // 默认 git_status mock：返空数组（无脏文件）。单 case 可 mockResolvedValueOnce 覆盖。
     gitStatusMock.mockResolvedValue([]);
+    // v1.1.0 F5：fs watcher mock 默认行为 —— start/stop 都 resolve undefined，
+    // onFsChanged 默认 resolve 一个可断言的 unlisten spy。单 case 可覆盖捕获回调。
+    fsWatchStartMock.mockReset().mockResolvedValue(undefined);
+    fsWatchStopMock.mockReset().mockResolvedValue(undefined);
+    fsChangedUnlistenMock.mockReset();
+    onFsChangedMock.mockReset().mockResolvedValue(fsChangedUnlistenMock);
     useTabsStore.setState({ tabs: [], activeId: null, unreadByTab: {} });
     useFileEditorStore.setState({ openFiles: [], activeId: null });
     useGitStatusStore.setState({ byPath: {} });
@@ -170,6 +189,28 @@ describe("FileTree", () => {
 
     fireEvent.click(screen.getByText("README.md"));
     expect(openFileSpy).toHaveBeenCalledWith("/Users/me/myproj/README.md");
+  });
+
+  // v1.1.0：预览面板被收起（filePreviewVisible=false）时，点文件应强制展开预览，
+  // 否则 openFile 了但面板不显示、用户看不到文件（对齐 VS Code 等工具）。
+  it("预览面板收起时点文件 → 强制 setFilePreviewVisible(true) 展开预览", async () => {
+    vi.spyOn(useFileEditorStore.getState(), "openFile").mockResolvedValue();
+    // 模拟用户先把预览面板收起
+    useSidebarStore.getState().setFilePreviewVisible(false);
+    expect(useSidebarStore.getState().filePreviewVisible).toBe(false);
+    const tabId = useTabsStore.getState().addTab();
+    useTabsStore.getState().setSessionId(tabId, "sid");
+    sessionCurrentCwdMock.mockResolvedValue("/Users/me/myproj");
+    fsTreeMock.mockResolvedValue(fakeRootTree());
+
+    render(<FileTree />);
+    await waitFor(() => {
+      expect(screen.getByText("README.md")).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByText("README.md"));
+    // 点文件后预览面板恢复可见
+    expect(useSidebarStore.getState().filePreviewVisible).toBe(true);
   });
 
   it("点非 .md 文件也触发 openFile（编辑器内部按扩展名推断语言）", async () => {
@@ -357,5 +398,90 @@ describe("FileTree", () => {
     // 等一拍确保 git refresh 已跑
     await new Promise((r) => setTimeout(r, 10));
     expect(screen.queryAllByTestId("git-dir-dirty-dot")).toHaveLength(0);
+  });
+
+  // ============================================================
+  // v1.1.0 F5：目录树 fs 自动刷新（notify watcher → fs:changed）
+  // ============================================================
+
+  it("有 cwd → 启动 fs watcher（fsWatchStart(cwd)）并订阅 fs:changed", async () => {
+    const tabId = useTabsStore.getState().addTab();
+    useTabsStore.getState().setSessionId(tabId, "sid");
+    sessionCurrentCwdMock.mockResolvedValue("/Users/me/myproj");
+    fsTreeMock.mockResolvedValue(fakeRootTree());
+
+    render(<FileTree />);
+
+    await waitFor(() => {
+      expect(fsWatchStartMock).toHaveBeenCalledWith("/Users/me/myproj");
+    });
+    await waitFor(() => {
+      expect(onFsChangedMock).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("收到 fs:changed 事件 → debounce 后重新拉取目录树", async () => {
+    const tabId = useTabsStore.getState().addTab();
+    useTabsStore.getState().setSessionId(tabId, "sid");
+    sessionCurrentCwdMock.mockResolvedValue("/Users/me/myproj");
+    fsTreeMock.mockResolvedValue(fakeRootTree());
+
+    let fsChangedHandler: ((e: { paths: string[] }) => void) | null = null;
+    onFsChangedMock.mockImplementation((cb: (e: { paths: string[] }) => void) => {
+      fsChangedHandler = cb;
+      return Promise.resolve(fsChangedUnlistenMock);
+    });
+
+    render(<FileTree />);
+    await waitFor(() => {
+      expect(screen.getByText("src")).toBeTruthy();
+    });
+    await waitFor(() => {
+      expect(fsChangedHandler).not.toBeNull();
+    });
+
+    const callsBefore = fsTreeMock.mock.calls.length;
+    fsChangedHandler!({ paths: ["/Users/me/myproj/new.txt"] });
+
+    // 前端再 debounce ~200ms 才触发 reloadTree（内部又调一次 fsTree(rootCwd, 1)）
+    await waitFor(
+      () => {
+        expect(fsTreeMock.mock.calls.length).toBeGreaterThan(callsBefore);
+      },
+      { timeout: 1000 },
+    );
+    expect(fsTreeMock).toHaveBeenCalledWith("/Users/me/myproj", 1);
+  });
+
+  it("组件卸载 → 停止 fs watcher + 取消事件订阅", async () => {
+    const tabId = useTabsStore.getState().addTab();
+    useTabsStore.getState().setSessionId(tabId, "sid");
+    sessionCurrentCwdMock.mockResolvedValue("/Users/me/myproj");
+    fsTreeMock.mockResolvedValue(fakeRootTree());
+
+    const { unmount } = render(<FileTree />);
+    await waitFor(() => {
+      expect(fsWatchStartMock).toHaveBeenCalledWith("/Users/me/myproj");
+    });
+    await waitFor(() => {
+      expect(onFsChangedMock).toHaveBeenCalledTimes(1);
+    });
+
+    unmount();
+
+    await waitFor(() => {
+      expect(fsWatchStopMock).toHaveBeenCalled();
+    });
+    expect(fsChangedUnlistenMock).toHaveBeenCalled();
+  });
+
+  it("无 cwd（cwd=null）→ 不启动 fs watcher", async () => {
+    sessionCurrentCwdMock.mockResolvedValue(null);
+    render(<FileTree />);
+    await waitFor(() => {
+      expect(screen.getByText("未检测到当前目录")).toBeTruthy();
+    });
+    expect(fsWatchStartMock).not.toHaveBeenCalled();
+    expect(onFsChangedMock).not.toHaveBeenCalled();
   });
 });

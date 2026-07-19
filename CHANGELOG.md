@@ -2,6 +2,29 @@
 
 All notable changes to aitm will be documented in this file. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.1] — 2026-07-19
+
+### Added
+
+- Dock badge now lights up for every notification (bell / OSC / AI completion), tracked as per-tab unread plus a red Dock count — no longer suppressed by window-focus state, so completions in a background tab are still visible
+- File tree auto-refreshes on external filesystem changes via a native watcher (macOS FSEvents, debounced); `.git`, `node_modules`, and `target` are filtered to avoid event storms
+- Switching or activating a tab immediately focuses its terminal (or editor) — no extra click needed
+- Markdown preview polish: systematic `.prose-md` styling (heading hierarchy, tables, code blocks, quotes, inline code) and syntax-highlighted code blocks that follow the dark/light theme
+- Rounded corners unified across panels, tabs, buttons, inputs, and dialogs
+
+### Changed
+
+- Terminal tabs restyled to a VS Code–style per-group tab bar with a bottom active-tab indicator
+- Clicking a file in the tree now auto-expands the preview pane when it was collapsed
+
+### Fixed
+
+- Dock badge rewritten to native AppKit (`NSApp.dockTile().setBadgeLabel()`), working around a macOS Tauri `setBadgeCount` bug so the badge reliably appears
+- Notification events are now delivered to the main webview (`emit_to`), fixing bell/OSC notifications that never reached the frontend under Tauri 2's multi-webview model
+- Restored the "close a running tab" confirmation dialog that was lost during the split-pane refactor
+- Fixed dropped keystrokes — swallowed spaces after `cd` and during fast typing — with a data-driven re-injection timer that leaves IME / Chinese input untouched
+- Terminal no longer snaps back to the bottom after the user scrolls up
+
 ## [1.0.0] — 2026-05-28
 
 First public release.

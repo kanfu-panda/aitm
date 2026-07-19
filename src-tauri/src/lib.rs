@@ -75,6 +75,18 @@ pub fn run_gui() {
                     let _ = window.emit("app:confirm-quit-requested", ());
                 }
             }
+            // v1.1.0 R1：主窗口聚焦状态 → 前端。用 OS 级 WindowEvent::Focused（可靠），
+            // 不用 Tauri JS onFocusChanged（多 webview 真机不触发，是上次焦点门控被迫
+            // 全删的原因）。前端据此门控：活跃 tab && 窗口聚焦 → 不 badge（用户正看着，
+            // 补全响铃等噪声不该点角标）；切到别的 app（失焦）则一律 badge。
+            if let tauri::WindowEvent::Focused(focused) = event {
+                use tauri::{Emitter, Manager};
+                let _ = window.app_handle().emit_to(
+                    tauri::EventTarget::webview("main"),
+                    "window:focus-changed",
+                    *focused,
+                );
+            }
         })
         .plugin(tauri_plugin_log::Builder::default().build())
         .plugin(tauri_plugin_notification::init())
@@ -93,6 +105,8 @@ pub fn run_gui() {
         .manage(std::sync::Arc::new(crate::store::AitmDb::new()))
         .manage(std::sync::Arc::new(ipc::system::SystemMonitorState::default()))
         .manage(std::sync::Arc::new(ipc::browser::BrowserState::default()))
+        // v1.1.0 F5：目录树 fs watcher 句柄状态（notify debouncer）
+        .manage(ipc::fs::FsWatcherState::new())
         // v0.9.0 H2：cwd 轮询兜底（macOS 默认 zsh 不发 OSC 7 时也能跟 cwd）
         .manage(std::sync::Arc::new(session::cwd_poller::CwdPoller::new()))
         .setup(move |app| {
@@ -190,6 +204,9 @@ pub fn run_gui() {
             // v0.9.1 HR3-3：StatusBar 重排（磁盘 + git 分支）
             ipc::fs::fs_disk_usage,
             ipc::fs::git_current_branch,
+            // v1.1.0 F5：目录树 fs 自动刷新（notify watcher → fs:changed）
+            ipc::fs::fs_watch_start,
+            ipc::fs::fs_watch_stop,
             // v0.9.1 HR3-6：FileTree 按 git status 染色（modified / untracked / ...）
             ipc::git::git_status,
             ipc::shell::shell_open,
@@ -238,6 +255,8 @@ pub fn run_gui() {
             ipc::browser::browser_eval_js,
             // v0.9.0 T4：关闭应用二次确认
             ipc::app::app_quit_confirmed,
+            // v1.0.1：原生 macOS Dock 角标（绕开 tauri#13905）
+            ipc::app::set_dock_badge,
             // v0.10.6 T1：切语言时重建 NSMenu（macOS only；其他平台 no-op）
             ipc::menu::menu_rebuild,
         ])

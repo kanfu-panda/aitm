@@ -329,9 +329,9 @@
   "closeTabDialog": {
     "dialogAria": "Confirm close tab",
     "title": "Close tab \"{{title}}\"?",
-    "description": "This tab has a command running (e.g. npm install / cargo test). Closing will send SIGHUP to the shell to force-stop the unfinished command.",
+    "description": "A task is running. Close anyway?",
     "cancel": "Cancel",
-    "forceClose": "Force close"
+    "forceClose": "Close"
   },
   "closeFileConfirm": {
     "dialogAria": "Confirm close file",

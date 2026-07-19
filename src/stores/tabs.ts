@@ -85,6 +85,13 @@ interface TabsState {
   clearUnread: (tabId: TabId) => void;
   /** v0.10.5 #1：标记 tab 的 PTY spawn 失败状态。null 清除。 */
   setSpawnError: (tabId: TabId, error: string | null) => void;
+  /**
+   * v1.1.0 R1：主窗口是否聚焦（由后端 WindowEvent::Focused 经
+   * `window:focus-changed` 事件推送，App.tsx 订阅后写入）。markUnread 用它门控：
+   * 活跃 tab && 窗口聚焦 → 不 badge。默认 true（app 启动即聚焦）。
+   */
+  windowFocused: boolean;
+  setWindowFocused: (focused: boolean) => void;
 }
 
 let counter = 0;
@@ -116,6 +123,7 @@ export const useTabsStore = create<TabsState>((set, get) => ({
   tabs: [],
   activeId: null,
   unreadByTab: {},
+  windowFocused: true,
 
   addTab: () => {
     const id = nextTabId();
@@ -212,11 +220,14 @@ export const useTabsStore = create<TabsState>((set, get) => ({
     })),
 
   markUnread: (tabId) => {
-    const state = get();
-    // active tab 不计未读
-    if (state.activeId === tabId) return;
-    // 节流：200ms 窗口内同一 tabId 的连续 mark 只算 1 次
-    // 用 Date.now() 而非 performance.now()——Date 在 eslint globals + jsdom 都直接可用
+    // v1.1.0 R1：恢复焦点门控——**用后端 OS 级 window:focus-changed 信号**（可靠），
+    // 不再用上次那套 Tauri JS onFocusChanged（多 webview 真机不触发，才被迫全删）。
+    // 用户正看着某 tab（该 tab active 且窗口聚焦）时，tab 补全响铃等 BEL 噪声不该
+    // 点角标（真机反馈：敲 `cd ` 补全就 badge 了）；只有该 tab 在后台、或用户切到
+    // 别的 app（窗口失焦）时才计未读点角标。清零仍交给 setActive（点 / 切到该 tab）。
+    const { activeId, windowFocused } = get();
+    if (tabId === activeId && windowFocused) return;
+    // 节流：200ms 窗口内同一 tabId 的连续 mark 只算 1 次。
     const now = Date.now();
     const prev = lastMarkAt.get(tabId);
     if (prev !== undefined && now - prev < MARK_UNREAD_THROTTLE_MS) return;
@@ -247,4 +258,6 @@ export const useTabsStore = create<TabsState>((set, get) => ({
           : t,
       ),
     })),
+
+  setWindowFocused: (focused) => set({ windowFocused: focused }),
 }));

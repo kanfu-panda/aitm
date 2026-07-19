@@ -18,7 +18,8 @@
  * 同步过去（为了让 useShortcuts / xterm 焦点路径继续工作）。
  * ========================================================================== */
 
-import { useEffect, useState, type CSSProperties } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
+import type * as React from "react";
 import { useTranslation } from "react-i18next";
 import { useDroppable } from "@dnd-kit/core";
 import {
@@ -27,12 +28,13 @@ import {
   useSortable,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { useTabsStore } from "../../stores/tabs";
+import { useTabsStore, type Tab, type TabId } from "../../stores/tabs";
 import { usePaneLayoutStore, type PaneGroup } from "../../stores/pane-layout";
 import { useFocusSurfaceStore } from "../../stores/focus-surface";
-import type { SessionId } from "../../lib/tauri";
+import { sessionHasRunningCommand, type SessionId } from "../../lib/tauri";
 import TerminalView from "../TerminalView";
 import TabMetadataIcons from "../TabMetadataIcons";
+import CloseTabConfirmDialog from "../CloseTabConfirmDialog";
 import { Bell } from "../icons";
 import {
   useNotificationsStore,
@@ -97,7 +99,39 @@ export function TerminalPaneGroup({ group }: Props) {
     setActiveGroup(group.id);
     void addTabToActiveGroup();
   };
+
+  // F1（v1.1.0 回归修复）：9eb0ec6 重构 TerminalPaneGroup 时漏移植
+  // d915d9a 的运行中命令检测 + 二次确认（旧逻辑仍在死代码 TabBar.tsx:61-77）。
+  // 待关 tab（有运行中命令时）；null = 无待关 tab，dialog 不显示。
+  const [pendingClose, setPendingClose] = useState<{
+    tabId: TabId;
+    title: string;
+  } | null>(null);
+
+  /**
+   * 关 tab 前先探测是否有运行中命令：
+   * - session 未开 → 直接关（现快路径）
+   * - 有运行中命令 → 弹 CloseTabConfirmDialog，确认后再真正关
+   * - 检测失败 → 静默直关，不阻塞用户操作（照搬 TabBar.tsx handleClose 的 fallback）
+   */
   const handleCloseTab = (tabId: string) => {
+    const tab = tabs.find((x) => x.id === tabId);
+    void closeWithConfirm(tab, tabId);
+  };
+  const closeWithConfirm = async (tab: Tab | undefined, tabId: string) => {
+    if (!tab?.sessionId) {
+      void closeTabInGroup(group.id, tabId);
+      return;
+    }
+    try {
+      const hasRunning = await sessionHasRunningCommand(tab.sessionId);
+      if (hasRunning) {
+        setPendingClose({ tabId, title: tab.title });
+        return;
+      }
+    } catch (e) {
+      console.warn("sessionHasRunningCommand 失败", e);
+    }
     void closeTabInGroup(group.id, tabId);
   };
 
@@ -129,6 +163,9 @@ export function TerminalPaneGroup({ group }: Props) {
     : 0;
   const rightCount =
     contextMenu && ctxIdx >= 0 ? group.tab_ids.length - 1 - ctxIdx : 0;
+  // TODO(F1 增强)：批量关闭（closeOthers/closeRight/closeAll）目前对运行中命令
+  // 的 tab 不弹确认，直接强关。plan §F1 允许本批次先做单 tab 确认，批量场景的
+  // 统一确认弹窗留作后续增强。
   const closeBatch = async (ids: string[]) => {
     // 顺序 await 避免 store race（closeTabInGroup 内部会改 group.tab_ids）
     for (const id of ids) {
@@ -186,7 +223,7 @@ export function TerminalPaneGroup({ group }: Props) {
       // v0.10.0 HR7-3：focus 视觉换方案 A —— 删 outer 满边框，让"高亮提示"集中在
       // 内部 tab bar 背景一档（见下方 tabbar className）和 active tab 底部 2px
       // emerald 横线。这样避免 5 块分屏时屏幕被多条绿框包围、视觉嘈杂。
-      className="relative flex h-full w-full min-h-0 min-w-0 flex-col overflow-hidden border border-[var(--c-border)]"
+      className="relative flex h-full w-full min-h-0 min-w-0 flex-col overflow-hidden rounded-lg border border-[var(--c-border)]"
       // 点击 group 容器任意区域 → 焦点切到本 group（写 active_group_id）
       // v0.10.0 HR9-11：同时记 lastSurface=terminal 给 Cmd+W 路由用
       // v0.10.0 HR9-14：同步全局 useTabsStore.activeId 到本 group 的 active_tab_id，
@@ -207,7 +244,7 @@ export function TerminalPaneGroup({ group }: Props) {
       <div
         ref={setBarRef}
         className={
-          "flex h-9 shrink-0 items-center gap-1 border-b px-2 select-none " +
+          "flex h-8 shrink-0 items-center gap-0 border-b pr-1.5 select-none " +
           (showBarDropHover
             ? "border-[var(--c-success)] bg-[var(--c-success)]/10 outline outline-2 outline-[var(--c-success)] -outline-offset-2"
             : isFocused
@@ -272,6 +309,9 @@ export function TerminalPaneGroup({ group }: Props) {
               initialCwd={t.last_cwd ?? null}
               onSessionOpened={(sid) => setSessionId(t.id, sid)}
               onExit={() => handleCloseTab(t.id)}
+              // F3（v1.1.0）：只在"本 tab 是本 group 的 active tab 且本 group
+              // 持有焦点"时才聚焦，避免后台（未聚焦）group 抢走键盘输入。
+              isActive={t.id === activeTabId && isFocused}
             />
           </div>
         ))}
@@ -351,6 +391,17 @@ export function TerminalPaneGroup({ group }: Props) {
           </button>
         </div>
       )}
+      {/* F1（v1.1.0 回归修复）：关闭有运行中命令的 tab 时的二次确认弹窗。 */}
+      <CloseTabConfirmDialog
+        pendingTabTitle={pendingClose?.title ?? null}
+        onConfirm={() => {
+          if (pendingClose) {
+            void closeTabInGroup(group.id, pendingClose.tabId);
+            setPendingClose(null);
+          }
+        }}
+        onCancel={() => setPendingClose(null)}
+      />
     </div>
   );
 }
@@ -378,6 +429,12 @@ interface SortableTabProps {
  * - id = tabId（PaneDndContext.handleDragEnd 用此 id 找属于哪个 group）
  * - 整个 tab 头部都是 drag activator；关闭按钮 stopPropagation 不触发拖
  * - dragging 时 opacity-50 + cursor-grabbing 提示
+ * - F2（v1.1.0 回归修复）：双击标题进 inline 编辑改名（照搬死代码
+ *   TabBar.tsx 的 handleClose/TabTitleInput 思路）。双击不误触拖拽靠
+ *   sensor 的 activationConstraint distance=8（无位移点击天然不触发），
+ *   **标题 <span> 不能 stopPropagation pointerDown**——否则从标题按下拖
+ *   拽的 pointerDown 到不了 dnd-kit listeners，整条 tab 拖不动（曾回归
+ *   drag-drop e2e）。仅编辑态的 <input> stopPropagation（编辑时不拖）。
  */
 function SortableTab({
   tabId,
@@ -399,6 +456,32 @@ function SortableTab({
     transition,
     isDragging,
   } = useSortable({ id: tabId });
+  const setTitle = useTabsStore((s) => s.setTitle);
+
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(title);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!editing) return;
+    // 进编辑态时用最新 title 预填 + 聚焦全选
+    setValue(title);
+    requestAnimationFrame(() => {
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editing]);
+
+  const submitEdit = () => {
+    const trimmed = value.trim();
+    // 空字符串不更新，保留原 title（对齐死代码 TabBar.tsx 行为）
+    if (trimmed.length > 0) setTitle(tabId, trimmed);
+    setEditing(false);
+  };
+  const cancelEdit = () => {
+    setEditing(false);
+  };
 
   const style: CSSProperties = {
     transform: CSS.Transform.toString(transform),
@@ -416,18 +499,63 @@ function SortableTab({
       data-testid={`terminal-pane-group-tab-${tabId}`}
       role="tab"
       aria-selected={isActive}
-      onClick={onClick}
+      onClick={() => {
+        if (!editing) onClick();
+      }}
       onContextMenu={onContextMenu}
       className={
-        "group flex items-center gap-2 px-3 py-1 text-xs font-mono " +
+        // VS Code 风格 tab（真机反馈参照 VS Code）：矩形无圆角、tab 间齐平无缝
+        // （右侧 1px 细分隔线区分）、内容左对齐（名字 flex-1 占满、× 顶到右）、
+        // 激活背景退到最暗一档（与下方终端同色，视觉"连成一体"）。
+        // 激活的底部 emerald 绿条用 inset box-shadow 画（不用 border-b-color——
+        // 那会和"透明占位"同属 border-bottom-color 互相覆盖把绿条抹没，是上一版
+        // "看不到绿条"的根因）。inset shadow 画在 tab 内侧底边、盖在暗背景上，
+        // 不受 bar 底边框 / 高度占位影响，稳定可见。
+        "group flex h-full items-center gap-1.5 min-w-[104px] border-r border-[var(--c-border)] px-3 text-xs font-mono " +
         (isActive
           ? isFocused
-            ? "border-b-2 border-[var(--c-success)] bg-[var(--c-bg-elev-2)] text-[var(--c-text-base)]"
-            : "border-b-2 border-[var(--c-border-strong)] bg-[var(--c-bg-elev-2)] text-[var(--c-text-base)]"
-          : "rounded text-[var(--c-text-muted)] hover:bg-[var(--c-bg-elev-2)] hover:text-[var(--c-text-base)]")
+            ? // 激活 + 聚焦：底部 emerald 绿条 + 最暗背景（=终端底色）+ 主文字
+              "bg-[var(--c-bg-base)] text-[var(--c-text-base)] shadow-[inset_0_-2px_0_0_var(--c-success)]"
+            : // 激活但该 group 未聚焦：绿条转弱化色
+              "bg-[var(--c-bg-base)] text-[var(--c-text-base)] shadow-[inset_0_-2px_0_0_var(--c-text-dim)]"
+          : // 未激活：亮一档灰背景 + 次要文字，hover 再提亮
+            "bg-[var(--c-bg-elev-1)] text-[var(--c-text-muted)] hover:bg-[var(--c-bg-elev-2)] hover:text-[var(--c-text-base)]")
       }
     >
-      <span className="truncate max-w-40">{title}</span>
+      {editing ? (
+        <input
+          ref={inputRef}
+          type="text"
+          value={value}
+          data-testid={`terminal-pane-group-tab-title-input-${tabId}`}
+          onChange={(e) => setValue(e.target.value)}
+          onClick={(e) => e.stopPropagation()}
+          onPointerDown={(e) => e.stopPropagation()}
+          onKeyDown={(e) => {
+            e.stopPropagation();
+            if (e.key === "Enter") {
+              e.preventDefault();
+              submitEdit();
+            } else if (e.key === "Escape") {
+              e.preventDefault();
+              cancelEdit();
+            }
+          }}
+          onBlur={submitEdit}
+          aria-label="标签标题"
+          className="w-32 rounded border border-[var(--c-border-strong)] bg-[var(--c-bg-base)] px-1.5 py-0.5 font-mono text-xs text-[var(--c-text-base)] focus:border-[var(--c-text-muted)] focus:outline-none"
+        />
+      ) : (
+        <span
+          className="truncate flex-1 min-w-0 max-w-[200px] text-left"
+          onDoubleClick={(e) => {
+            e.stopPropagation();
+            setEditing(true);
+          }}
+        >
+          {title}
+        </span>
+      )}
       {unread > 0 && (
         <span
           className="inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-[var(--c-error)] px-1 text-[10px] font-bold leading-none text-white"
@@ -457,7 +585,7 @@ function SortableTab({
           e.stopPropagation();
           onClose();
         }}
-        className="text-[var(--c-text-dim)] hover:text-[var(--c-text-base)]"
+        className="shrink-0 rounded px-0.5 text-[var(--c-text-dim)] hover:bg-[var(--c-bg-elev-3)] hover:text-[var(--c-text-base)]"
         aria-label="关闭标签"
       >
         ×

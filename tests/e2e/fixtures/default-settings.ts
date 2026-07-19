@@ -49,7 +49,11 @@ export const DEFAULT_E2E_SETTINGS: AppSettings = {
     pane_layout: null,
     // v0.10.0 HR7-7：快捷键自定义覆盖（默认空 → 走 DEFAULT_KEYBINDINGS）
     keybindings: {},
-        language: "en",
+    // E2E 钉死中文 locale：spec 的 getByLabel / getByRole 断言用中文文案
+    // （"AI 助手" / "AI 提供商" / "安全" 等）。生产默认仍是英文
+    // （i18n.ts lng="en" + stores/settings.ts），此处只固定测试 locale 让
+    // 标签断言稳定。v0.10.4 默认改英文后此 fixture 漏改，曾导致全套 spec 失配。
+    language: "zh-CN",
   },
   notifications: {
     sound: true,

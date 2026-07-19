@@ -22,7 +22,7 @@ export interface NotificationEvent {
   session_id: string;
   level: NotificationLevel;
   message: string;
-  source: "ai_tool_loop" | "osc_9" | "osc_99" | "osc_777";
+  source: "ai_tool_loop" | "osc_9" | "osc_99" | "osc_777" | "bell";
   timestamp_ms: number;
 }
 
@@ -142,7 +142,10 @@ export const useNotificationsStore = create<NotificationsState>((set, get) => ({
     // 用 markUnreadHook 注入避免 notifications ↔ tabs 循环 import 死锁
     // （tabs 已 import notifications，注入而非反向 import）。
     markUnreadHook?.(tabId);
-    if (event.level !== "running") {
+    // bell（孤立 BEL 响铃）只点未读 + Dock 角标，不弹系统横幅——
+    // 响铃可能高频（补全提示音 / vi 报错音），横幅会变骚扰；
+    // 对齐 macOS Terminal 默认行为（响铃只点角标不发通知）
+    if (event.level !== "running" && event.source !== "bell") {
       systemNotificationHook?.(event);
     }
   },

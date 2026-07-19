@@ -106,11 +106,11 @@
    * §2.4 圆角 / 阴影 Token
    * dark theme 阴影 = 黑色透明叠加，不用模糊光晕
    * --------------------------------------------------------------------- */
-  --r-sm:   2px;   /* 输入框/小按钮 */
-  --r-md:   4px;   /* 按钮 / icon button / tab */
-  --r-lg:   6px;   /* 卡片 / dialog */
-  --r-xl:   8px;   /* modal / 大卡片 */
-  --r-full: 9999px; /* badge / pill */
+  --r-sm:   3px;   /* 输入框/小按钮（v1.1.0 F6 圆润化：2→3px） */
+  --r-md:   6px;   /* 按钮 / icon button / tab（v1.1.0 F6：4→6px） */
+  --r-lg:   10px;  /* 卡片 / dialog（v1.1.0 F6：6→10px） */
+  --r-xl:   12px;  /* modal / 大卡片（v1.1.0 F6：8→12px） */
+  --r-full: 9999px; /* badge / pill（不变） */
 
   --sh-sm: 0 1px 2px rgba(0, 0, 0, 0.30);
   --sh-md: 0 2px 6px rgba(0, 0, 0, 0.35);
