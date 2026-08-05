@@ -14,6 +14,7 @@ pub mod safety;
 pub mod scope;
 pub mod session;
 pub mod settings;
+pub mod skills;
 pub mod store;
 pub mod tools;
 pub mod version;
@@ -88,7 +89,29 @@ pub fn run_gui() {
                 );
             }
         })
-        .plugin(tauri_plugin_log::Builder::default().build())
+        // v1.3.0 P3：裸默认 `Builder::default()` 在 dev 下是 TRACE 全开，
+        // `tauri_plugin_aptabase::dispatcher` 每 2 秒刷 "flushing tracking
+        // events" + `tao::platform_impl` 的鼠标进出事件把真正有用的诊断信息
+        // 全淹没（真机截图确认）——而项目规矩是"真机出问题看 dev log 诊断"，
+        // 刷屏之下根本看不了。
+        //
+        // 分级：全局默认 Info（Error/Warn/Info 都留着，不关掉有用的错误日志，
+        // release 下同样适用）；已知噪音源（aptabase 心跳、tao/wry 的窗口 /
+        // 输入事件）单独降到 Warn；aitm 自己的代码保持 Debug 不降级，方便
+        // 真机诊断。crate 名用 `aitm_lib`（`[lib] name`）——本 crate 内的
+        // `log`/`tracing::debug!` 等宏 target 前缀就是这个，不是包名 `aitm`。
+        .plugin(
+            tauri_plugin_log::Builder::new()
+                .level(tauri_plugin_log::log::LevelFilter::Info)
+                .level_for("aitm_lib", tauri_plugin_log::log::LevelFilter::Debug)
+                .level_for(
+                    "tauri_plugin_aptabase",
+                    tauri_plugin_log::log::LevelFilter::Warn,
+                )
+                .level_for("tao", tauri_plugin_log::log::LevelFilter::Warn)
+                .level_for("wry", tauri_plugin_log::log::LevelFilter::Warn)
+                .build(),
+        )
         .plugin(tauri_plugin_notification::init())
         // v0.7.0-A：Aptabase 匿名使用统计 plugin。
         // App Key `A-US-6820213489` 是公开 Key（不是 secret），可硬编码；
@@ -145,6 +168,14 @@ pub fn run_gui() {
                 .inner()
                 .clone();
             cwd_poller_handle.start(app.handle().clone());
+
+            // v1.2.0 T-B3：把 AppHandle 存进 BrowserState。
+            // `browser_open` 工具要在**一个 webview 都没有**的情况下 emit
+            // `browser:open_requested` 请前端开面板，那时没法靠
+            // `Webview::app_handle()` 拿 handle，只能启动期存一份。
+            app.handle()
+                .state::<std::sync::Arc<ipc::browser::BrowserState>>()
+                .set_app_handle(app.handle().clone());
 
             // v0.7.0-A：上报 app_started。Aptabase 自动附加 OS / app version 等
             // 非 PII metadata；这里 props=None 不带任何自定义字段。
@@ -242,6 +273,7 @@ pub fn run_gui() {
             ipc::browser::browser_close_tab,
             ipc::browser::browser_navigate,
             ipc::browser::browser_set_active,
+            ipc::browser::browser_clear_active,
             ipc::browser::browser_set_bounds,
             ipc::browser::browser_suspend_tab,
             ipc::browser::browser_set_scroll_y,
@@ -253,6 +285,8 @@ pub fn run_gui() {
             ipc::browser::browser_inject_snapshot,
             ipc::browser::browser_snapshot_result,
             ipc::browser::browser_eval_js,
+            // v1.2.0 T-B3：AI 自己开浏览器 —— 前端建好 tab 后回报结果
+            ipc::browser::browser_open_result,
             // v0.9.0 T4：关闭应用二次确认
             ipc::app::app_quit_confirmed,
             // v1.0.1：原生 macOS Dock 角标（绕开 tauri#13905）

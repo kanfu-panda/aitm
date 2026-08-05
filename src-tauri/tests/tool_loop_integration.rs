@@ -171,6 +171,7 @@ async fn read_file_端到端_真实文件() {
         sink.clone(),
         "cid".into(),
         handle,
+        None,
     )
     .await;
 
@@ -244,6 +245,7 @@ async fn list_files_端到端_跳过_node_modules() {
         sink.clone(),
         "cid".into(),
         handle,
+        None,
     )
     .await;
 
@@ -314,6 +316,7 @@ async fn run_command_黑名单_拦截_rm_rf_root() {
         sink.clone(),
         "cid".into(),
         handle,
+        None,
     )
     .await;
 

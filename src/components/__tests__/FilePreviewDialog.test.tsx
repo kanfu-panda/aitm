@@ -151,6 +151,11 @@ describe("FilePreviewDialog", () => {
     const classBefore = await waitFor(() => {
       const code = document.body.querySelector("code.language-rust");
       expect(code).not.toBeNull();
+      // 必须等 highlight.js **完成**（完成时会补上 hljs class）再取基线。
+      // 否则可能在高亮完成前抓到 "language-rust"，等切完主题高亮才补上 hljs，
+      // 断言就误判成"切主题改了 DOM"——真机并非如此，纯属取基线时机太早。
+      // 这是全量并发跑 vitest 时偶发失败（单跑必过）的根因。
+      expect(code!.className).toContain("hljs");
       return code!.className;
     });
 

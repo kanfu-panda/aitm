@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useState, type ComponentProps } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentProps,
+} from "react";
 import { useTranslation } from "react-i18next";
 import {
   fsCreateDir,
@@ -32,6 +39,28 @@ import FsDeleteConfirmDialog from "./FsDeleteConfirmDialog";
 /** v0.9.1 HR3-6：git status 轮询间隔（ms）。
  *  5s 在大 repo 下也 < 50ms 单次开销可接受；调高会让用户感觉"刚改的文件半天没变色"。 */
 const GIT_STATUS_POLL_MS = 5_000;
+
+/** v1.3.0 P9：前端合并 `fs:changed` 批次的窗口（ms）。
+ *  后端已按 400ms debounce 分批，这里再兜一层：一次 `git checkout` / `pnpm build`
+ *  可能连着推来好几批，合并后只跑一轮增量刷新。 */
+const FS_CHANGED_MERGE_MS = 150;
+
+/** 推断路径分隔符：只有"含 `\` 且不含 `/`"才当 Windows 路径。 */
+function sepOf(path: string): string {
+  return path.includes("\\") && !path.includes("/") ? "\\" : "/";
+}
+
+/** 取父目录绝对路径；已经是根（没有分隔符或分隔符在 0 位）时返回自身。 */
+function parentOf(path: string): string {
+  const sep = sepOf(path);
+  const idx = path.lastIndexOf(sep);
+  return idx > 0 ? path.slice(0, idx) : path;
+}
+
+/** `child` 是否落在 `ancestor` 目录之下（严格子孙，不含自身）。 */
+function isUnder(child: string, ancestor: string): boolean {
+  return child.startsWith(ancestor + sepOf(ancestor));
+}
 
 /**
  * 左侧文件树面板（Phase 3A T2）。
@@ -83,14 +112,151 @@ export default function FileTree() {
   const [rootNode, setRootNode] = useState<TreeNode | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // === v1.3.0 P9：树状态上提到 FileTree（原来散在每个 FileTreeRow 的 local state）===
+  //
+  // 上提的原因：fs watcher 一触发就要能**按路径**定位到受影响的那个目录、只换它的
+  // 子项；状态留在 row 里就只能靠 remount 整棵树来刷新（v1.1.0 的做法），代价是
+  // 所有展开态全丢 —— 真机上表现为"浏览着目录突然全折回去，没法用"。
+  //
+  // - expandedPaths：已展开的目录绝对路径集合。**唯一**的展开态来源。
+  // - childrenByPath：目录 → 已加载的直接子项。key 用后端 canonicalize 过的绝对
+  //   路径（跟 watcher 上报的路径同形，才能直接命中）。根目录也在里面。
+  // - loadErrorByPath：单个目录懒加载失败的消息（只影响那一行，不影响整棵树）。
+  //
+  // 折叠时**保留** children 缓存：这样再展开是瞬时的，且嵌套展开态不丢
+  // （对齐 VS Code：折叠父目录再展开，里面原来展开的子目录还是展开的）。
+  const [childrenByPath, setChildrenByPath] = useState<
+    Record<string, TreeNode[]>
+  >({});
+  const [expandedPaths, setExpandedPaths] = useState<ReadonlySet<string>>(
+    () => new Set<string>(),
+  );
+  const [loadErrorByPath, setLoadErrorByPath] = useState<
+    Record<string, string>
+  >({});
+
+  // watcher 回调 / 定时器里要读最新状态，但它们不在 render 闭包里 —— 用 ref 镜像。
+  const childrenRef = useRef<Record<string, TreeNode[]>>({});
+  useEffect(() => {
+    childrenRef.current = childrenByPath;
+  }, [childrenByPath]);
+  const rootNodeRef = useRef<TreeNode | null>(null);
+  useEffect(() => {
+    rootNodeRef.current = rootNode;
+  }, [rootNode]);
+  /** 当前根 cwd 的同步镜像：loadFromCwd 要在同一 tick 判断"是不是换目录了"，
+   *  不能等 state 提交（否则同一次 effect 里连着两次调用会误判成没换）。 */
+  const rootCwdRef = useRef<string | null>(null);
+
+  /**
+   * 增量刷新：只重拉 `dirs` 里**当前已加载**的目录，其余节点原样不动。
+   *
+   * 一次刷新做三件事：
+   * 1. 并行 `fs_tree(dir, 1)` 拿各目录最新直接子项
+   * 2. 命中的目录换掉子项数组（其它 key 的数组引用不变 → React 按 key 复用 DOM，
+   *    无关分支不重建）
+   * 3. 剪枝：目录本身读不到了，或它在父目录的新子项里消失了（删除 / 重命名），
+   *    把它和它的所有子孙从 children 缓存 + 展开态里一起清掉
+   */
+  const refreshDirs = useCallback(async (dirs: string[]) => {
+    const loaded = childrenRef.current;
+    const rootPath = rootNodeRef.current?.path ?? null;
+    const targets = Array.from(new Set(dirs)).filter(
+      (d) => loaded[d] !== undefined,
+    );
+    if (targets.length === 0) return;
+
+    const results = await Promise.all(
+      targets.map(async (dir) => {
+        try {
+          const node = await fsTree(dir, 1);
+          return { dir, children: node.children ?? [], ok: true as const };
+        } catch {
+          return { dir, children: [] as TreeNode[], ok: false as const };
+        }
+      }),
+    );
+
+    // --- 剪枝集合：被删掉的目录 + 其所有子孙 ---
+    const removed = new Set<string>();
+    const markRemoved = (dir: string) => {
+      removed.add(dir);
+      for (const key of Object.keys(loaded)) {
+        if (isUnder(key, dir)) removed.add(key);
+      }
+    };
+    for (const r of results) {
+      if (!r.ok) {
+        // 根目录读不到（cwd 被删 / 权限）→ 交给整体 error 提示，不剪枝
+        if (r.dir === rootPath) continue;
+        markRemoved(r.dir);
+        continue;
+      }
+      const aliveDirs = new Set(
+        r.children.filter((c) => c.kind === "dir").map((c) => c.path),
+      );
+      for (const key of Object.keys(loaded)) {
+        if (key === r.dir) continue;
+        if (parentOf(key) === r.dir && !aliveDirs.has(key)) markRemoved(key);
+      }
+    }
+
+    setChildrenByPath((prev) => {
+      const next = { ...prev };
+      for (const key of removed) delete next[key];
+      for (const r of results) {
+        if (r.ok && !removed.has(r.dir)) next[r.dir] = r.children;
+      }
+      return next;
+    });
+    setExpandedPaths((prev) => {
+      if (removed.size === 0) return prev;
+      const next = new Set(prev);
+      let changed = false;
+      for (const key of removed) {
+        if (next.delete(key)) changed = true;
+      }
+      return changed ? next : prev;
+    });
+    setLoadErrorByPath((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      for (const key of removed) {
+        if (key in next) {
+          delete next[key];
+          changed = true;
+        }
+      }
+      for (const r of results) {
+        if (r.ok && r.dir in next) {
+          delete next[r.dir];
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, []);
+
   // active session 变化 → 立即重拉 cwd → 重拉 fs_tree
   // v0.5.0-C T3：cwd 变化时（终端 cd 后通过 metadata cache 同步）也重拉
   useEffect(() => {
     let alive = true;
 
+    // 换根目录 = 换一棵树，展开态 / children 缓存全部作废（这是**唯一**该清空
+    // 展开态的场景；fs 变更走 refreshDirs 增量路径，不碰展开态）。
+    //
+    // cwd **没变**时（切到同目录的另一个终端 tab、轮询重跑一次）只刷新根子项，
+    // 展开态原样保留 —— 否则切个 tab 就把用户展开的目录全折回去。
     const loadFromCwd = async (cwd: string | null) => {
       if (!alive) return;
+      const switched = rootCwdRef.current !== cwd;
+      rootCwdRef.current = cwd;
       setRootCwd(cwd);
+      if (switched) {
+        setChildrenByPath({});
+        setExpandedPaths(new Set<string>());
+        setLoadErrorByPath({});
+      }
       if (!cwd) {
         setRootNode(null);
         setError(null);
@@ -100,6 +266,12 @@ export default function FileTree() {
         const tree = await fsTree(cwd, 1);
         if (!alive) return;
         setRootNode(tree);
+        const rootKids = tree.children ?? [];
+        setChildrenByPath((prev) =>
+          switched
+            ? { [tree.path]: rootKids }
+            : { ...prev, [tree.path]: rootKids },
+        );
         setError(null);
       } catch (e) {
         if (!alive) return;
@@ -174,7 +346,7 @@ export default function FileTree() {
   //
   // 文件夹仍由 row 展开逻辑处理，不调到这里。
   // 失败：openFile IPC 抛出时 fail-soft —— 控制台 warn 不打断用户。
-  const handleFileClick = (path: string) => {
+  const handleFileClick = useCallback((path: string) => {
     // 用户之前把文件预览面板收起（filePreviewVisible=false）时，点文件虽会
     // openFile 但 fileEditorActive=(openFiles>0 && filePreviewVisible) 仍 false，
     // 面板不显示、用户看不到文件。点文件即"想看文件"，强制展开预览面板
@@ -186,7 +358,7 @@ export default function FileTree() {
       .catch((e) => {
         console.warn("openFile 失败（fail-soft）", path, e);
       });
-  };
+  }, []);
 
   // v0.10.2 #6：右键菜单 + 三种 dialog 状态机。
   //
@@ -195,8 +367,7 @@ export default function FileTree() {
   // inputDialog：新建文件/目录/重命名 共用 InputDialog 组件 + 不同 onSubmit。
   // deletePending：删除二次确认 FsDeleteConfirmDialog。
   //
-  // 操作成功后调 `reloadTree` 重拉整个 fs_tree —— 简单可靠（不增量 patch
-  // node.children，避免懒加载和 reload 的一致性 bug）。
+  // 操作成功后调 `reloadTree` 重新拉一遍已加载目录（保留展开态）。
   const [contextMenu, setContextMenu] = useState<{
     node: TreeNode;
     x: number;
@@ -211,50 +382,72 @@ export default function FileTree() {
     isDir: boolean;
   } | null>(null);
 
-  // v0.10.2 hotfix：reloadTree 用 reloadKey++ 强制重 mount 整棵 FileTreeRow，
-  // 让 lazy 加载的 children state 全部清空，下次展开重 fetch。
-  // 副作用：所有 dir 的展开状态被 reset；少量 reload 操作可接受。
-  const [reloadKey, setReloadKey] = useState(0);
+  // v1.3.0 P9：手动刷新（header 按钮 / 右键"刷新"）= 重拉**所有已加载目录**，
+  // 展开态原样保留。v1.1.0 那版靠 reloadKey++ remount 整棵树，会把展开态清空，
+  // 已废弃。
   const reloadTree = useCallback(async () => {
+    const keys = Object.keys(childrenRef.current);
+    if (keys.length > 0) {
+      await refreshDirs(keys);
+      return;
+    }
+    // 根目录都还没加载成功（首次失败 / 刚切 cwd）→ 退化成重拉一次根
     if (!rootCwd) return;
     try {
       const tree = await fsTree(rootCwd, 1);
       setRootNode(tree);
-      setReloadKey((k) => k + 1);
+      setChildrenByPath({ [tree.path]: tree.children ?? [] });
+      setError(null);
     } catch (e) {
       console.warn("reload tree 失败", e);
     }
-  }, [rootCwd]);
+  }, [rootCwd, refreshDirs]);
 
-  // v1.1.0 F5：目录树 fs 自动刷新 —— rootCwd 确定后启动后端 notify watcher
-  // （递归监听、跳过 .git/node_modules/target 等，见 fs.rs SKIP_NAMES），
-  // 收到 `fs:changed` 事件后前端再 debounce ~200ms 才刷新（后端已 400ms
-  // debounce；这里防止同一操作在极端情况下触发多个批次时前端连续 reload）。
+  // v1.1.0 F5 / v1.3.0 P9：目录树 fs 自动刷新 —— rootCwd 确定后启动后端 notify
+  // watcher（递归监听、跳过 .git/node_modules/target 等，见 fs.rs SKIP_NAMES）。
   //
-  // TODO(增强项)：当前用 reloadTree() 整树 reload（会 reset 已展开节点的
-  // 展开态，见 reloadTree 上方注释同款取舍）。更精细的做法是只刷新受影响
-  // 且已展开的子树以保留展开态；因改动复杂度高（需要维护"当前已展开路径
-  // 集合"+按路径前缀命中增量重拉），本批次（plan §8 F5 条目）先用保守方案，
-  // 增量刷新留作后续版本。
+  // 增量策略（P9，对齐 VS Code）：`fs:changed` 事件本来就带**具体变更路径**，
+  // 把每个路径映射成"需要重新列目录的父目录"：
+  //   - 路径自身是已加载目录（目录被整体替换 / 自身事件）→ 刷它
+  //   - 路径的父目录已加载 → 刷父目录（新增 / 删除 / 重命名文件都落这条）
+  // 没命中任何已加载目录的变更（用户没展开的分支）**完全不刷**，一次 IPC 都不发。
+  //
+  // 合并：`FS_CHANGED_MERGE_MS` 内到达的多批事件先攒进 pendingPaths，
+  // 定时器到点一次性算受影响目录集合，同一目录只重拉一次。
   //
   // cleanup（rootCwd 变化 / 组件卸载）：停旧 watcher + 取消旧事件订阅 +
-  // 清掉未触发的 debounce 定时器，避免残留定时器刷新到已切走的 cwd。
+  // 清掉未触发的定时器 + 丢弃未处理的路径，避免残留刷新打到已切走的 cwd。
   useEffect(() => {
     if (!rootCwd) return;
     let cancelled = false;
-    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+    let mergeTimer: ReturnType<typeof setTimeout> | null = null;
     let unlisten: (() => void) | null = null;
+    // 待处理路径缓冲区：跟 watcher 同生命周期（换 cwd / 卸载时随 effect 一起丢弃）
+    const pendingPaths = new Set<string>();
 
     fsWatchStart(rootCwd).catch((e) => {
       console.warn("fsWatchStart 失败（fail-soft，目录树退化为仅手动/轮询刷新）", e);
     });
 
-    onFsChanged(() => {
+    const flush = () => {
+      const batch = Array.from(pendingPaths);
+      pendingPaths.clear();
+      const loaded = childrenRef.current;
+      const dirs = new Set<string>();
+      for (const p of batch) {
+        if (loaded[p] !== undefined) dirs.add(p);
+        const parent = parentOf(p);
+        if (loaded[parent] !== undefined) dirs.add(parent);
+      }
+      if (dirs.size === 0) return;
+      void refreshDirs(Array.from(dirs));
+    };
+
+    onFsChanged((e) => {
       if (cancelled) return;
-      if (debounceTimer) clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(() => {
-        void reloadTree();
-      }, 200);
+      for (const p of e.paths) pendingPaths.add(p);
+      if (mergeTimer) clearTimeout(mergeTimer);
+      mergeTimer = setTimeout(flush, FS_CHANGED_MERGE_MS);
     }).then((fn) => {
       if (cancelled) {
         fn();
@@ -265,14 +458,51 @@ export default function FileTree() {
 
     return () => {
       cancelled = true;
-      if (debounceTimer) clearTimeout(debounceTimer);
+      if (mergeTimer) clearTimeout(mergeTimer);
+      pendingPaths.clear();
       if (unlisten) unlisten();
       fsWatchStop().catch(() => {
         // 静默：切 cwd 太快 / 组件已卸载时 stop 失败不影响功能
         // （下一次 fsWatchStart 会覆盖后端唯一的 watcher 句柄）。
       });
     };
-  }, [rootCwd, reloadTree]);
+  }, [rootCwd, refreshDirs]);
+
+  /**
+   * 展开 / 折叠一个目录。展开态是 FileTree 级的（按路径），刷新不会丢。
+   *
+   * - 折叠：只从 expandedPaths 移除，**保留** children 缓存和子孙展开态
+   * - 展开：没缓存过才发一次 `fs_tree(path, 1)`；失败只记这一行的错误
+   */
+  const toggleDir = useCallback(async (node: TreeNode, expanded: boolean) => {
+    const path = node.path;
+    if (expanded) {
+      setExpandedPaths((prev) => {
+        const next = new Set(prev);
+        next.delete(path);
+        return next;
+      });
+      return;
+    }
+    setExpandedPaths((prev) => {
+      const next = new Set(prev);
+      next.add(path);
+      return next;
+    });
+    if (childrenRef.current[path] !== undefined) return;
+    try {
+      const sub = await fsTree(path, 1);
+      setChildrenByPath((prev) => ({ ...prev, [path]: sub.children ?? [] }));
+      setLoadErrorByPath((prev) => {
+        if (!(path in prev)) return prev;
+        const next = { ...prev };
+        delete next[path];
+        return next;
+      });
+    } catch (e) {
+      setLoadErrorByPath((prev) => ({ ...prev, [path]: String(e) }));
+    }
+  }, []);
 
   // 关右键菜单：全局 click / Escape
   useEffect(() => {
@@ -291,7 +521,7 @@ export default function FileTree() {
 
   // 拼绝对路径：parentDir + '/' + name；windows 用 '\\' 也行（后端用 PathBuf 兼容）
   const joinPath = (parentDir: string, name: string): string => {
-    const sep = parentDir.includes("\\") && !parentDir.includes("/") ? "\\" : "/";
+    const sep = sepOf(parentDir);
     return parentDir.endsWith(sep) ? `${parentDir}${name}` : `${parentDir}${sep}${name}`;
   };
 
@@ -304,20 +534,8 @@ export default function FileTree() {
   };
 
   // 当前菜单 target node：dir 时新建目标 = 它自己；file 时新建目标 = 它的父目录
-  const newTargetParent = (node: TreeNode): string => {
-    if (node.kind === "dir") return node.path;
-    // file → parent dir
-    const sep = node.path.includes("\\") && !node.path.includes("/") ? "\\" : "/";
-    const idx = node.path.lastIndexOf(sep);
-    return idx > 0 ? node.path.slice(0, idx) : node.path;
-  };
-
-  // dir 节点上下文中"父目录"（重命名时拼新路径）
-  const parentOf = (path: string): string => {
-    const sep = path.includes("\\") && !path.includes("/") ? "\\" : "/";
-    const idx = path.lastIndexOf(sep);
-    return idx > 0 ? path.slice(0, idx) : path;
-  };
+  const newTargetParent = (node: TreeNode): string =>
+    node.kind === "dir" ? node.path : parentOf(node.path);
 
   const handleMenuAction = (
     kind: "newFile" | "newDir" | "rename" | "delete" | "reload",
@@ -384,6 +602,32 @@ export default function FileTree() {
     void reloadTree();
   };
 
+  // v1.3.0 P9：行组件共享的视图上下文（展开态 / children 缓存 / 回调）。
+  // useMemo 稳定引用：只有真正影响渲染的三张表变了才重算。
+  const handleContextMenuRequested = useCallback(
+    (node: TreeNode, x: number, y: number) => setContextMenu({ node, x, y }),
+    [],
+  );
+  const treeCtx = useMemo<TreeViewCtx>(
+    () => ({
+      expandedPaths,
+      childrenByPath,
+      loadErrorByPath,
+      onToggleDir: toggleDir,
+      onFileClick: handleFileClick,
+      onContextMenuRequested: handleContextMenuRequested,
+    }),
+    [
+      expandedPaths,
+      childrenByPath,
+      loadErrorByPath,
+      toggleDir,
+      handleFileClick,
+      handleContextMenuRequested,
+    ],
+  );
+  const rootChildren = rootNode ? childrenByPath[rootNode.path] : undefined;
+
   // v0.6.0-A T3：宽度由外层 wrapper 控制（读 settings.ui.file_tree_width），
   // 这里只占满 wrapper。border 由 wrapper 提供（避免和 SplitDivider 重叠混乱）。
   return (
@@ -426,18 +670,12 @@ export default function FileTree() {
             {t("fileTree.noActiveCwd")}
           </div>
         )}
-        {rootNode && rootNode.children && (
-          <ul className="m-0 list-none p-0" key={reloadKey}>
-            {rootNode.children.map((c) => (
-              <FileTreeRow
-                key={c.path}
-                node={c}
-                depth={0}
-                onFileClick={handleFileClick}
-                onContextMenuRequested={(node, x, y) =>
-                  setContextMenu({ node, x, y })
-                }
-              />
+        {/* v1.3.0 P9：不再用 reloadKey remount —— 刷新走 childrenByPath 增量替换，
+         *   React 按 path key 复用 DOM，未受影响的分支既不重建也不折叠。 */}
+        {rootChildren && (
+          <ul className="m-0 list-none p-0">
+            {rootChildren.map((c) => (
+              <FileTreeRow key={c.path} node={c} depth={0} ctx={treeCtx} />
             ))}
           </ul>
         )}
@@ -508,59 +746,56 @@ export default function FileTree() {
 }
 
 /**
+ * v1.3.0 P9：行组件共享的视图上下文。
+ *
+ * 展开态 / children 缓存 / 懒加载错误全部由 FileTree 顶层按**路径**持有，
+ * 行组件是纯受控的：这样 fs watcher 才能按路径精准替换某个目录的子项，
+ * 而不必 remount 整棵树（remount = 展开态全丢，真机不可用）。
+ */
+interface TreeViewCtx {
+  /** 已展开的目录绝对路径集合 */
+  expandedPaths: ReadonlySet<string>;
+  /** 目录绝对路径 → 已加载的直接子项 */
+  childrenByPath: Record<string, TreeNode[]>;
+  /** 目录绝对路径 → 懒加载失败消息 */
+  loadErrorByPath: Record<string, string>;
+  /** 点目录：展开 / 折叠（`expanded` 是该行当前的展开态） */
+  onToggleDir: (node: TreeNode, expanded: boolean) => void;
+  onFileClick: (path: string) => void;
+  /** v0.10.2 #6：右键触发，把 node + 屏幕坐标转给 FileTree 顶层 contextMenu state。 */
+  onContextMenuRequested: (node: TreeNode, x: number, y: number) => void;
+}
+
+/**
  * 单行 tree 节点；递归渲染。
  *
  * v0.4.1 T4：emoji → lucide-react SVG icons（plan §3.4）
  * - dir：折叠时 Folder + ChevronRight；展开时 FolderOpen + ChevronDown
  * - file：File icon
- * - 点击 dir 切换；展开第一次 lazy 调 fs_tree(path, 1)
- * - 点击 file 触发 onFileClick
+ * - 点击 dir 交给 ctx.onToggleDir（含首次懒加载）
+ * - 点击 file 触发 ctx.onFileClick
  */
 function FileTreeRow({
   node,
   depth,
-  onFileClick,
-  onContextMenuRequested,
+  ctx,
 }: {
   node: TreeNode;
   depth: number;
-  onFileClick: (path: string) => void;
-  /** v0.10.2 #6：右键触发，把 node + 屏幕坐标转给 FileTree 顶层 contextMenu state。 */
-  onContextMenuRequested: (node: TreeNode, x: number, y: number) => void;
+  ctx: TreeViewCtx;
 }) {
-  const [expanded, setExpanded] = useState(false);
-  /** 懒加载来的子节点；null = 还没拉取过 */
-  const [loadedChildren, setLoadedChildren] = useState<TreeNode[] | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const { expandedPaths, childrenByPath, loadErrorByPath } = ctx;
+  const expanded = node.kind === "dir" && expandedPaths.has(node.path);
+  /** 实际渲染用的 children：优先顶层缓存，回退 node 自带（后端一次给多层时） */
+  const children = childrenByPath[node.path] ?? node.children ?? null;
+  const loadError = loadErrorByPath[node.path] ?? null;
 
-  /** 实际渲染时使用的 children：优先 loaded，回退 node.children */
-  const children = useMemo<TreeNode[] | null>(() => {
-    if (loadedChildren !== null) return loadedChildren;
-    return node.children ?? null;
-  }, [loadedChildren, node.children]);
-
-  const handleClick = async () => {
+  const handleClick = () => {
     if (node.kind === "file") {
-      onFileClick(node.path);
+      ctx.onFileClick(node.path);
       return;
     }
-    // dir：先 toggle expanded
-    const nextExpanded = !expanded;
-    setExpanded(nextExpanded);
-    if (
-      nextExpanded &&
-      loadedChildren === null &&
-      (node.children === null || node.children === undefined)
-    ) {
-      // children=null 意味着后端按 max_depth 限制截断 → 懒加载
-      try {
-        const sub = await fsTree(node.path, 1);
-        setLoadedChildren(sub.children ?? []);
-        setLoadError(null);
-      } catch (e) {
-        setLoadError(String(e));
-      }
-    }
+    ctx.onToggleDir(node, expanded);
   };
 
   // 缩进 + icon prefix
@@ -616,7 +851,7 @@ function FileTreeRow({
         onContextMenu={(e) => {
           e.preventDefault();
           e.stopPropagation();
-          onContextMenuRequested(node, e.clientX, e.clientY);
+          ctx.onContextMenuRequested(node, e.clientX, e.clientY);
         }}
         className="flex w-full items-center gap-1 truncate py-0.5 pr-2 text-left text-[var(--c-text-muted)] hover:bg-[var(--c-bg-elev-2)]"
         style={{ paddingLeft: padLeft }}
@@ -675,13 +910,7 @@ function FileTreeRow({
           {!loadError && children && children.length > 0 && (
             <ul className="m-0 list-none p-0">
               {children.map((c) => (
-                <FileTreeRow
-                  key={c.path}
-                  node={c}
-                  depth={depth + 1}
-                  onFileClick={onFileClick}
-                  onContextMenuRequested={onContextMenuRequested}
-                />
+                <FileTreeRow key={c.path} node={c} depth={depth + 1} ctx={ctx} />
               ))}
             </ul>
           )}

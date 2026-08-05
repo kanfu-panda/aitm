@@ -122,6 +122,22 @@ mod tests {
         assert_eq!(lines, vec!["a", "", "b"]);
     }
 
+    /// v1.3.0 T1：`run_command` 的命令结束 sentinel 是私有 OSC 序列，必须被一并剥掉，
+    /// 绝不能漏进给 LLM 的内容里。两种终止符（BEL / ST）都要覆盖。
+    #[test]
+    fn 剥_命令结束_sentinel() {
+        let bel = "ok\r\n\x1b]6969;aitm-done;0;abc12345\x07";
+        let out = strip_for_llm(bel);
+        assert!(out.contains("ok"));
+        assert!(!out.contains("aitm-done"), "实际：{out:?}");
+        assert!(!out.contains("6969"), "实际：{out:?}");
+
+        let st = "ok\r\n\x1b]6969;aitm-done;127;abc12345\x1b\\";
+        let out = strip_for_llm(st);
+        assert!(!out.contains("aitm-done"), "实际：{out:?}");
+        assert!(!out.contains("127"), "实际：{out:?}");
+    }
+
     #[test]
     fn 真实_zsh_prompt_片段_变干净() {
         // 类似截图中真实抓到的：netstat 命令 + 应用模式切换 + zsh prompt 重绘 + OSC 标题

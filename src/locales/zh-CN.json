@@ -314,7 +314,11 @@
     "errorSeparator": "：",
     "emptyChatHint": "和 AI 开始一段对话…",
     "inputPlaceholder": "输入消息（Enter 发送，Shift+Enter 换行）",
-    "tokensLabel": "tokens：in {{input}} · out {{output}}"
+    "tokensLabel": "tokens：in {{input}} · out {{output}}",
+    "stopAria": "停止生成",
+    "stopTitle": "停止生成",
+    "retryLabel": "重试",
+    "retryAria": "重试"
   },
   "sessionRestore": {
     "dialogAria": "恢复上次会话",
@@ -368,7 +372,16 @@
   },
   "messageBubble": {
     "copyCode": "复制",
-    "copyCodeAria": "复制代码"
+    "copyCodeAria": "复制代码",
+    "retryLabel": "重试",
+    "retryAria": "重试此回复",
+    "stoppedLabel": "已停止",
+    "hallucinationWarning": "本轮未调用任何{{kinds}}工具，上面「已完成」的说法可能不属实",
+    "claimCategory": {
+      "browser": "浏览器",
+      "file": "文件",
+      "command": "命令"
+    }
   },
   "toolCallBubble": {
     "status": {

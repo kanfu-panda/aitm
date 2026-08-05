@@ -298,6 +298,18 @@ fn hex_byte(b: u8) -> Option<u8> {
 mod tests {
     use super::*;
 
+    /// v1.3.0 P1 回归：钩子在每个提示符发的 OSC 6969 不能被误认成 OSC 7 的 cwd 上报
+    /// （首字符是 '6' 不是 '7'，且不能因为长得像就吐出脏路径）。
+    #[test]
+    fn aitm_钩子的私有_osc_不被误认成_cwd() {
+        let mut p = Osc7Parser::new();
+        assert_eq!(p.feed(b"\x1b]6969;aitm-exec;3;cd /tmp\x07"), None);
+        assert_eq!(p.feed(b"\x1b]6969;aitm-end;0;3\x07"), None);
+        // 混在真 OSC 7 前后也不影响真 cwd 的解析
+        let got = p.feed(b"\x1b]6969;aitm-end;0;4\x07\x1b]7;file:///tmp\x07");
+        assert_eq!(got.as_deref(), Some("/tmp"));
+    }
+
     #[test]
     fn 完整_file_uri_bel_终止() {
         let mut p = Osc7Parser::new();
@@ -426,6 +438,15 @@ mod tests {
         let chunk = b"\x1b]7;file://mac.local/Users/leo/x\x07";
         let got = p.feed(chunk);
         assert_eq!(got.as_deref(), Some("/Users/leo/x"));
+    }
+
+    /// v1.3.0 T1：命令结束 sentinel（私有 OSC 6969）不能被误认成 cwd 上报，
+    /// 且不能打乱状态机 —— 之后的真 OSC 7 仍要解析得出。
+    #[test]
+    fn 命令结束_sentinel_被安静跳过() {
+        let mut p = Osc7Parser::new();
+        assert_eq!(p.feed(b"\x1b]6969;aitm-done;0;abc12345\x07"), None);
+        assert_eq!(p.feed(b"\x1b]7;file:///tmp/after\x07").as_deref(), Some("/tmp/after"));
     }
 
     #[test]

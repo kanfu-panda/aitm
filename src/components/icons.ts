@@ -61,4 +61,7 @@ export {
   AlertTriangle, // awaiting_approval 等待确认
   // v0.10.3 HR9-2：tab 通知小喇叭图标（macOS Terminal 风格）
   Bell,
+  // v1.2.0 A1/A2：AI 停止生成 / 重试按钮
+  Square, // 停止生成（实心方块，terminal/播放器通用语义）
+  RotateCcw, // 重试 / regenerate
 } from "lucide-react";

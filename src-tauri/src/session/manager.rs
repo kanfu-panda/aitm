@@ -82,6 +82,35 @@ impl SessionManager {
         Some(session.recent_output(lines))
     }
 
+    /// 查指定 session 实际 spawn 的 shell 路径。session 不存在 → None。
+    pub async fn shell(&self, id: SessionId) -> Option<String> {
+        let session = self.get(id).await.ok()?;
+        Some(session.shell().to_string())
+    }
+
+    /// 查指定 session 的 shell integration 钩子是否可用。session 不存在 → false
+    /// （调用方按"没钩子"处理，退回 sentinel 包装法）。
+    pub async fn hook_active(&self, id: SessionId) -> bool {
+        match self.get(id).await {
+            Ok(s) => s.hook_active(),
+            Err(_) => false,
+        }
+    }
+
+    /// 标记指定 session 的钩子失效（`run_command` 收不到 `aitm-exec` 时调）。
+    pub async fn disable_hook(&self, id: SessionId) {
+        if let Ok(s) = self.get(id).await {
+            s.disable_hook();
+        }
+    }
+
+    /// 重新启用指定 session 的钩子（后来又观察到钩子标记时调）。
+    pub async fn enable_hook(&self, id: SessionId) {
+        if let Ok(s) = self.get(id).await {
+            s.enable_hook();
+        }
+    }
+
     /// 实时查指定 session 的 shell 当前工作目录。session 不存在 / 平台不支持
     /// / 进程已退出时返回 None。AI 工具用它让 read_file / list_files 跟随
     /// 用户实际在 PTY 里 cd 到的目录。

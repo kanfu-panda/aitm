@@ -316,7 +316,11 @@
     "errorSeparator": "：",
     "emptyChatHint": "AI との会話を始めましょう…",
     "inputPlaceholder": "メッセージを入力（Enter で送信、Shift+Enter で改行）",
-    "tokensLabel": "tokens：in {{input}} · out {{output}}"
+    "tokensLabel": "tokens：in {{input}} · out {{output}}",
+    "stopAria": "生成を停止",
+    "stopTitle": "生成を停止",
+    "retryLabel": "再試行",
+    "retryAria": "再試行"
   },
   "sessionRestore": {
     "dialogAria": "前回のセッションを復元",
@@ -370,7 +374,16 @@
   },
   "messageBubble": {
     "copyCode": "コピー",
-    "copyCodeAria": "コードをコピー"
+    "copyCodeAria": "コードをコピー",
+    "retryLabel": "再試行",
+    "retryAria": "この返信を再試行",
+    "stoppedLabel": "停止しました",
+    "hallucinationWarning": "今回のターンで{{kinds}}ツールは呼ばれていません。上記の「完了」は事実でない可能性があります",
+    "claimCategory": {
+      "browser": "ブラウザ",
+      "file": "ファイル",
+      "command": "コマンド"
+    }
   },
   "toolCallBubble": {
     "status": {

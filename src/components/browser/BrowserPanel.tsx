@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { AnimatePresence, useReducedMotion } from "framer-motion";
 import { browserSetBounds } from "../../lib/tauri";
+import { createBoundsReporter } from "../../lib/browserBounds";
 import { useBrowserStore } from "../../stores/browser";
 import { ChevronDown } from "../icons";
 import { m } from "../../lib/motion";
@@ -83,40 +84,33 @@ function BrowserPanelInner() {
     const el = containerRef.current;
     if (!el || !activeTabId) return;
 
-    let lastReport = 0;
-    let pendingHandle: number | null = null;
-
-    const doReport = () => {
-      pendingHandle = null;
-      lastReport = performance.now();
-      const rect = el.getBoundingClientRect();
-      // v0.4.3 经验偏移：wry 在 macOS 的 Webview::set_position 的 y 跟 React
-      // viewport top 之间有 ~45 px 偏差（empirical：input y=75 → visual y=30）。
-      // 偏差来自 macOS NSWindow 含 title bar / chrome 让 wry 的 frame superview
-      // != React viewport (= contentView)。**只 +45 y，h 不调**——wry 的 frame
-      // 偏移对 origin 和 size 一致作用（visual h = input h），所以 h 保 rect.height
-      // 让 visual bottom = visual top + h = 视觉跟 container.bottom 严丝合缝。
-      const macosYOffset = 30;
-      browserSetBounds(activeTabId, {
-        x: rect.left,
-        y: rect.top + macosYOffset,
-        w: rect.width,
-        h: rect.height,
-      }).catch(() => {
-        // 后端 webview 已 destroy / race 等，忽略
-      });
-    };
-
-    const report = () => {
-      const now = performance.now();
-      if (now - lastReport >= 16) {
-        doReport();
-        return;
-      }
-      // 离上次不到 16ms：用 rAF 拖到下一帧；防止快速触发漏掉最后一次上报
-      if (pendingHandle !== null) return;
-      pendingHandle = requestAnimationFrame(doReport);
-    };
+    // v1.3.0 R3b：节流时序逻辑抽到 lib/browserBounds 便于单测锁不变量
+    //（"占位 800×600 必须被真实尺寸覆盖"，见该模块 doc）。行为与抽出前等价。
+    const reporter = createBoundsReporter({
+      measure: () => {
+        const rect = el.getBoundingClientRect();
+        // v0.4.3 经验偏移：wry 在 macOS 的 Webview::set_position 的 y 跟 React
+        // viewport top 之间有 ~45 px 偏差（empirical：input y=75 → visual y=30）。
+        // 偏差来自 macOS NSWindow 含 title bar / chrome 让 wry 的 frame superview
+        // != React viewport (= contentView)。**只 +45 y，h 不调**——wry 的 frame
+        // 偏移对 origin 和 size 一致作用（visual h = input h），所以 h 保 rect.height
+        // 让 visual bottom = visual top + h = 视觉跟 container.bottom 严丝合缝。
+        const macosYOffset = 30;
+        return {
+          x: rect.left,
+          y: rect.top + macosYOffset,
+          w: rect.width,
+          h: rect.height,
+        };
+      },
+      send: (b) => {
+        browserSetBounds(activeTabId, b).catch(() => {
+          // 后端 webview 已 destroy / race 等，忽略（后端侧有 debug 日志可查）
+        });
+      },
+    });
+    const report = reporter.report;
+    const doReport = reporter.reportNow;
 
     const ro = new ResizeObserver(report);
     ro.observe(el);
@@ -144,7 +138,7 @@ function BrowserPanelInner() {
       window.removeEventListener("resize", report);
       cancelAnimationFrame(raf1);
       clearTimeout(tid);
-      if (pendingHandle !== null) cancelAnimationFrame(pendingHandle);
+      reporter.dispose();
     };
   }, [activeTabId, webviewTop]);
 

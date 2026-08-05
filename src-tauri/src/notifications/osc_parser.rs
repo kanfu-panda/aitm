@@ -274,6 +274,16 @@ mod tests {
         OscParser::new("test-session".to_string())
     }
 
+    /// v1.3.0 P1 回归：shell integration 钩子在**每个提示符**都会发 OSC 6969，
+    /// 通知解析器绝不能把它当成通知（否则用户每敲一条命令弹一次），
+    /// 序列末尾的 BEL 也不能被误判成响铃。
+    #[test]
+    fn aitm_钩子的私有_osc_不产生任何通知() {
+        let mut p = parser();
+        let events = p.feed(b"\x1b]6969;aitm-exec;3;ls -la\x07\x1b]6969;aitm-end;0;3\x07");
+        assert!(events.is_empty(), "实际：{events:?}");
+    }
+
     #[test]
     fn 解析_osc_9_bel_结尾() {
         let mut p = parser();
@@ -450,6 +460,20 @@ mod tests {
         assert_eq!(e.source, NotificationSource::Bell);
         assert_eq!(e.level, NotificationLevel::Done);
         assert_eq!(e.message, "");
+    }
+
+    /// v1.3.0 T1：`run_command` 的命令结束 sentinel 走私有 OSC 6969，必须对通知子系统
+    /// **完全透明** —— 既不能被当成通知，结尾的 BEL 也不能被当成响铃。
+    /// 否则 AI 每跑一条命令就点亮一次 tab 未读 + Dock 角标。
+    #[test]
+    fn 命令结束_sentinel_不产生任何通知() {
+        let mut p = parser();
+        let seq = crate::session::sentinel::wrap_command("ls", "abc12345");
+        // 先喂命令行回显（字面文本），再喂真正的 OSC 序列
+        let events = p.feed(seq.as_bytes());
+        assert!(events.is_empty(), "回显文本不应触发通知：{events:?}");
+        let events = p.feed(b"\x1b]6969;aitm-done;0;abc12345\x07");
+        assert!(events.is_empty(), "sentinel 不应触发通知 / 响铃：{events:?}");
     }
 
     #[test]

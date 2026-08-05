@@ -6,6 +6,7 @@ vi.mock("../lib/tauri", () => ({
   browserCloseTab: vi.fn().mockResolvedValue(undefined),
   browserNavigate: vi.fn().mockResolvedValue(undefined),
   browserSetActive: vi.fn().mockResolvedValue(undefined),
+  browserClearActive: vi.fn().mockResolvedValue(undefined),
   browserSetBounds: vi.fn().mockResolvedValue(undefined),
   browserSuspendTab: vi.fn().mockResolvedValue(undefined),
   browserSetScrollY: vi.fn().mockResolvedValue(undefined),
@@ -19,6 +20,7 @@ vi.mock("../lib/analytics", () => ({
 
 import { trackEvent } from "../lib/analytics";
 import {
+  browserClearActive,
   browserCloseTab,
   browserNavigate,
   browserOpenTab,
@@ -38,6 +40,7 @@ const mocks = {
   close: browserCloseTab as unknown as ReturnType<typeof vi.fn>,
   navigate: browserNavigate as unknown as ReturnType<typeof vi.fn>,
   setActive: browserSetActive as unknown as ReturnType<typeof vi.fn>,
+  clearActive: browserClearActive as unknown as ReturnType<typeof vi.fn>,
   suspend: browserSuspendTab as unknown as ReturnType<typeof vi.fn>,
   setScrollY: browserSetScrollY as unknown as ReturnType<typeof vi.fn>,
   closeAll: browserPanelCloseAll as unknown as ReturnType<typeof vi.fn>,
@@ -48,9 +51,14 @@ function resetStore() {
     panelOpen: false,
     tabs: [],
     activeKey: null,
+    activeSyncError: null,
   });
   for (const m of Object.values(mocks)) m.mockClear();
   mocks.open.mockReset();
+  mocks.setActive.mockReset();
+  mocks.setActive.mockResolvedValue(undefined);
+  mocks.closeAll.mockReset();
+  mocks.closeAll.mockResolvedValue(undefined);
   trackEventMock.mockClear();
   // 默认每次调 open 返回递增 id
   let counter = 0;
@@ -467,6 +475,151 @@ describe("useBrowserStore", () => {
       const t = useBrowserStore.getState().tabs[0];
       expect(t.scrollY).toBe(500);
       expect(t.title).toBe("标题");
+    });
+  });
+
+  // =====================================================================
+  // v1.3.0 P7：ghost webview —— set_active 失败绝不静默吞
+  // =====================================================================
+  describe("前后端 active tab 同步（ghost webview 防线）", () => {
+    it("openTab：set_active 失败会重试一次", async () => {
+      mocks.setActive.mockRejectedValueOnce(new Error("IPC 抖动"));
+      await useBrowserStore.getState().openTab("https://a", BOUNDS);
+      expect(mocks.setActive).toHaveBeenCalledTimes(2);
+      // 重试成功 → 不算失步
+      expect(useBrowserStore.getState().activeSyncError).toBeNull();
+      expect(mocks.clearActive).not.toHaveBeenCalled();
+    });
+
+    it("openTab：set_active 重试后仍失败 → 清空后端 active + 记失步（不静默吞）", async () => {
+      mocks.setActive.mockRejectedValue(new Error("set_active 炸了"));
+      await useBrowserStore.getState().openTab("https://a", BOUNDS);
+
+      expect(mocks.setActive).toHaveBeenCalledTimes(2);
+      // 后端宁可"不知道 active 是谁"，也不能拿过期 id 给 AI 用
+      expect(mocks.clearActive).toHaveBeenCalledTimes(1);
+      expect(useBrowserStore.getState().activeSyncError).toBeTruthy();
+    });
+
+    it("setActive：成功后清掉之前的失步标记", async () => {
+      await useBrowserStore.getState().openTab("https://a", BOUNDS);
+      useBrowserStore.setState({ activeSyncError: "旧的失步" });
+      const k = useBrowserStore.getState().tabs[0].key;
+
+      await useBrowserStore.getState().setActive(k, BOUNDS);
+
+      expect(useBrowserStore.getState().activeSyncError).toBeNull();
+    });
+
+    it("setActive：后端说 webview 已不存在 → 自愈重建（resume），不留下失步", async () => {
+      await useBrowserStore.getState().openTab("https://a", BOUNDS);
+      const k = useBrowserStore.getState().tabs[0].key;
+      mocks.setActive.mockClear();
+      // 后端 webview 已被 destroy（前端 state 却还是 active）
+      mocks.setActive.mockRejectedValueOnce(new Error("tab mock-1 不存在或已 suspend"));
+
+      await useBrowserStore.getState().setActive(k, BOUNDS);
+
+      const t = useBrowserStore.getState().tabs[0];
+      expect(t.state).toBe("active");
+      expect(t.id).toBe("mock-2"); // 重建出的新 webview
+      expect(useBrowserStore.getState().activeSyncError).toBeNull();
+    });
+
+    it("closeTab：关掉 active tab 后要把新 active 同步给后端", async () => {
+      await useBrowserStore.getState().openTab("https://a", BOUNDS);
+      await useBrowserStore.getState().openTab("https://b", BOUNDS);
+      const k1 = useBrowserStore.getState().tabs[0].key;
+      useBrowserStore.setState({ activeKey: k1 });
+      mocks.setActive.mockClear();
+
+      await useBrowserStore.getState().closeTab(k1);
+
+      // 关掉 active 后后端 current_active_id 被清空，必须补一次 set_active，
+      // 否则后端"有 webview 但不知道哪个可见" → AI 无从下手 / 面板空白
+      expect(mocks.setActive).toHaveBeenCalledWith("mock-2");
+    });
+
+    it("closeTab：关掉非 active tab 不重复同步 active", async () => {
+      await useBrowserStore.getState().openTab("https://a", BOUNDS);
+      await useBrowserStore.getState().openTab("https://b", BOUNDS);
+      const k1 = useBrowserStore.getState().tabs[0].key;
+      // active 是第 2 个
+      mocks.setActive.mockClear();
+
+      await useBrowserStore.getState().closeTab(k1);
+
+      expect(mocks.setActive).not.toHaveBeenCalled();
+      expect(mocks.clearActive).not.toHaveBeenCalled();
+    });
+
+    it("closeTab：新 active 是 suspended tab → 清空后端 active（不留猜测空间）", async () => {
+      await useBrowserStore.getState().openTab("https://a", BOUNDS);
+      await useBrowserStore.getState().openTab("https://b", BOUNDS);
+      const k1 = useBrowserStore.getState().tabs[0].key;
+      const k2 = useBrowserStore.getState().tabs[1].key;
+      await useBrowserStore.getState().suspendTab(k1);
+      useBrowserStore.setState({ activeKey: k2 });
+      mocks.clearActive.mockClear();
+
+      await useBrowserStore.getState().closeTab(k2);
+
+      expect(mocks.clearActive).toHaveBeenCalledTimes(1);
+    });
+
+    it("resumeTab：set_active 失败 → 清空后端 active + 记失步", async () => {
+      await useBrowserStore.getState().openTab("https://a", BOUNDS);
+      const k = useBrowserStore.getState().tabs[0].key;
+      await useBrowserStore.getState().suspendTab(k);
+      mocks.setActive.mockRejectedValue(new Error("boom"));
+
+      await useBrowserStore.getState().resumeTab(k, BOUNDS);
+
+      expect(mocks.clearActive).toHaveBeenCalled();
+      expect(useBrowserStore.getState().activeSyncError).toBeTruthy();
+    });
+
+    it("minimizePanel：close_all 失败 → 重试 + 清空后端 active + 记失步", async () => {
+      await useBrowserStore.getState().openTab("https://a", BOUNDS);
+      mocks.closeAll.mockRejectedValue(new Error("close all 炸了"));
+      mocks.clearActive.mockClear();
+
+      await useBrowserStore.getState().minimizePanel();
+
+      expect(mocks.closeAll).toHaveBeenCalledTimes(2);
+      expect(mocks.clearActive).toHaveBeenCalledTimes(1);
+      expect(useBrowserStore.getState().activeSyncError).toBeTruthy();
+      // UI 语义不变：仍然收起 + 全部标 suspended
+      expect(useBrowserStore.getState().panelOpen).toBe(false);
+      expect(useBrowserStore.getState().tabs[0].state).toBe("suspended");
+    });
+
+    it("reassertActive：把当前 active tab 重新告诉后端（dialog 让位恢复后用）", async () => {
+      await useBrowserStore.getState().openTab("https://a", BOUNDS);
+      mocks.setActive.mockClear();
+
+      await useBrowserStore.getState().reassertActive();
+
+      expect(mocks.setActive).toHaveBeenCalledWith("mock-1");
+    });
+
+    it("reassertActive：没有任何 tab 时不发任何 IPC", async () => {
+      await useBrowserStore.getState().reassertActive();
+      expect(mocks.setActive).not.toHaveBeenCalled();
+      expect(mocks.clearActive).not.toHaveBeenCalled();
+    });
+
+    it("reassertActive：active tab 已 suspend → 清空后端 active", async () => {
+      await useBrowserStore.getState().openTab("https://a", BOUNDS);
+      const k = useBrowserStore.getState().tabs[0].key;
+      await useBrowserStore.getState().suspendTab(k);
+      mocks.setActive.mockClear();
+      mocks.clearActive.mockClear();
+
+      await useBrowserStore.getState().reassertActive();
+
+      expect(mocks.setActive).not.toHaveBeenCalled();
+      expect(mocks.clearActive).toHaveBeenCalledTimes(1);
     });
   });
 

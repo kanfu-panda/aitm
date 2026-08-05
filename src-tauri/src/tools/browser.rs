@@ -25,45 +25,116 @@ use super::{RiskClass, Tool, ToolContext, ToolError, ToolResult};
 // 共享 helper：resolve active tab id
 // ============================================================
 
-/// 从工具参数 + BrowserState 解析出实际 tab_id。
+/// LLM 传的 tab_id 里等价于"没传"的占位符。
 ///
-/// LLM 通常不知道具体 tab_id（webview label）；它可以传 "current"/"active" 或
-/// 完全不传 → 优先用 BrowserState.current_active_id（前端
-/// [`browser_set_active`] 同步），fallback 到 HashMap 第一条。
+/// LLM 不知道真实 webview label，习惯编一个占位值（跟 session_id 一个毛病）。
+const TAB_ID_PLACEHOLDERS: [&str; 3] = ["current", "active", "default"];
+
+/// [`decide_tab`] 的判定结果。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum TabDecision {
+    /// 可以操作这个 tab。
+    Use(String),
+    /// 一个 webview 都没有 —— 调用方决定是报错还是自动开面板。
+    NoTab,
+    /// 明确拒绝（带给 LLM 看的原因）。**宁可失败也不操作错对象。**
+    Reject(String),
+}
+
+/// 纯函数：把 LLM 传的 tab_id + 后端可见 tab 判定合成"该操作哪个 tab"。
 ///
-/// v0.5.7：之前只用 `keys().next()`，HashMap 无序导致 AI 操作 hidden ghost
-/// webview，跟用户视觉看到的 tab 不一致 — 维护者 真机反馈过的 bug。
+/// v1.3.0 P7（ghost webview 回归修复）三条硬规则：
+///
+/// 1. **不猜**：判不出唯一可见 tab（多 webview 且 `current` 失效）→ Reject。
+///    旧实现在这里 `HashMap::keys().next()`，HashMap 无序 = 随机挑一个 webview，
+///    而 `browser_eval` 是 DESTRUCTIVE —— 操作错对象比操作失败严重得多。
+/// 2. **显式 tab_id 也要校验**：LLM 很爱把上一轮 tool_result 里的 `tab_id` 原样
+///    传回来，可那个 tab 用户可能早就切走 / 关掉了。跟当前可见 tab 不一致 → Reject。
+/// 3. 后端根本没有这个 webview → Reject（并提示别复用历史 tab_id）。
+pub(crate) fn decide_tab(
+    explicit: Option<&str>,
+    tab_ids: &[String],
+    current: Option<&str>,
+) -> TabDecision {
+    let resolution = crate::ipc::browser::resolve_active_tab(current, tab_ids);
+    let explicit = explicit
+        .map(str::trim)
+        .filter(|s| !s.is_empty() && !TAB_ID_PLACEHOLDERS.contains(s));
+
+    let Some(id) = explicit else {
+        return match resolution {
+            crate::ipc::browser::ActiveTabResolution::Resolved(id) => TabDecision::Use(id),
+            crate::ipc::browser::ActiveTabResolution::NoTab => TabDecision::NoTab,
+            crate::ipc::browser::ActiveTabResolution::Ambiguous(n) => TabDecision::Reject(format!(
+                "后端有 {n} 个浏览器 webview，但无法确定哪个是用户当前看得见的那个，\
+                 已拒绝操作（操作错页面比失败更糟）。请调用 browser_open 重新确立当前 tab 后重试。"
+            )),
+        };
+    };
+
+    if tab_ids.is_empty() {
+        return TabDecision::NoTab;
+    }
+    if !tab_ids.iter().any(|t| t == id) {
+        return TabDecision::Reject(format!(
+            "tab {id} 在后端不存在（多半是上一轮结果里的历史 tab_id，webview 已被关闭或重建）。\
+             省略 tab_id 参数即可操作用户当前看得见的 tab。"
+        ));
+    }
+    if let crate::ipc::browser::ActiveTabResolution::Resolved(ref visible) = resolution {
+        if visible != id {
+            return TabDecision::Reject(format!(
+                "tab {id} 不是用户当前看得见的 tab（当前可见的是 {visible}），已拒绝操作。\
+                 不要复用历史 tab_id，省略 tab_id 参数即可。"
+            ));
+        }
+    }
+    TabDecision::Use(id.to_string())
+}
+
+/// 从工具参数 + BrowserState 解析出实际 tab_id（[`decide_tab`] 的 state 版本）。
+///
+/// 供 snapshot / click / fill / eval 用：没有 tab 时直接报错引导 AI 调 browser_open。
 async fn resolve_tab_id(
     explicit: Option<&str>,
     browser_state: &Arc<BrowserState>,
 ) -> Result<String, ToolError> {
-    if let Some(s) = explicit {
-        let trimmed = s.trim();
-        if !trimmed.is_empty()
-            && trimmed != "current"
-            && trimmed != "active"
-            && trimmed != "default"
-        {
-            // LLM 传了具体 id → 直接用
-            return Ok(trimmed.to_string());
-        }
+    match decide_tab_of(explicit, browser_state).await {
+        TabDecision::Use(id) => Ok(id),
+        // v1.2.0 T-B3：文案引导 AI 自救——AI 有 browser_open 工具，
+        // 不该把活推回给用户。
+        TabDecision::NoTab => Err(ToolError::Exec(
+            "浏览器面板未打开或无 active tab；请先调用 browser_open 工具自己打开浏览器，\
+             不要让用户手动去点地球图标"
+                .to_string(),
+        )),
+        TabDecision::Reject(msg) => Err(ToolError::Exec(msg)),
     }
-    // v0.5.7 优先：前端同步过来的"用户当前看到的 tab"
-    if let Some(id) = browser_state.current_active_id.lock().await.clone() {
-        // 校验仍存在于 active map（前端 set 后可能被 close）
+}
+
+/// [`decide_tab`] 的 state 版本：从 BrowserState 取当前 webview 列表 + active id。
+pub(crate) async fn decide_tab_of(
+    explicit: Option<&str>,
+    browser_state: &Arc<BrowserState>,
+) -> TabDecision {
+    let ids: Vec<String> = {
         let map = browser_state.active.lock().await;
-        if map.contains_key(&id) {
-            return Ok(id);
-        }
-    }
-    // Fallback：取 BrowserState 内第一个 active tab（HashMap 无序，作为最后兜底）
-    let map = browser_state.active.lock().await;
-    if let Some(tab_id) = map.keys().next().cloned() {
-        Ok(tab_id)
-    } else {
-        Err(ToolError::Exec(
-            "浏览器面板未打开或无 active tab；用户需先打开浏览器".to_string(),
-        ))
+        map.keys().cloned().collect()
+    };
+    let current = { browser_state.current_active_id.lock().await.clone() };
+    decide_tab(explicit, &ids, current.as_deref())
+}
+
+/// 拿"当前唯一确定的 active tab id"，判不出则 `None`。
+///
+/// v1.2.0 T-B3：`browser_open` 要判"是否已经开着"来决定复用还是请前端新建，
+/// 这种判断不该走 Err 路径。
+///
+/// v1.3.0 P7：不再有 `keys().next()` 无序兜底 —— 判不出就是 `None`。
+pub(crate) async fn current_active_tab(browser_state: &Arc<BrowserState>) -> Option<String> {
+    match crate::ipc::browser::resolve_active_tab_of(browser_state).await {
+        crate::ipc::browser::ActiveTabResolution::Resolved(id) => Some(id),
+        _ => None,
     }
 }
 
@@ -185,7 +256,8 @@ impl Tool for BrowserNavigateTool {
     }
 
     fn description(&self) -> &str {
-        "让内嵌浏览器导航到指定 URL（http / https）。默认作用于第一个 active 浏览器 tab。"
+        "让内嵌浏览器导航到指定 URL（http / https）。默认作用于当前 active 浏览器 tab；\
+         **浏览器面板没打开时会自动打开面板并直接导航**，不需要用户手动操作。"
     }
 
     fn input_schema(&self) -> Value {
@@ -245,10 +317,38 @@ impl Tool for BrowserNavigateTool {
             )));
         }
 
-        let tab_id = match resolve_tab_id(parsed.tab_id.as_deref(), &ctx.browser_state).await {
-            Ok(id) => id,
-            Err(ToolError::Exec(msg)) => return Ok(make_fail(msg)),
-            Err(e) => return Ok(make_fail(format!("解析 tab_id 失败: {e:?}"))),
+        // v1.2.0 T-B3：面板没打开时不再直接报错——请前端打开面板**并直接导航到本
+        // url**（跟 browser_open 共用 request_frontend_open）。这样用户说"打开 xxx
+        // 网站"一步到位，不需要 AI 先 browser_open 再 navigate。
+        // v1.3.0 P7：tab 判定统一走 decide_tab —— 显式 tab_id 也要跟"用户当前
+        // 看得见的 tab"对得上，判不出宁可失败也不随便挑一个 webview。
+        let tab_id = match decide_tab_of(parsed.tab_id.as_deref(), &ctx.browser_state).await {
+            TabDecision::Use(id) => id,
+            TabDecision::Reject(msg) => return Ok(make_fail(msg)),
+            TabDecision::NoTab => {
+                // 前端建 webview 时就带上目标 URL，省一次导航往返
+                return match crate::ipc::browser::request_frontend_open(
+                    &ctx.browser_state,
+                    Some(&parsed.url),
+                )
+                .await
+                {
+                    Ok(new_tab_id) => Ok(ToolResult {
+                        content: json!({
+                            "ok": true,
+                            "url": parsed.url.clone(),
+                            "title": "",
+                            "note": "浏览器面板原本未打开，已自动打开并直接导航到该 URL",
+                            "tab_id": new_tab_id,
+                        })
+                        .to_string(),
+                        is_error: false,
+                    }),
+                    Err(msg) => Ok(make_fail(format!(
+                        "浏览器面板未打开，自动打开也失败: {msg}"
+                    ))),
+                };
+            }
         };
 
         let wv = match get_webview(&tab_id, &ctx.browser_state).await {
@@ -257,11 +357,18 @@ impl Tool for BrowserNavigateTool {
             Err(e) => return Ok(make_fail(format!("获取 webview 失败: {e:?}"))),
         };
 
+        // v1.3.0 P4：发起导航前先记一次 generation baseline，才能分辨"这一次
+        // navigate 触发的 Finished"和"上一轮遗留的 Finished"。
+        let baseline_generation =
+            crate::ipc::browser::current_load_generation(&ctx.browser_state, &tab_id).await;
+
         if let Err(e) = wv.navigate(url) {
             return Ok(make_fail(format!("navigate 失败: {e}")));
         }
         // v0.5.9：emit 给主 webview 同步 URL 栏。用 emit_to(EventTarget::webview("main"))
         // 显式指定，避免 emit() 广播到 child webview 时主 webview 漏收。
+        // 这里先用请求的 url 乐观 emit 一次（跟历史行为一致，不等加载完），
+        // 真正落地的 url（可能重定向过）等下面等到加载完后再补 emit 一次。
         let app = wv.app_handle().clone();
         let payload = crate::ipc::browser::UrlChangedEvent {
             tab_id: tab_id.clone(),
@@ -270,27 +377,76 @@ impl Tool for BrowserNavigateTool {
         if let Err(e) = app.emit_to(tauri::EventTarget::webview("main"), "browser:url_changed", &payload) {
             tracing::warn!("AI 工具 emit browser:url_changed to main 失败: {e}");
         }
-        // v0.5.8：navigate 是异步触发，wv.navigate 立即 return 但 WKWebView 切页
-        // 还在加载——AI 紧跟 snapshot 会拿到 transitional state（body 为 null）。
-        // 简单 sleep 800ms 缓解 race；不是完美但是无 native load 事件桥的情况下
-        // 最实用方案。仍可能不够（慢站），AI 提示拿到 null body 时再 sleep 后重试。
-        tokio::time::sleep(std::time::Duration::from_millis(800)).await;
 
-        // v0.9.2 HR5-4：成功也用结构化 JSON（含 ok=true + url），方便前端 / LLM
-        // 都用同一套字段判断。title 当前后端没拉（要再发一次 eval 查 document.title），
-        // 留空字符串占位；后续可补。
-        let body = json!({
-            "ok": true,
-            "url": parsed.url.clone(),
-            "title": "",
-            "note": "已等 800ms 加载，若内容仍未就绪可再次 snapshot",
-            "tab_id": tab_id,
-        })
-        .to_string();
+        // v1.3.0 P4：不再用固定 sleep 猜时机——原生 on_page_load(Finished) 钩子
+        // 驱动的 watch channel，真等到页面加载完（或 10s 兜底超时给诚实提示）。
+        // 别用固定 sleep：GitHub 这类重站 800ms 根本不够，本次真机反馈的 bug 正是
+        // "AI 说已打开、页面其实还没渲染出来"。
+        let outcome = crate::ipc::browser::wait_for_page_load(
+            &ctx.browser_state,
+            &tab_id,
+            baseline_generation,
+            crate::ipc::browser::NAVIGATE_LOAD_TIMEOUT,
+        )
+        .await;
+
+        if let crate::ipc::browser::LoadWaitOutcome::Loaded(ref snapshot) = outcome {
+            // 重定向导致最终 url 跟请求的不一样时，再 emit 一次让前端 URL 栏跟上
+            if !snapshot.url.is_empty() && snapshot.url != parsed.url {
+                let payload2 = crate::ipc::browser::UrlChangedEvent {
+                    tab_id: tab_id.clone(),
+                    url: snapshot.url.clone(),
+                };
+                if let Err(e) =
+                    app.emit_to(tauri::EventTarget::webview("main"), "browser:url_changed", &payload2)
+                {
+                    tracing::warn!("AI 工具 emit 重定向后 url 失败: {e}");
+                }
+            }
+        }
+
+        let body = build_navigate_success_body(&tab_id, &parsed.url, outcome).to_string();
         Ok(ToolResult {
             content: body,
             is_error: false,
         })
+    }
+}
+
+/// 把 [`crate::ipc::browser::wait_for_page_load`] 的结果拼成 AI 工具最终看到的
+/// JSON body。抽成纯函数方便单测（不需要真 Webview 就能验证"超时不谎报已完成"
+/// 这条反幻觉要求）。
+fn build_navigate_success_body(
+    tab_id: &str,
+    requested_url: &str,
+    outcome: crate::ipc::browser::LoadWaitOutcome,
+) -> Value {
+    match outcome {
+        crate::ipc::browser::LoadWaitOutcome::Loaded(snapshot) => {
+            let final_url = if snapshot.url.is_empty() {
+                requested_url.to_string()
+            } else {
+                snapshot.url
+            };
+            json!({
+                "ok": true,
+                "url": final_url,
+                "title": snapshot.title,
+                "loaded": true,
+                "note": "页面已加载完成",
+                "tab_id": tab_id,
+            })
+        }
+        crate::ipc::browser::LoadWaitOutcome::TimedOut => json!({
+            "ok": true,
+            "url": requested_url,
+            "title": "",
+            "loaded": false,
+            "note": format!(
+                "已导航到 {requested_url}，但 10s 内页面未完成加载（可能仍在加载中，可稍后重新 snapshot 确认）"
+            ),
+            "tab_id": tab_id,
+        }),
     }
 }
 
@@ -459,8 +615,15 @@ impl Tool for BrowserEvalTool {
         })
     }
 
-    fn risk_class(&self, _args: &Value) -> RiskClass {
-        RiskClass::Destructive
+    fn risk_class(&self, args: &Value) -> RiskClass {
+        let script = args.get("script").and_then(|v| v.as_str()).unwrap_or("");
+        if is_readonly_script(script) {
+            // 只读查询（document.title 之类）→ HIGH：仍弹审批、仍默认聚焦"拒绝"，
+            // 但不必输"确认"二字。
+            RiskClass::High
+        } else {
+            RiskClass::Destructive
+        }
     }
 
     async fn execute(&self, args: Value, ctx: &ToolContext) -> Result<ToolResult, ToolError> {
@@ -477,6 +640,51 @@ impl Tool for BrowserEvalTool {
             is_error: false,
         })
     }
+}
+
+/// 会让脚本从"只读查询"升级为 DESTRUCTIVE 的关键词。
+///
+/// 覆盖四类实际能造成后果的操作：**持久化存储**、**发网络请求**、**导航/开窗**、
+/// **动态执行 / 改 DOM**。
+const EVAL_DANGEROUS_MARKERS: &[&str] = &[
+    // 存储
+    "localstorage", "sessionstorage", "indexeddb", "document.cookie",
+    // 网络
+    "fetch(", "xmlhttprequest", "sendbeacon", "websocket", "eventsource",
+    // 导航 / 开窗
+    //
+    // 注意**不列** `location.href`：赋值式导航（`location.href = 'x'`）已被上面的
+    // 赋值号检测抓住，而单纯读取 `window.location.href` 是无副作用的查询，
+    // 列进来会把它误判成危险（真机验证时踩到过）。
+    "location=", "location =", "location.replace",
+    "location.assign", "window.open", "history.push", "history.replace",
+    // 动态执行
+    "eval(", "function(", "settimeout(", "setinterval(", "import(",
+    // 改 DOM / 提交
+    ".submit(", ".click(", "innerhtml", "outerhtml", "appendchild",
+    "removechild", "remove()", "setattribute", "document.write",
+];
+
+/// 判定一段 JS 是否属于**只读查询**（可降级到 HIGH，不必输"确认"）。
+///
+/// **这不是安全沙箱，只是风险提示的分级**——命中危险词只是把审批从 HIGH 提到
+/// DESTRUCTIVE（多一道输"确认"），两者**都仍然要用户批准**。所以即便有人用
+/// `window['fe'+'tch']` 之类拼接绕过启发式，最坏也只是少一道确认框，不会静默执行。
+///
+/// 反过来，维护者真机反馈过：让 AI 跑一句 `document.title` 也要求输"确认"二字，
+/// 属于明显过重——这种"警报疲劳"会让用户养成盲目确认的习惯，反而更不安全。
+fn is_readonly_script(script: &str) -> bool {
+    let s = script.to_ascii_lowercase();
+    // 赋值号（排除 == / === / != / >= / <= 这些比较）视为写操作
+    let has_assignment = {
+        let b = s.as_bytes();
+        (0..b.len()).any(|i| {
+            b[i] == b'='
+                && b.get(i + 1) != Some(&b'=')
+                && (i == 0 || !matches!(b[i - 1], b'=' | b'!' | b'<' | b'>'))
+        })
+    };
+    !has_assignment && !EVAL_DANGEROUS_MARKERS.iter().any(|m| s.contains(m))
 }
 
 // ============================================================
@@ -510,10 +718,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn resolve_tab_id_显式传_id_直接用() {
+    async fn resolve_tab_id_显式传_id_也要后端真有这个_webview() {
+        // v1.3.0 P7 契约变更：旧实现"LLM 传了具体 id → 直接用"，等于盲信 LLM
+        // 从上一轮 tool_result 抄回来的历史 tab_id；后端压根没这个 webview 时
+        // 必须报错，而不是揣着一个假 id 往下走。
         let state = Arc::new(BrowserState::default());
-        let r = resolve_tab_id(Some("browser-abc"), &state).await.unwrap();
-        assert_eq!(r, "browser-abc");
+        let r = resolve_tab_id(Some("browser-abc"), &state).await;
+        assert!(r.is_err(), "后端没有任何 webview 时不能放行显式 tab_id");
     }
 
     #[tokio::test]
@@ -572,7 +783,11 @@ mod tests {
             .await;
         assert!(r.is_err());
         if let Err(ToolError::Exec(msg)) = r {
-            assert!(msg.contains("ghost") || msg.contains("不存在"));
+            // 后端一个 webview 都没有 → 归类为"面板没打开"，引导 AI 自己 browser_open
+            assert!(
+                msg.contains("browser_open") || msg.contains("不存在"),
+                "错误应可操作，实际: {msg}"
+            );
         }
     }
 
@@ -655,6 +870,131 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn current_active_tab_空_state_返_none() {
+        let state = Arc::new(BrowserState::default());
+        assert!(current_active_tab(&state).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn resolve_tab_id_报错文案_引导_ai_自己调_browser_open() {
+        // v1.2.0 T-B3：错误不能再写"用户需先打开浏览器"——AI 自己有 browser_open
+        let state = Arc::new(BrowserState::default());
+        let Err(ToolError::Exec(msg)) = resolve_tab_id(None, &state).await else {
+            panic!("空 state 应报 Exec 错误");
+        };
+        assert!(msg.contains("browser_open"), "应引导调 browser_open：{msg}");
+        assert!(!msg.contains("用户需先"), "不能再让用户手动开：{msg}");
+    }
+
+    #[tokio::test]
+    async fn navigate_无_tab_时_走自动打开兜底路径() {
+        // v1.2.0 T-B3：面板未打开不再直接报错，而是请求前端打开并导航。
+        // 单测无 AppHandle → 兜底失败，但 reason 必须体现"走过自动打开"这条路。
+        let ctx = make_ctx();
+        let r = BrowserNavigateTool
+            .execute(json!({"url": "https://example.com"}), &ctx)
+            .await
+            .expect("应返 Ok(ToolResult)");
+        assert!(r.is_error);
+        let body: serde_json::Value = serde_json::from_str(&r.content).unwrap();
+        assert_eq!(body["ok"], serde_json::json!(false));
+        let reason = body["reason"].as_str().unwrap_or("");
+        assert!(
+            reason.contains("自动打开"),
+            "reason 应说明尝试过自动打开浏览器，实际: {reason}"
+        );
+    }
+
+    // =====================================================================
+    // v1.3.0 P7：ghost webview —— decide_tab 纯函数（工具侧唯一 tab 判定入口）
+    // =====================================================================
+
+    fn ids(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn decide_tab_不传_tab_id_且只有一个_webview_直接用它() {
+        let r = decide_tab(None, &ids(&["browser-a"]), None);
+        assert_eq!(r, TabDecision::Use("browser-a".to_string()));
+    }
+
+    #[test]
+    fn decide_tab_不传_tab_id_且_current_有效_用_current() {
+        let r = decide_tab(None, &ids(&["a", "b"]), Some("b"));
+        assert_eq!(r, TabDecision::Use("b".to_string()));
+    }
+
+    #[test]
+    fn decide_tab_判不出_active_时必须_reject_而不是随便挑一个() {
+        // 老实现在这里走 HashMap::keys().next() —— AI 会操作一个用户看不见的
+        // webview（browser_eval 是 DESTRUCTIVE，操作错对象比失败严重得多）
+        let r = decide_tab(None, &ids(&["a", "b"]), None);
+        match r {
+            TabDecision::Reject(msg) => {
+                assert!(msg.contains("browser_open"), "要引导 AI 自救: {msg}");
+                assert!(msg.contains('2'), "要说明有几个 webview: {msg}");
+            }
+            other => panic!("多 webview 且判不出 active 必须 Reject，实际 {other:?}"),
+        }
+    }
+
+    #[test]
+    fn decide_tab_一个_webview_都没有_是_no_tab() {
+        assert_eq!(decide_tab(None, &[], None), TabDecision::NoTab);
+        assert_eq!(decide_tab(Some("过期 id"), &[], None), TabDecision::NoTab);
+    }
+
+    #[test]
+    fn decide_tab_占位符_tab_id_视为不传() {
+        for placeholder in ["", "  ", "current", "active", "default"] {
+            assert_eq!(
+                decide_tab(Some(placeholder), &ids(&["only"]), None),
+                TabDecision::Use("only".to_string()),
+                "占位符 {placeholder:?} 应当视为不传"
+            );
+        }
+    }
+
+    #[test]
+    fn decide_tab_显式_tab_id_是当前可见_tab_时放行() {
+        let r = decide_tab(Some("b"), &ids(&["a", "b"]), Some("b"));
+        assert_eq!(r, TabDecision::Use("b".to_string()));
+    }
+
+    #[test]
+    fn decide_tab_显式_tab_id_不是当前可见_tab_时_reject() {
+        // 真机 ghost 场景：LLM 把上一轮 tool_result 里的历史 tab_id 又传回来，
+        // 结果操作了一个用户早就切走 / 看不见的 webview。
+        let r = decide_tab(Some("a"), &ids(&["a", "b"]), Some("b"));
+        match r {
+            TabDecision::Reject(msg) => {
+                assert!(msg.contains('b'), "要告诉 AI 当前可见的是哪个: {msg}");
+                assert!(
+                    msg.contains("历史") || msg.contains("省略"),
+                    "要引导 AI 别复用历史 tab_id: {msg}"
+                );
+            }
+            other => panic!("显式 id 跟可见 tab 不符必须 Reject，实际 {other:?}"),
+        }
+    }
+
+    #[test]
+    fn decide_tab_显式_tab_id_后端根本没有_时_reject() {
+        let r = decide_tab(Some("ghost"), &ids(&["a"]), Some("a"));
+        assert!(matches!(r, TabDecision::Reject(_)));
+    }
+
+    #[tokio::test]
+    async fn resolve_tab_id_没有任何_tab_时报错并引导调_browser_open() {
+        let state = Arc::new(BrowserState::default());
+        let Err(ToolError::Exec(msg)) = resolve_tab_id(None, &state).await else {
+            panic!("空 state 应报 Exec 错误");
+        };
+        assert!(msg.contains("browser_open"));
+    }
+
     #[test]
     fn snapshot_risk_class_low() {
         assert_eq!(
@@ -673,9 +1013,64 @@ mod tests {
         assert_eq!(BrowserFillTool.risk_class(&json!({})), RiskClass::High);
     }
 
+    /// 缺 script（或空）时保守按 DESTRUCTIVE 处理。
     #[test]
-    fn eval_risk_class_destructive() {
-        assert_eq!(BrowserEvalTool.risk_class(&json!({})), RiskClass::Destructive);
+    fn eval_risk_class_无脚本时_保守_destructive() {
+        // 空串没有赋值号也没有危险词 → 只读，但实际执行会因缺 script 报参数错，
+        // 这里断言的是"空脚本不会被误判成危险"，真正的兜底在 execute 的参数校验。
+        assert_eq!(BrowserEvalTool.risk_class(&json!({})), RiskClass::High);
+    }
+
+    /// 只读查询降级到 HIGH——维护者真机反馈：`document.title` 也要输"确认"太重。
+    #[test]
+    fn eval_只读查询_降级为_high() {
+        for s in [
+            "document.title",
+            "document.querySelectorAll('a').length",
+            "document.body.innerText",
+            "window.location.href",           // 读 href（无赋值）算只读
+            "document.querySelector('h1').textContent",
+            "navigator.userAgent",
+            "a === b",                        // 比较号不算赋值
+            "x !== y",
+        ] {
+            assert_eq!(
+                BrowserEvalTool.risk_class(&json!({ "script": s })),
+                RiskClass::High,
+                "只读脚本不该要求输「确认」：{s}"
+            );
+        }
+    }
+
+    /// 有实际后果的脚本仍是 DESTRUCTIVE（要输「确认」）。
+    #[test]
+    fn eval_有副作用_仍_destructive() {
+        for s in [
+            "location.href = 'https://evil.com'",     // 导航
+            "document.cookie",                         // 读 cookie 也算敏感
+            "localStorage.getItem('token')",           // 存储
+            "fetch('https://x.com', {method:'POST'})", // 网络
+            "document.body.innerHTML = ''",            // 改 DOM
+            "document.forms[0].submit()",              // 提交
+            "eval('alert(1)')",                        // 动态执行
+            "let a = 1",                               // 赋值
+            "window.open('https://x.com')",            // 开窗
+        ] {
+            assert_eq!(
+                BrowserEvalTool.risk_class(&json!({ "script": s })),
+                RiskClass::Destructive,
+                "有副作用的脚本必须走 DESTRUCTIVE：{s}"
+            );
+        }
+    }
+
+    /// 大小写混写不能绕过判定。
+    #[test]
+    fn eval_危险词大小写不敏感() {
+        assert_eq!(
+            BrowserEvalTool.risk_class(&json!({ "script": "LocalStorage.clear()" })),
+            RiskClass::Destructive
+        );
     }
 
     #[test]
@@ -692,5 +1087,54 @@ mod tests {
             assert!(!t.description().is_empty());
             assert!(t.input_schema().is_object());
         }
+    }
+
+    // =====================================================================
+    // v1.3.0 P4：build_navigate_success_body —— 等加载完成后拼给 LLM 的 JSON
+    // =====================================================================
+
+    #[test]
+    fn build_navigate_success_body_已加载_带最终_url_和_title() {
+        // 覆盖重定向场景：请求 github.com，落地到 github.com/login
+        let outcome = crate::ipc::browser::LoadWaitOutcome::Loaded(crate::ipc::browser::PageLoadState {
+            generation: 1,
+            url: "https://github.com/login".into(),
+            title: "Sign in to GitHub · GitHub".into(),
+        });
+        let body = build_navigate_success_body("tab-1", "https://github.com", outcome);
+        assert_eq!(body["ok"], json!(true));
+        assert_eq!(body["loaded"], json!(true));
+        assert_eq!(body["url"], json!("https://github.com/login"));
+        assert_eq!(body["title"], json!("Sign in to GitHub · GitHub"));
+        assert_eq!(body["tab_id"], json!("tab-1"));
+    }
+
+    #[test]
+    fn build_navigate_success_body_已加载_但_url_为空_用请求时的_url_兜底() {
+        let outcome = crate::ipc::browser::LoadWaitOutcome::Loaded(crate::ipc::browser::PageLoadState {
+            generation: 1,
+            url: String::new(),
+            title: String::new(),
+        });
+        let body = build_navigate_success_body("tab-1", "https://example.com", outcome);
+        assert_eq!(body["url"], json!("https://example.com"));
+    }
+
+    #[test]
+    fn build_navigate_success_body_超时_诚实提示_不谎报已完成() {
+        let body = build_navigate_success_body(
+            "tab-1",
+            "https://slow-site.example",
+            crate::ipc::browser::LoadWaitOutcome::TimedOut,
+        );
+        assert_eq!(body["ok"], json!(true), "navigate 命令本身没失败");
+        assert_eq!(body["loaded"], json!(false), "但必须标明没等到加载完成");
+        let note = body["note"].as_str().unwrap();
+        assert!(note.contains("10s"), "note 应体现超时时长: {note}");
+        assert!(note.contains("未完成加载"), "note 应如实说未加载完: {note}");
+        assert!(
+            !note.contains("已打开") && !note.contains("已加载完成"),
+            "超时文案不能说成'已打开/已加载完成'这种误导措辞: {note}"
+        );
     }
 }

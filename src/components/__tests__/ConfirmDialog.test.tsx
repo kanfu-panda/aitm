@@ -111,7 +111,7 @@ describe("ConfirmDialog", () => {
     fireEvent.click(approveBtn);
 
     await waitFor(() => expect(mockApprove).toHaveBeenCalledTimes(1));
-    expect(mockApprove).toHaveBeenCalledWith("call-destr-1");
+    expect(mockApprove).toHaveBeenCalledWith("call-destr-1", false);
     expect(mockReject).not.toHaveBeenCalled();
   });
 
@@ -138,7 +138,7 @@ describe("ConfirmDialog", () => {
     expect(approveBtn).not.toBeDisabled();
     fireEvent.click(approveBtn);
 
-    await waitFor(() => expect(mockApprove).toHaveBeenCalledWith("call-h"));
+    await waitFor(() => expect(mockApprove).toHaveBeenCalledWith("call-h", false));
   });
 
   it("risk_reason 字段：弹窗显示评分原因", async () => {
@@ -188,5 +188,87 @@ describe("ConfirmDialog", () => {
     fireEvent.click(screen.getByRole("button", { name: "批准" }));
 
     await waitFor(() => expect(mockShow).toHaveBeenCalledTimes(1));
+  });
+
+  // T-B3b：diff 预览接入
+  it("preview.kind==='diff' 时渲染 DiffView 取代纯文本 args_preview", async () => {
+    render(<ConfirmDialog conversationId="conv-1" />);
+    await waitFor(() => expect(requestCallbacks.length).toBe(1));
+
+    fireRequest({
+      risk: "high",
+      name: "write_file",
+      args_preview: '{"path":"hello.txt","content":"hi"}',
+      preview: {
+        kind: "diff",
+        path: "hello.txt",
+        old_text: "",
+        new_text: "hi",
+      },
+    });
+
+    expect(await screen.findByTestId("diff-view")).toBeInTheDocument();
+    expect(screen.getByTestId("diff-view-path")).toHaveTextContent(
+      "hello.txt",
+    );
+    // 纯文本 args_preview 区块不应再渲染
+    expect(
+      screen.queryByText('{"path":"hello.txt","content":"hi"}'),
+    ).toBeNull();
+  });
+
+  // v1.3.0 A1：审批批量化（会话内 always-allow）
+  describe("A1 本会话都允许", () => {
+    it("HIGH 风险：出现拒绝 / 批准 / 本会话都允许三个按钮", async () => {
+      render(<ConfirmDialog conversationId="conv-1" />);
+      await waitFor(() => expect(requestCallbacks.length).toBe(1));
+
+      fireRequest({ risk: "high", name: "write_file" });
+
+      expect(await screen.findByRole("button", { name: "拒绝" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "批准" })).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "本会话都允许" }),
+      ).toBeInTheDocument();
+    });
+
+    it("点「本会话都允许」→ aiToolApprove(callId, true)", async () => {
+      render(<ConfirmDialog conversationId="conv-1" />);
+      await waitFor(() => expect(requestCallbacks.length).toBe(1));
+
+      fireRequest({ risk: "high", name: "write_file", call_id: "call-always" });
+
+      fireEvent.click(
+        await screen.findByRole("button", { name: "本会话都允许" }),
+      );
+
+      await waitFor(() => expect(mockApprove).toHaveBeenCalledTimes(1));
+      expect(mockApprove).toHaveBeenCalledWith("call-always", true);
+      expect(mockReject).not.toHaveBeenCalled();
+    });
+
+    it("🔴 DESTRUCTIVE 风险：不提供「本会话都允许」按钮", async () => {
+      render(<ConfirmDialog conversationId="conv-1" />);
+      await waitFor(() => expect(requestCallbacks.length).toBe(1));
+
+      fireRequest({ risk: "destructive", name: "browser_eval" });
+
+      await screen.findByLabelText("危险操作确认输入");
+      expect(screen.queryByRole("button", { name: "本会话都允许" })).toBeNull();
+    });
+  });
+
+  it("无 preview 时回退纯文本 args_preview（不渲染 DiffView）", async () => {
+    render(<ConfirmDialog conversationId="conv-1" />);
+    await waitFor(() => expect(requestCallbacks.length).toBe(1));
+
+    fireRequest({
+      risk: "high",
+      name: "run_command",
+      args_preview: '{"cmd":"ls -la"}',
+    });
+
+    await screen.findByText('{"cmd":"ls -la"}');
+    expect(screen.queryByTestId("diff-view")).toBeNull();
   });
 });

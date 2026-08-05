@@ -316,7 +316,11 @@
     "errorSeparator": ": ",
     "emptyChatHint": "Start a conversation with AI…",
     "inputPlaceholder": "Type a message (Enter to send, Shift+Enter for newline)",
-    "tokensLabel": "tokens: in {{input}} · out {{output}}"
+    "tokensLabel": "tokens: in {{input}} · out {{output}}",
+    "stopAria": "Stop generating",
+    "stopTitle": "Stop generating",
+    "retryLabel": "Retry",
+    "retryAria": "Retry"
   },
   "sessionRestore": {
     "dialogAria": "Restore previous session",
@@ -370,7 +374,16 @@
   },
   "messageBubble": {
     "copyCode": "Copy",
-    "copyCodeAria": "Copy code"
+    "copyCodeAria": "Copy code",
+    "retryLabel": "Retry",
+    "retryAria": "Retry this reply",
+    "stoppedLabel": "Stopped",
+    "hallucinationWarning": "No {{kinds}} tool was called this turn — the completion claim above may not be true",
+    "claimCategory": {
+      "browser": "browser",
+      "file": "file",
+      "command": "command"
+    }
   },
   "toolCallBubble": {
     "status": {

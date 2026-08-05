@@ -5,11 +5,17 @@ import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import { remarkStripComments } from "../lib/remark-strip-comments";
 import { MarkdownLink } from "./MarkdownLink";
+import { AlertTriangle, RotateCcw } from "./icons";
 import type { AssistantMessage, UserMessage } from "../stores/chat";
 
 interface Props {
   message: UserMessage | AssistantMessage;
   streaming?: boolean;
+  /** A2：是否为消息列表里最后一条；仅最后一条 assistant 气泡才展示重试按钮
+   *  （历史里更早的 assistant 回复不该被重试，会打乱后续已发生的对话）。 */
+  isLast?: boolean;
+  /** A2：点击重试的回调。不传 → 不渲染按钮（user 消息永不重试）。 */
+  onRetry?: () => void;
 }
 
 /** 递归从 react-markdown/rehype 渲染出的 children 节点树里提取纯文本。
@@ -30,11 +36,24 @@ function langFromClassName(cls?: string): string | undefined {
   return /language-(\S+)/.exec(cls ?? "")?.[1];
 }
 
-export default function MessageBubble({ message, streaming }: Props) {
+export default function MessageBubble({
+  message,
+  streaming,
+  isLast,
+  onRetry,
+}: Props) {
+  const { t } = useTranslation();
   const isUser = message.kind === "user";
+  const isAssistant = message.kind === "assistant";
+  // A1：用户点停止后这条回复被标 stopped——保留已生成内容，尾部提示「已停止」。
+  const stopped = isAssistant && !!message.stopped;
+  // v1.3.0 反幻觉：后端比对"完成声明 × 本轮实际工具调用"后给出的警告。
+  const hallucination = isAssistant ? message.hallucination : null;
+  // A2：done/stopped/error 态都满足「非 streaming」；只在最后一条 assistant 上给重试入口。
+  const showRetry = isAssistant && isLast && !streaming && !!onRetry;
 
   return (
-    <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
+    <div className={`flex flex-col ${isUser ? "items-end" : "items-start"}`}>
       <div
         className={
           "max-w-[88%] rounded-lg px-3 py-2 text-sm leading-relaxed " +
@@ -51,7 +70,40 @@ export default function MessageBubble({ message, streaming }: Props) {
             streaming={!!streaming}
           />
         )}
+        {stopped && (
+          <div className="mt-1 text-[10px] text-[var(--c-text-faint)]">
+            {t("messageBubble.stoppedLabel")}
+          </div>
+        )}
+        {hallucination && (
+          // v1.3.0 反幻觉：这条回复声称做了某类操作，但本轮一个对应工具都没调。
+          // 用 amber 警告色 + 边框，醒目但不打断阅读（不是错误红）。
+          <div
+            className="mt-2 flex items-start gap-1.5 rounded border border-[var(--c-warn)] bg-[var(--c-warn-bg,rgba(245,158,11,0.08))] px-2 py-1 text-[11px] text-[var(--c-warn)]"
+            data-testid="hallucination-warning"
+            role="status"
+          >
+            <AlertTriangle size={12} className="mt-0.5 shrink-0" aria-hidden />
+            <span>
+              {t("messageBubble.hallucinationWarning", {
+                kinds: hallucination.missing
+                  .map((k) => t(`messageBubble.claimCategory.${k}`))
+                  .join(" / "),
+              })}
+            </span>
+          </div>
+        )}
       </div>
+      {showRetry && (
+        <button
+          onClick={onRetry}
+          className="mt-1 flex items-center gap-1 rounded px-1 py-0.5 text-[10px] text-[var(--c-text-dim)] hover:bg-[var(--c-bg-elev-2)] hover:text-[var(--c-text-base)]"
+          aria-label={t("messageBubble.retryAria")}
+        >
+          <RotateCcw size={12} />
+          {t("messageBubble.retryLabel")}
+        </button>
+      )}
     </div>
   );
 }

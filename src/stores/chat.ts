@@ -3,9 +3,11 @@ import i18n from "../lib/i18n";
 import type {
   AiErrorEvent,
   ConversationDto,
+  HallucinationWarning,
   MessageDto,
   RiskClass,
   ScopeDto,
+  ToolPreview,
 } from "../lib/tauri";
 import {
   aiChatCancel,
@@ -37,6 +39,11 @@ export interface ToolCallEntry {
   status: "awaiting_approval" | "running" | "done" | "error" | "rejected";
   /** 执行结果（done / error / rejected 时填）*/
   result?: { content: string; is_error: boolean };
+  /** T-A3：工具执行耗时（毫秒）。持久化落盘，重启回看仍显示耗时。 */
+  elapsed_ms?: number;
+  /** T-B3a/T-B4：工具「将要做的改动」结构化 diff 预览（write_file / edit_file 有值）。
+   *  持久化时一并落盘，重启回看仍能渲染 diff；渲染由 ToolCallBubble 的 preview prop 消费。 */
+  preview?: ToolPreview;
 }
 
 export interface UserMessage {
@@ -47,6 +54,13 @@ export interface UserMessage {
 export interface AssistantMessage {
   kind: "assistant";
   content: string;
+  /** A1：用户点了「停止」提前结束这条回复；保留已生成内容，气泡尾部展示「已停止」。 */
+  stopped?: boolean;
+  /**
+   * v1.3.0 反幻觉：这条回复声称做了某类操作，但本轮一个对应工具都没调。
+   * 有值时气泡上渲染警告条（见 MessageBubble）。
+   */
+  hallucination?: HallucinationWarning | null;
 }
 
 export type ChatEntry = UserMessage | AssistantMessage | ToolCallEntry;
@@ -93,11 +107,21 @@ interface ChatState {
   appendUserMessage: (content: string) => void;
   startAssistant: () => void;
   appendAssistantDelta: (text: string) => void;
-  finishAssistant: () => void;
+  /** @param hallucination 有值时把反幻觉警告挂到末条 assistant 气泡上。 */
+  finishAssistant: (hallucination?: HallucinationWarning | null) => void;
   addToolCall: (entry: ToolCallEntry) => void;
   updateToolCall: (call_id: string, patch: Partial<ToolCallEntry>) => void;
   setError: (err: ChatError | null) => void;
   setUsage: (input_tokens: number, output_tokens: number) => void;
+
+  // === A1/A2 新增：停止生成 + 重试 ===
+  /** A1：用户点「停止」— 末条 assistant 标 stopped，streaming 置 false，保留已生成内容。
+   *  只做本地状态收尾，不发 IPC（调用方在此之前/之后自行调 aiChatCancel）。 */
+  stopStreaming: (cid: string) => void;
+  /** A2：重试/regenerate 的状态清理半步 —— 移除指定对话末条 assistant 消息
+   *  （done/stopped/error 态下末条恒为 assistant，含空内容的错误占位）。
+   *  不发 IPC；调用方需自行用剩余历史重新调 aiChatSend。 */
+  retryLast: (cid: string) => void;
 
   // === 兼容老 API ===
   /** 清空当前 active 对话的消息（保留 conversation 本身） */
@@ -208,6 +232,21 @@ function dtoToConversation(dto: ConversationDto): SingleConversation {
   };
 }
 
+/** 恢复 tool_call 时把 payload.status 归一到合法枚举；未知 / 缺失 → "done"
+ *  （历史消息一般已落定，不该恢复成 running / awaiting_approval 卡住）。 */
+function normalizeToolStatus(raw: unknown): ToolCallEntry["status"] {
+  if (
+    raw === "done" ||
+    raw === "error" ||
+    raw === "rejected" ||
+    raw === "running" ||
+    raw === "awaiting_approval"
+  ) {
+    return raw;
+  }
+  return "done";
+}
+
 /** db MessageDto[] → 内存 ChatEntry[]，按 seq ASC。 */
 function messagesDtoToEntries(rows: MessageDto[]): ChatEntry[] {
   const out: ChatEntry[] = [];
@@ -222,18 +261,34 @@ function messagesDtoToEntries(rows: MessageDto[]): ChatEntry[] {
           content: String(payload.content ?? ""),
         });
       } else if (row.kind === "tool_call") {
-        // T8 简化：tool_call 暂未持久化；如果未来有也允许重放
-        out.push({
+        // T-B4：tool_call 消息重建成工具气泡。status 缺省 "done"（历史消息一般已
+        // 落定）；preview / risk_reason / auto_approved_reason 一并恢复，让回看仍能
+        // 渲染 diff 与徽章。
+        const status = normalizeToolStatus(payload.status);
+        const entry: ToolCallEntry = {
           kind: "tool_call",
           call_id: String(payload.call_id ?? ""),
           name: String(payload.name ?? ""),
           args_preview: String(payload.args_preview ?? ""),
           risk: (payload.risk as RiskClass) ?? "low",
-          status: "done",
+          status,
           result: payload.result as
             | { content: string; is_error: boolean }
             | undefined,
-        });
+        };
+        if (typeof payload.risk_reason === "string") {
+          entry.risk_reason = payload.risk_reason;
+        }
+        if (typeof payload.elapsed_ms === "number") {
+          entry.elapsed_ms = payload.elapsed_ms;
+        }
+        if (typeof payload.auto_approved_reason === "string") {
+          entry.auto_approved_reason = payload.auto_approved_reason;
+        }
+        if (payload.preview && typeof payload.preview === "object") {
+          entry.preview = payload.preview as ToolPreview;
+        }
+        out.push(entry);
       }
     } catch {
       // 损坏 payload 跳过
@@ -333,9 +388,26 @@ export const useChatStore = create<ChatState>((set, get) => {
       );
     },
 
-    finishAssistant: () => {
+    finishAssistant: (hallucination) => {
       // db 写由后端 PersistenceSink 在 ai:done 时完成
-      set((s) => patchActive(s, (c) => ({ ...c, streaming: false })));
+      set((s) =>
+        patchActive(s, (c) => {
+          if (!hallucination) return { ...c, streaming: false };
+          // 把警告挂到末条 assistant 上（气泡渲染时读它）。
+          // 倒序手写查找而不用 findLastIndex —— 后者要 ES2023 lib，项目 target 更低。
+          let idx = -1;
+          for (let i = c.messages.length - 1; i >= 0; i -= 1) {
+            if (c.messages[i].kind === "assistant") {
+              idx = i;
+              break;
+            }
+          }
+          if (idx < 0) return { ...c, streaming: false };
+          const next = [...c.messages];
+          next[idx] = { ...(next[idx] as AssistantMessage), hallucination };
+          return { ...c, streaming: false, messages: next };
+        }),
+      );
     },
 
     addToolCall: (entry) => {
@@ -378,6 +450,47 @@ export const useChatStore = create<ChatState>((set, get) => {
           },
         })),
       );
+    },
+
+    stopStreaming: (cid) => {
+      set((s) => {
+        const conversations = s.conversations.map((c) => {
+          if (c.id !== cid) return c;
+          const msgs = [...c.messages];
+          // 从尾部找最近一条 assistant（跟 appendAssistantDelta 同样的边界：
+          // 碰到 user 消息就停，避免误标到更早一轮的 assistant）。
+          for (let i = msgs.length - 1; i >= 0; i--) {
+            const m = msgs[i];
+            if (m.kind === "assistant") {
+              msgs[i] = { ...m, stopped: true };
+              break;
+            }
+            if (m.kind === "user") break;
+          }
+          return { ...c, messages: msgs, streaming: false };
+        });
+        return {
+          conversations,
+          ...mirrorActive(conversations, s.activeId),
+        };
+      });
+    },
+
+    retryLast: (cid) => {
+      set((s) => {
+        const conversations = s.conversations.map((c) => {
+          if (c.id !== cid) return c;
+          const msgs = [...c.messages];
+          if (msgs.length > 0 && msgs[msgs.length - 1].kind === "assistant") {
+            msgs.pop();
+          }
+          return { ...c, messages: msgs, error: null };
+        });
+        return {
+          conversations,
+          ...mirrorActive(conversations, s.activeId),
+        };
+      });
     },
 
     clearMessages: () => {

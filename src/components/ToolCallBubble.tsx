@@ -16,10 +16,15 @@ import {
   Wrench,
   X,
 } from "./icons";
+import DiffView from "./DiffView";
 import type { ToolCallEntry } from "../stores/chat";
+import type { ToolPreview } from "../lib/tauri";
 
 interface Props {
   entry: ToolCallEntry;
+  /** write_file / edit_file 的 diff 预览。AiSidebar 从 `entry.preview`（T-B4 已落盘
+   *  恢复）或实时 ai:tool_finished 事件透传下来；缺省时回退现有纯文本参数展示。 */
+  preview?: ToolPreview | null;
   /** 默认折叠（VS Code Copilot Chat 风格）；测试或外部需要可强制展开。 */
   defaultExpanded?: boolean;
 }
@@ -116,6 +121,16 @@ function truncate(s: string, max: number): string {
   return `${s.slice(0, max)}...`;
 }
 
+/**
+ * T-A3：工具耗时格式化。
+ * - < 1000ms → 整数毫秒，如 `850ms`
+ * - >= 1000ms → 一位小数秒，如 `1.2s`
+ */
+export function formatElapsed(ms: number): string {
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  return `${(ms / 1000).toFixed(1)}s`;
+}
+
 /** 状态 icon（小尺寸，inline 显示在右侧）。 */
 function StatusIcon({ status }: { status: ToolCallEntry["status"] }) {
   const { t } = useTranslation();
@@ -186,7 +201,7 @@ function prettyArgs(raw: string | undefined | null, noArgsLabel: string): string
  * - 错误状态自动展开 + 红框，方便用户立刻看错因
  * - 错误状态下用户仍可手动折叠（state 独立维护，shouldExpand = expanded || isError）
  */
-export default function ToolCallBubble({ entry, defaultExpanded }: Props) {
+export default function ToolCallBubble({ entry, preview, defaultExpanded }: Props) {
   const { t } = useTranslation();
   // 错误状态默认展开（让用户立刻看错因）
   const isError = entry.status === "error";
@@ -234,6 +249,17 @@ export default function ToolCallBubble({ entry, defaultExpanded }: Props) {
           </span>
         )}
         <span className="ml-auto flex shrink-0 items-center gap-1">
+          {/* T-A3：执行耗时（仅执行完成/出错且真实执行过 → elapsed_ms>0 时展示） */}
+          {typeof entry.elapsed_ms === "number" &&
+            entry.elapsed_ms > 0 &&
+            (entry.status === "done" || entry.status === "error") && (
+              <span
+                className="font-mono text-[10px] text-[var(--c-text-muted)]"
+                data-testid="tool-elapsed"
+              >
+                {formatElapsed(entry.elapsed_ms)}
+              </span>
+            )}
           <span
             className={`${statusColor} flex items-center gap-1`}
             role="status"
@@ -271,9 +297,17 @@ export default function ToolCallBubble({ entry, defaultExpanded }: Props) {
             <div className="mb-1 text-[var(--c-text-dim)]">
               {t("toolCallBubble.argsLabel")}
             </div>
-            <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all rounded bg-[var(--c-bg-base)] p-2 font-mono text-[11px] text-[var(--c-text-muted)]">
-              {prettyArgs(entry.args_preview, t("toolCallBubble.noArgs"))}
-            </pre>
+            {preview?.kind === "diff" ? (
+              <DiffView
+                path={preview.path}
+                oldText={preview.old_text}
+                newText={preview.new_text}
+              />
+            ) : (
+              <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all rounded bg-[var(--c-bg-base)] p-2 font-mono text-[11px] text-[var(--c-text-muted)]">
+                {prettyArgs(entry.args_preview, t("toolCallBubble.noArgs"))}
+              </pre>
+            )}
           </div>
 
           {entry.result && (
