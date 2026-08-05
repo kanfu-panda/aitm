@@ -2,6 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import ToolCallBubble, {
   formatArgsPreview,
+  formatElapsed,
   inferToolIcon,
 } from "../ToolCallBubble";
 import {
@@ -25,6 +26,56 @@ function makeEntry(overrides: Partial<ToolCallEntry> = {}): ToolCallEntry {
     ...overrides,
   } as ToolCallEntry;
 }
+
+describe("formatElapsed（T-A3）", () => {
+  it("< 1000ms 显示整数毫秒", () => {
+    expect(formatElapsed(0)).toBe("0ms");
+    expect(formatElapsed(850)).toBe("850ms");
+    expect(formatElapsed(999)).toBe("999ms");
+  });
+  it(">= 1000ms 显示一位小数秒", () => {
+    expect(formatElapsed(1000)).toBe("1.0s");
+    expect(formatElapsed(1234)).toBe("1.2s");
+    expect(formatElapsed(12500)).toBe("12.5s");
+  });
+});
+
+describe("ToolCallBubble 耗时展示（T-A3）", () => {
+  it("done 且 elapsed_ms>0 时状态行显示耗时", () => {
+    render(
+      <ToolCallBubble
+        entry={makeEntry({
+          status: "done",
+          elapsed_ms: 1234,
+          result: { content: "ok", is_error: false },
+        })}
+      />,
+    );
+    expect(screen.getByTestId("tool-elapsed")).toHaveTextContent("1.2s");
+  });
+
+  it("elapsed_ms 为 0（未执行路径）不显示耗时", () => {
+    render(
+      <ToolCallBubble
+        entry={makeEntry({
+          status: "error",
+          elapsed_ms: 0,
+          result: { content: "L1 黑名单拦截", is_error: true },
+        })}
+      />,
+    );
+    expect(screen.queryByTestId("tool-elapsed")).toBeNull();
+  });
+
+  it("running 态不显示耗时（尚未执行完）", () => {
+    render(
+      <ToolCallBubble
+        entry={makeEntry({ status: "running", elapsed_ms: 500 })}
+      />,
+    );
+    expect(screen.queryByTestId("tool-elapsed")).toBeNull();
+  });
+});
 
 describe("ToolCallBubble", () => {
   describe("折叠态（默认）", () => {
@@ -201,6 +252,51 @@ describe("ToolCallBubble", () => {
       render(<ToolCallBubble entry={makeEntry({ status: "running" })} />);
       fireEvent.click(screen.getByTestId("tool-call-toggle"));
       expect(screen.queryByLabelText("自动批准原因")).toBeNull();
+    });
+  });
+
+  // T-B3b：diff 预览接入
+  describe("diff 预览（write_file / edit_file preview）", () => {
+    it("preview.kind==='diff' 时展开区渲染 DiffView 取代参数纯文本", () => {
+      render(
+        <ToolCallBubble
+          entry={makeEntry({
+            name: "write_file",
+            args_preview: '{"path":"hello.txt","content":"hi"}',
+            status: "done",
+            result: { content: "已写入 1 行到 hello.txt", is_error: false },
+          })}
+          preview={{
+            kind: "diff",
+            path: "hello.txt",
+            old_text: "",
+            new_text: "hi",
+          }}
+        />,
+      );
+      fireEvent.click(screen.getByTestId("tool-call-toggle"));
+
+      expect(screen.getByTestId("diff-view")).toBeInTheDocument();
+      expect(screen.getByTestId("diff-view-path")).toHaveTextContent(
+        "hello.txt",
+      );
+      // 结果文本区仍保留（diff 只取代参数区）
+      expect(screen.getByText("已写入 1 行到 hello.txt")).toBeInTheDocument();
+    });
+
+    it("无 preview 时回退参数纯文本（不渲染 DiffView）", () => {
+      render(
+        <ToolCallBubble
+          entry={makeEntry({
+            status: "done",
+            result: { content: "hello world", is_error: false },
+          })}
+        />,
+      );
+      fireEvent.click(screen.getByTestId("tool-call-toggle"));
+
+      expect(screen.queryByTestId("diff-view")).toBeNull();
+      expect(screen.getByText(/"path": "src\/components"/)).toBeInTheDocument();
     });
   });
 });

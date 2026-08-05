@@ -4,9 +4,8 @@ use std::collections::VecDeque;
 #[cfg(unix)]
 use std::fs;
 use std::io::{Read, Write};
-#[cfg(unix)]
-use std::path::Path;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::thread;
 
@@ -18,6 +17,8 @@ use tempfile::TempDir;
 use tokio::sync::mpsc;
 use tokio::sync::Mutex;
 
+#[cfg(unix)]
+use super::shell_hook;
 use super::{default_shell, SessionConfig, SessionId};
 
 /// 每个 session 保留的输出 ring buffer 上限（字节）。
@@ -42,24 +43,26 @@ pub struct Session {
     /// 跟随用户当前所在目录而不是固定 HOME。
     /// `None`：portable-pty 没拿到 PID（理论不该发生，留 None 兼容）。
     shell_pid: Option<u32>,
-    /// zsh 启动用的临时 ZDOTDIR（仅 Unix + shell 是 zsh 时设；用于消除
-    /// PROMPT_SP 反白 % 标记 + 保留用户原 .zshrc 行为）。
+    /// 实际 spawn 的 shell 路径（`SessionConfig.shell` → `$SHELL` → 平台默认
+    /// 三级解析后的结果）。给 `run_command` 判断能否用 sentinel 包装拿退出码：
+    /// POSIX 系（sh/bash/zsh…）才包，cmd.exe / fish 不认 `eval` + `$?`，
+    /// 包了会直接破坏用户命令。详见 [`crate::session::sentinel::is_posix_shell`]。
+    shell: String,
+    /// shell 启动注入用的临时目录（仅 Unix + zsh/bash 时设）：
+    /// zsh 走 `ZDOTDIR/.zshrc`（消除 PROMPT_SP 反白 % + 挂 shell integration 钩子），
+    /// bash 走 `--rcfile`（挂钩子）。两者都**先 source 用户原配置**再追加。
     /// 字段持有所有权，session drop 时自动清理临时目录。
-    /// Windows 上没有 zsh 场景，整字段都 cfg(unix) 掉，避免 TempDir 类型未用警告。
+    /// Windows 上没有这两个 shell，整字段 cfg(unix) 掉，避免 TempDir 类型未用警告。
     #[cfg(unix)]
     #[allow(dead_code)]
-    zsh_zdotdir: Option<TempDir>,
-}
-
-/// 检测给定 shell 路径是不是 zsh（按 basename 判断，兼容 /bin/zsh / /usr/local/bin/zsh 等）。
-/// 只在 Unix 用：Windows 上不跑 zsh。
-#[cfg(unix)]
-fn is_zsh(shell: &str) -> bool {
-    Path::new(shell)
-        .file_name()
-        .and_then(|n| n.to_str())
-        .map(|n| n == "zsh")
-        .unwrap_or(false)
+    hook_tmpdir: Option<TempDir>,
+    /// shell integration 钩子是否**当前可用**。
+    ///
+    /// 初值 = 启动时是否成功写了注入文件；`run_command` 发现钩子实际没生效
+    /// （命令都写进去了却收不到 `aitm-exec` 标记）时会调 [`Self::disable_hook`]
+    /// 把它置 false，后续命令自动退回 sentinel 包装法 —— **绝不能出现"永远等不到
+    /// 标记、每条命令都熬到 120s 超时"** 的静默劣化。
+    hook_active: AtomicBool,
 }
 
 /// 给 zsh 启动准备临时 ZDOTDIR：写一个 wrapper .zshrc / .zshenv 先 source 用户
@@ -76,6 +79,9 @@ fn is_zsh(shell: &str) -> bool {
 /// 这样用户的 alias / functions / theme 都不受影响。
 ///
 /// **平台限制**：仅在 Unix 下调用（Windows 不跑 zsh；调用前用 cfg(unix) 围栏）。
+/// **v1.3.0 P1 增补**：同一个 wrapper 里再追加 shell integration 钩子片段
+/// （[`shell_hook::zsh_snippet`]），让 `run_command` 不必再改写用户命令就能拿退出码。
+/// 追加在 source 用户配置**之后**，保证 `precmd_functions` 前插不会被用户 rc 覆盖。
 #[cfg(unix)]
 fn prepare_zsh_zdotdir(cmd: &mut CommandBuilder) -> Result<TempDir> {
     // 用户原 ZDOTDIR 优先；否则 dirs::home_dir()（跨平台抽象，比直接读 HOME 稳）
@@ -92,8 +98,10 @@ fn prepare_zsh_zdotdir(cmd: &mut CommandBuilder) -> Result<TempDir> {
     let zshrc_content = format!(
         "# aitm 临时 ZDOTDIR — 先 source 用户原 .zshrc 再消除 PROMPT_SP 反白 % 标记\n\
          [[ -f \"{orig}/.zshrc\" ]] && source \"{orig}/.zshrc\"\n\
-         PROMPT_EOL_MARK=\"\"\n",
-        orig = original_dotdir
+         PROMPT_EOL_MARK=\"\"\n\
+         {hook}",
+        orig = original_dotdir,
+        hook = shell_hook::zsh_snippet(),
     );
     fs::write(tmp.path().join(".zshrc"), zshrc_content).context("写临时 .zshrc 失败")?;
 
@@ -106,6 +114,60 @@ fn prepare_zsh_zdotdir(cmd: &mut CommandBuilder) -> Result<TempDir> {
 
     cmd.env("ZDOTDIR", tmp.path());
     Ok(tmp)
+}
+
+/// 给 bash 启动准备临时 rcfile：先 source 用户原 `~/.bashrc`，再追加
+/// [`shell_hook::bash_snippet`] 的钩子。
+///
+/// **为什么用 `--rcfile`**：bash 没有 ZDOTDIR 这种"整个配置目录换掉"的机制，
+/// 交互式非登录 shell 只读 `~/.bashrc`；`--rcfile <路径>` 正是替换这一个文件的
+/// 官方开关（VS Code shell integration 同样走它）。wrapper 第一行就 source 用户
+/// 原 `~/.bashrc`，所以 alias / 提示符 / 补全全都保持原样。
+///
+/// PTY 起的 bash 本来就是交互式非登录 shell（stdin/stderr 是 tty、不带 `-l`），
+/// 所以行为等价于默认，只是多了钩子。
+#[cfg(unix)]
+fn prepare_bash_rcfile(cmd: &mut CommandBuilder) -> Result<TempDir> {
+    let home = dirs::home_dir()
+        .and_then(|p| p.to_str().map(|s| s.to_string()))
+        .unwrap_or_default();
+
+    let tmp = TempDir::new().context("创建临时 bash rcfile 目录失败")?;
+    let rc_path = tmp.path().join("aitm-bashrc");
+
+    let rc_content = format!(
+        "# aitm 临时 bash rcfile — 先 source 用户原 .bashrc 再挂 shell integration 钩子\n\
+         [ -f \"{home}/.bashrc\" ] && . \"{home}/.bashrc\"\n\
+         {hook}",
+        home = home,
+        hook = shell_hook::bash_snippet(),
+    );
+    fs::write(&rc_path, rc_content).context("写临时 bash rcfile 失败")?;
+
+    cmd.arg("--rcfile");
+    cmd.arg(&rc_path);
+    Ok(tmp)
+}
+
+/// 按 shell 类型注入启动文件，返回 (临时目录所有权, 钩子是否装上)。
+///
+/// 注入失败不致命：返回 `false`，`run_command` 会退回 sentinel 包装法。
+#[cfg(unix)]
+fn setup_shell_hook(shell: &str, cmd: &mut CommandBuilder) -> (Option<TempDir>, bool) {
+    let prepared = match shell_hook::detect(shell) {
+        Some(shell_hook::HookShell::Zsh) => prepare_zsh_zdotdir(cmd),
+        Some(shell_hook::HookShell::Bash) => prepare_bash_rcfile(cmd),
+        // fish / sh / dash 等没有统一的钩子机制 → 继续走包装法
+        None => return (None, false),
+    };
+    match prepared {
+        Ok(tmp) => (Some(tmp), true),
+        Err(e) => {
+            // 临时目录创建失败不致命：zsh 会重新显示反白 %，退出码检测退回包装法
+            tracing::warn!("准备 shell 启动注入失败，退回包装法: {e}");
+            (None, false)
+        }
+    }
 }
 
 /// v0.9.1 HR3-1：把上次会话的 last_cwd 字符串解析成实际 PTY 启动目录。
@@ -183,21 +245,13 @@ impl Session {
         // 中文输入法 EM DASH 等 UTF-8 多字节字符显示成 <00XX> escape。
         ensure_utf8_locale(&mut cmd);
 
-        // zsh-only：临时 ZDOTDIR 注入消除启动时左上角的反白 % 标记。
-        // Windows 上不跑 zsh，整个分支 cfg(unix) 跳过。
+        // Unix：给 zsh / bash 注入临时启动文件（zsh 顺带消除启动时左上角的反白 %，
+        // 两者都挂 shell integration 钩子给 run_command 拿退出码）。
+        // Windows 上不跑这两个 shell，整个分支 cfg(unix) 跳过。
         #[cfg(unix)]
-        let zsh_zdotdir = if is_zsh(&shell) {
-            match prepare_zsh_zdotdir(&mut cmd) {
-                Ok(t) => Some(t),
-                Err(e) => {
-                    // 临时目录创建失败不致命，回退到不改 ZDOTDIR（用户能看到 % 但不影响功能）
-                    tracing::warn!("准备 zsh ZDOTDIR 失败，回退默认行为: {e}");
-                    None
-                }
-            }
-        } else {
-            None
-        };
+        let (hook_tmpdir, hook_installed) = setup_shell_hook(&shell, &mut cmd);
+        #[cfg(not(unix))]
+        let hook_installed = false;
 
         let mut child = pair
             .slave
@@ -243,9 +297,30 @@ impl Session {
             master: Arc::new(Mutex::new(pair.master)),
             buffer,
             shell_pid,
+            shell,
             #[cfg(unix)]
-            zsh_zdotdir,
+            hook_tmpdir,
+            hook_active: AtomicBool::new(hook_installed),
         })
+    }
+
+    /// shell integration 钩子当前是否可用（决定 `run_command` 走"命令不改写"模式
+    /// 还是退回 sentinel 包装法）。
+    pub fn hook_active(&self) -> bool {
+        self.hook_active.load(Ordering::Relaxed)
+    }
+
+    /// 标记钩子失效：命令写进去了却收不到 `aitm-exec` 标记（用户 rc 覆盖了钩子、
+    /// 前台还挂着别的程序等）。之后这个 session 的命令自动退回包装法，
+    /// 不会一条条熬到 120s 超时。
+    pub fn disable_hook(&self) {
+        self.hook_active.store(false, Ordering::Relaxed);
+    }
+
+    /// 钩子被判失效后，若后来又在缓冲区里看到钩子标记，说明只是当时被前台程序
+    /// 挡了一下 —— 重新启用，避免会话被永久钉在"有回显噪音"的包装法上。
+    pub fn enable_hook(&self) {
+        self.hook_active.store(true, Ordering::Relaxed);
     }
 
     /// 启动时记下的 shell 子进程 PID。`None`：portable-pty 没拿到 PID
@@ -253,6 +328,11 @@ impl Session {
     /// 之类的查询用。
     pub fn shell_pid(&self) -> Option<u32> {
         self.shell_pid
+    }
+
+    /// 实际 spawn 的 shell 路径。给 `run_command` 判断能否安全注入 sentinel。
+    pub fn shell(&self) -> &str {
+        &self.shell
     }
 
     /// 实时查 shell 进程的当前 cwd（用户在 PTY 里 cd 后会反映到这）。
@@ -418,21 +498,8 @@ mod ring_buffer_tests {
 }
 
 #[cfg(all(test, unix))]
-mod zsh_zdotdir_tests {
+mod shell_hook_inject_tests {
     use super::*;
-
-    #[test]
-    fn is_zsh_basename_检测() {
-        assert!(is_zsh("/bin/zsh"));
-        assert!(is_zsh("/usr/local/bin/zsh"));
-        assert!(is_zsh("zsh"));
-        assert!(!is_zsh("/bin/bash"));
-        assert!(!is_zsh("/usr/local/bin/fish"));
-        assert!(!is_zsh("/bin/sh"));
-        // 真假识别防误判：zshrc 不是 zsh，含 zsh 子串但 basename 不等
-        assert!(!is_zsh("/bin/zshrc"));
-        assert!(!is_zsh("/bin/myzsh"));
-    }
 
     #[test]
     fn prepare_zsh_zdotdir_写入_zshrc_含_prompt_eol_mark() {
@@ -448,6 +515,88 @@ mod zsh_zdotdir_tests {
         // .zshenv 也要存在以保证 zsh 启动时透传环境变量
         let zshenv = fs::read_to_string(tmp.path().join(".zshenv")).unwrap();
         assert!(zshenv.contains(".zshenv"));
+    }
+
+    /// v1.3.0 P1：zsh wrapper 里要带上 shell integration 钩子，
+    /// 且必须排在 source 用户 .zshrc **之后**（否则 precmd 前插会被用户 rc 冲掉）。
+    #[test]
+    fn zsh_wrapper_追加钩子且在_source_用户配置之后() {
+        let mut cmd = CommandBuilder::new("/bin/zsh");
+        let tmp = prepare_zsh_zdotdir(&mut cmd).unwrap();
+        let zshrc = fs::read_to_string(tmp.path().join(".zshrc")).unwrap();
+
+        assert!(zshrc.contains("__aitm_precmd"), "实际 zshrc:\n{zshrc}");
+        let source_pos = zshrc.find("source").unwrap();
+        let hook_pos = zshrc.find("__aitm_precmd").unwrap();
+        assert!(hook_pos > source_pos, "钩子必须追加在用户配置之后");
+    }
+
+    /// bash 走 `--rcfile`：wrapper 先 source 用户 ~/.bashrc 再挂钩子，
+    /// 并把 `--rcfile <路径>` 加到启动参数上。
+    #[test]
+    fn prepare_bash_rcfile_写入_wrapper_并挂参数() {
+        let mut cmd = CommandBuilder::new("/bin/bash");
+        let tmp = prepare_bash_rcfile(&mut cmd).unwrap();
+        let rc_path = tmp.path().join("aitm-bashrc");
+
+        let rc = fs::read_to_string(&rc_path).unwrap();
+        assert!(rc.contains(".bashrc"), "必须 source 用户原 .bashrc:\n{rc}");
+        assert!(rc.contains("__aitm_report"), "实际 rcfile:\n{rc}");
+        let source_pos = rc.find(".bashrc").unwrap();
+        let hook_pos = rc.find("__aitm_report").unwrap();
+        assert!(hook_pos > source_pos, "钩子必须追加在用户配置之后");
+
+        let args: Vec<String> = cmd
+            .get_argv()
+            .iter()
+            .map(|a| a.to_string_lossy().to_string())
+            .collect();
+        assert!(args.iter().any(|a| a == "--rcfile"), "实际 argv：{args:?}");
+        assert!(
+            args.iter().any(|a| a == &rc_path.to_string_lossy()),
+            "实际 argv：{args:?}"
+        );
+    }
+
+    /// 钩子只给 zsh / bash 装；其它 shell 一律不注入（走包装法兜底）。
+    #[test]
+    fn setup_shell_hook_只对_zsh_bash_生效() {
+        for shell in ["/bin/zsh", "/bin/bash"] {
+            let mut cmd = CommandBuilder::new(shell);
+            let (tmp, ok) = setup_shell_hook(shell, &mut cmd);
+            assert!(ok, "{shell} 应装上钩子");
+            assert!(tmp.is_some());
+        }
+        for shell in ["/bin/sh", "/bin/dash", "/usr/local/bin/fish"] {
+            let mut cmd = CommandBuilder::new(shell);
+            let (tmp, ok) = setup_shell_hook(shell, &mut cmd);
+            assert!(!ok, "{shell} 不该装钩子");
+            assert!(tmp.is_none());
+            assert!(
+                cmd.get_argv().len() == 1,
+                "不支持的 shell 不该被加启动参数：{:?}",
+                cmd.get_argv()
+            );
+        }
+    }
+
+    /// fallback 链的状态位：装上 = active；disable 后 = false；enable 可恢复。
+    #[tokio::test]
+    async fn hook_active_状态位可降级也可恢复() {
+        let cfg = SessionConfig {
+            shell: Some("/bin/sh".to_string()),
+            cols: 80,
+            rows: 24,
+            ..Default::default()
+        };
+        let s = Session::spawn(cfg).unwrap();
+        // /bin/sh 没有钩子机制 → 一开始就是 false
+        assert!(!s.hook_active(), "/bin/sh 不该被认为有钩子");
+        s.enable_hook();
+        assert!(s.hook_active());
+        s.disable_hook();
+        assert!(!s.hook_active());
+        let _ = s.write(b"exit\n").await;
     }
 }
 

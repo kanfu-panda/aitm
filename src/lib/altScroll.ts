@@ -9,6 +9,15 @@
  *
  * 仅在「备用屏 + 应用未开启鼠标追踪」时生效（应用开了鼠标追踪时滚轮走鼠标上报，
  * 交给应用，跟 iTerm 的 alternate-scroll 语义一致）。
+ *
+ * ⚠️ v1.3.0 P10 教训：这里两个入参（buffer type / mouseTrackingMode）都是
+ * **xterm 实例的活状态**，由 PTY 发来的 `ESC[?1049h`、`ESC[?1006h` 等序列一次性
+ * 建立。序列被哪个实例消费就存在哪个实例里 —— 一旦 React 重建了 `TerminalView`
+ * （新 `Terminal()`），这些模式全部复位成"普通屏 + 无鼠标追踪"，而 PTY 侧的 TUI
+ * 毫不知情、也不会重发（Claude Code 只在 SIGWINCH 时重绘内容）。结果就是滚轮
+ * 不再转方向键，用户表现为"终端突然滚不动了"。
+ * 所以**终端子树绝不能因为布局变化被 unmount**，详见 App.tsx `CentralMainArea`
+ * 注释 + `src/components/__tests__/TerminalMountPersistence.test.tsx`。
  */
 
 /** DOM WheelEvent.deltaMode 的 line 档位常量（避免依赖 WheelEvent 全局）。 */

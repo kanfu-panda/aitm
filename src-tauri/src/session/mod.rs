@@ -14,6 +14,8 @@ pub mod osc_parser;
 pub mod platform;
 pub mod ports;
 pub mod pty_session;
+pub mod sentinel;
+pub mod shell_hook;
 pub mod snapshot;
 
 pub use platform::default_shell;

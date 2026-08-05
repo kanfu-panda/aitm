@@ -1,5 +1,5 @@
-import { fireEvent, render, screen } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../../lib/tauri", () => ({
   browserOpenTab: vi.fn(),
@@ -17,6 +17,7 @@ import {
   browserNavigate,
   browserPanelCloseAll,
   browserSetActive,
+  browserSetBounds,
 } from "../../lib/tauri";
 import { useBrowserStore } from "../../stores/browser";
 import BrowserNavButtons from "../browser/BrowserNavButtons";
@@ -28,6 +29,7 @@ const mockClose = browserCloseTab as unknown as ReturnType<typeof vi.fn>;
 const mockNav = browserNavigate as unknown as ReturnType<typeof vi.fn>;
 const mockSetActive = browserSetActive as unknown as ReturnType<typeof vi.fn>;
 const mockCloseAll = browserPanelCloseAll as unknown as ReturnType<typeof vi.fn>;
+const mockSetBounds = browserSetBounds as unknown as ReturnType<typeof vi.fn>;
 
 function seedTabs(
   tabs: Array<{
@@ -58,9 +60,113 @@ function seedTabs(
 
 beforeEach(() => {
   useBrowserStore.setState({ panelOpen: false, tabs: [], activeKey: null });
-  for (const m of [mockClose, mockNav, mockSetActive, mockCloseAll]) {
+  for (const m of [mockClose, mockNav, mockSetActive, mockCloseAll, mockSetBounds]) {
     m.mockClear();
   }
+});
+
+/* ===========================================================================
+ * v1.3.0 R3b：webview bounds 上报的时序回归网
+ * ---------------------------------------------------------------------------
+ * child webview 创建时只能用占位尺寸 800×600（后端拿不到前端布局）。占位一旦
+ * 没被真实尺寸覆盖，网页就永远按 800 宽布局，面板拖多窄都只是被裁剪不重排。
+ * 而 `openTab` 是异步的——webview 先建好、`tab.id` 后回填，上报 effect 又是靠
+ * `activeTabId` 变化才重跑，中间存在"webview 已存在但前端还没拿到 id"的窗口。
+ * 这里锁死：**id 一旦就绪，必然发生一次真实尺寸上报**。
+ * ======================================================================== */
+
+/** jsdom 的 getBoundingClientRect 恒返 0；这里桩成一块窄面板（模拟拖窄后的宽度）。 */
+const NARROW_RECT = { x: 12, y: 100, width: 370, height: 500 };
+type Rect = ReturnType<HTMLElement["getBoundingClientRect"]>;
+let rectSpy: ReturnType<typeof vi.spyOn> | null = null;
+
+function makeRect(x: number, y: number, width: number, height: number): Rect {
+  return {
+    x,
+    y,
+    width,
+    height,
+    top: y,
+    left: x,
+    right: x + width,
+    bottom: y + height,
+    toJSON: () => ({}),
+  } as Rect;
+}
+
+function stubNarrowPanelRect() {
+  rectSpy = vi
+    .spyOn(HTMLElement.prototype, "getBoundingClientRect")
+    .mockReturnValue(
+      makeRect(
+        NARROW_RECT.x,
+        NARROW_RECT.y,
+        NARROW_RECT.width,
+        NARROW_RECT.height,
+      ),
+    );
+}
+
+afterEach(() => {
+  rectSpy?.mockRestore();
+  rectSpy = null;
+});
+
+describe("BrowserPanel bounds 上报", () => {
+  it("tab id 就绪时立即用容器真实尺寸上报一次（webview 不会停在占位 800×600）", () => {
+    stubNarrowPanelRect();
+    seedTabs([{ key: "a", id: "wv-a" }], "a");
+    render(<BrowserPanel />);
+
+    expect(mockSetBounds).toHaveBeenCalled();
+    // 每一次上报都是真实尺寸；占位宽度 800 绝不会被上报
+    for (const [tabId, bounds] of mockSetBounds.mock.calls) {
+      expect(tabId).toBe("wv-a");
+      expect(bounds.w).toBe(NARROW_RECT.width);
+      expect(bounds.h).toBe(NARROW_RECT.height);
+      expect(bounds.w).not.toBe(800);
+    }
+  });
+
+  it("id 还没回填（loading）时不上报；id 回填后必有一次真实尺寸上报", () => {
+    stubNarrowPanelRect();
+    // 复刻 openTab 的中间态：占位 tab 已入 store，后端 tab_id 还没回来
+    seedTabs([{ key: "a", id: null, state: "loading" }], "a");
+    render(<BrowserPanel />);
+    expect(mockSetBounds).not.toHaveBeenCalled();
+
+    // 后端返回 tab_id → 回填
+    act(() => {
+      useBrowserStore.setState((s) => ({
+        tabs: s.tabs.map((t) =>
+          t.key === "a" ? { ...t, id: "wv-a", state: "active" as const } : t,
+        ),
+      }));
+    });
+
+    expect(mockSetBounds).toHaveBeenCalled();
+    const [tabId, bounds] = mockSetBounds.mock.calls.at(-1)!;
+    expect(tabId).toBe("wv-a");
+    expect(bounds.w).toBe(NARROW_RECT.width);
+  });
+
+  it("面板拖窄（容器尺寸变化）后，最后一次上报用的是新宽度", async () => {
+    stubNarrowPanelRect();
+    seedTabs([{ key: "a", id: "wv-a" }], "a");
+    render(<BrowserPanel />);
+    mockSetBounds.mockClear();
+
+    // 模拟拖动后容器变得更窄 + window resize 事件触发重报
+    rectSpy?.mockReturnValue(makeRect(12, 100, 220, 500));
+    // 距上次上报不足 16ms → 被节流合并到下一帧；等一帧确认补发确实发生
+    await act(async () => {
+      window.dispatchEvent(new Event("resize"));
+      await new Promise<void>((r) => requestAnimationFrame(() => r()));
+    });
+
+    const [, bounds] = mockSetBounds.mock.calls.at(-1)!;
+    expect(bounds.w).toBe(220);
+  });
 });
 
 describe("BrowserPanel", () => {

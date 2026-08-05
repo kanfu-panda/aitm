@@ -30,6 +30,8 @@ import type {
 // 暴露一个共享的 setLayout spy + 可控的 getLayout 返回值，让 test 直接读 / 改。
 const setLayoutSpy = vi.fn<(layout: number[]) => void>();
 let nextGetLayoutValue: number[] = [55, 45];
+/** mock PanelGroup 收到的 onLayout（测试用它模拟库的布局变化回调）。 */
+let lastOnLayout: ((layout: number[]) => void) | null = null;
 
 function setNextGetLayout(v: number[]) {
   nextGetLayoutValue = v;
@@ -50,6 +52,9 @@ vi.mock("react-resizable-panels", () => {
       }),
       [props.autoSaveId],
     );
+    // 把 onLayout 暴露出来：真库在 autoSave 恢复 / 用户拖动后都会调它，
+    // 测试要靠它模拟"effect 跑完之后布局才被恢复成 [0,100]"这个真实时序。
+    lastOnLayout = props.onLayout ?? null;
     return <div data-testid="mock-panel-group">{props.children}</div>;
   });
   const Panel = (props: PanelProps & { children?: ReactNode }) => (
@@ -120,12 +125,17 @@ beforeEach(() => {
 });
 
 describe("CentralMainArea v0.10.6 T3 maximize regression", () => {
-  it("fileEditorActive=false → 不渲染 PanelGroup，只渲染纯终端容器", () => {
+  // v1.3.0 P10 起 PanelGroup 常驻（条件 unmount 会重建 xterm 实例 →
+  // 备用屏状态丢失 → 关掉预览后终端滚不动，见 TerminalMountPersistence.test.tsx）。
+  // 预览收起时只卸掉「分割条 + 编辑器 Panel」，终端 Panel 原地保活。
+  it("fileEditorActive=false → PanelGroup 仍在，只剩终端 Panel", () => {
     const { queryByTestId } = render(
       <CentralMainArea fileEditorActive={false} />,
     );
-    expect(queryByTestId("mock-panel-group")).toBeNull();
-    // 纯终端分支仍有 LayoutNodeRendererRoot
+    expect(queryByTestId("mock-panel-group")).not.toBeNull();
+    expect(queryByTestId("mock-panel-terminal")).not.toBeNull();
+    expect(queryByTestId("mock-panel-editor")).toBeNull();
+    expect(queryByTestId("mock-panel-handle")).toBeNull();
     expect(queryByTestId("mock-layout-renderer")).not.toBeNull();
   });
 
@@ -184,13 +194,70 @@ describe("CentralMainArea v0.10.6 T3 maximize regression", () => {
     expect(setLayoutSpy).toHaveBeenLastCalledWith([55, 45]);
   });
 
-  it("fileEditorActive false→true 切换不调 setLayout（effect 在 false 早退）", () => {
-    const { rerender } = render(
-      <CentralMainArea fileEditorActive={false} />,
-    );
+  it("fileEditorActive false→true 且比例正常时不动布局（保留用户拖过的比例）", () => {
+    // v1.3.0 真机回归修复：原来这里无条件 setLayout([55, 45])，会把用户拖过的比例
+    // 冲掉。现在只在检测到"异常塌陷"时才纠正，正常比例一律保留。
+    nextGetLayoutValue = [70, 30]; // 用户自己拖成 70/30
+    const { rerender } = render(<CentralMainArea fileEditorActive={false} />);
     expect(setLayoutSpy).not.toHaveBeenCalled();
     rerender(<CentralMainArea fileEditorActive={true} />);
-    // mount 时 maximized=false 且无 preMax → effect 走 else 分支 setLayout([55, 45])
+    expect(setLayoutSpy).not.toHaveBeenCalled();
+  });
+
+  it("fileEditorActive false→true 时自愈 autoSave 残留的 maximize 布局", () => {
+    // 🔴 真机回归：P10 让 PanelGroup 常驻后，autoSaveId 把 maximize 时的 [0, 100]
+    // 持久化下来，下次打开预览就"一进来占满全屏"，双击 maximize 反而掰回分屏。
+    // 非 maximize 态下终端被压到近 0 只可能是残留，必须自愈回默认分屏。
+    nextGetLayoutValue = [0, 100];
+    const { rerender } = render(<CentralMainArea fileEditorActive={false} />);
+    rerender(<CentralMainArea fileEditorActive={true} />);
     expect(setLayoutSpy).toHaveBeenLastCalledWith([55, 45]);
+  });
+});
+
+describe("CentralMainArea v1.3.0 布局守卫（autoSave 恢复晚于 effect）", () => {
+  it("autoSave 在 effect 之后把布局恢复成 [0,100] → onLayout 守卫纠正回 55/45", () => {
+    // 🔴 这正是真机回归两次都没修好的时序：
+    // effect 里 getLayout() 读到的还是正常值（55/45），检查通过什么也不做；
+    // 之后库才从 localStorage 把上次 maximize 存的 [0,100] 恢复上去 →
+    // 用户看到"一打开预览终端就没了"。onLayout 是唯一能兜住这一刻的钩子。
+    render(<CentralMainArea fileEditorActive={true} />);
+    setLayoutSpy.mockClear();
+
+    act(() => {
+      lastOnLayout?.([0, 100]); // 模拟 autoSave 恢复
+    });
+    expect(setLayoutSpy).toHaveBeenCalledWith([55, 45]);
+  });
+
+  it("maximize 态下 onLayout([0,100]) 不纠正（那是用户要的全屏）", () => {
+    useFileEditorStore.setState({ maximized: true });
+    render(<CentralMainArea fileEditorActive={true} />);
+    setLayoutSpy.mockClear();
+
+    act(() => {
+      lastOnLayout?.([0, 100]);
+    });
+    expect(setLayoutSpy).not.toHaveBeenCalled();
+  });
+
+  it("正常比例的 onLayout 不触发纠正（不干扰用户拖动）", () => {
+    render(<CentralMainArea fileEditorActive={true} />);
+    setLayoutSpy.mockClear();
+
+    act(() => {
+      lastOnLayout?.([70, 30]);
+    });
+    expect(setLayoutSpy).not.toHaveBeenCalled();
+  });
+
+  it("预览未打开时不纠正（只剩终端 Panel，布局本就是 [100]）", () => {
+    render(<CentralMainArea fileEditorActive={false} />);
+    setLayoutSpy.mockClear();
+
+    act(() => {
+      lastOnLayout?.([0, 100]);
+    });
+    expect(setLayoutSpy).not.toHaveBeenCalled();
   });
 });

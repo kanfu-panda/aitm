@@ -294,10 +294,26 @@ export interface AiTokenEvent {
   text: string;
 }
 
+/** 完成声明的类别（后端 `ClaimCategory`，snake_case 序列化）。 */
+export type ClaimCategory = "browser" | "file" | "command";
+
+/**
+ * 结构性幻觉警告：回复声称做了某类操作，但本轮一个对应工具都没调。
+ *
+ * 真机反复出现（DeepSeek Chat）：说「已跳转到 GitHub ✅」却没有任何工具气泡。
+ * system prompt 里的反幻觉铁律堵不住（v1.3.0 把 skills 清单从 20KB 瘦到 379 字节
+ * 排除"长 prompt 冲淡"后照样谎报），所以改由后端结构性检测 + UI 明确标出。
+ */
+export interface HallucinationWarning {
+  missing: ClaimCategory[];
+}
+
 export interface AiDoneEvent {
   conversation_id: string;
   stop_reason: string;
   usage: { input_tokens: number; output_tokens: number } | null;
+  /** 有值 = 这条回复的"已完成"声明与实际工具调用对不上。 */
+  hallucination?: HallucinationWarning | null;
 }
 
 export interface AiErrorEvent {
@@ -373,6 +389,16 @@ export async function onAiError(
 /** 风险等级，跟 src-tauri/src/tools/mod.rs 的 RiskClass 一一对应。 */
 export type RiskClass = "low" | "high" | "destructive";
 
+/** T-B3a：工具「将要做的改动」的结构化 diff 预览，跟后端 `tools::ToolPreview` 对齐。
+ *  当前只有 `kind === "diff"`（write_file / edit_file 产出）；其余工具无 preview。
+ *  ConfirmDialog 用它渲染 diff 取代纯文本 args_preview；ToolCallBubble 历史回看用。 */
+export interface ToolPreview {
+  kind: string;
+  path: string;
+  old_text: string;
+  new_text: string;
+}
+
 /** 工具调用申请（仅 High / Destructive 触发，Low 自动批准跳过）。 */
 export interface AiToolRequestEvent {
   conversation_id: string;
@@ -383,6 +409,8 @@ export interface AiToolRequestEvent {
   risk: RiskClass;
   /** L2 启发式给出的归类原因（仅 run_command 走 L2 时有值；如 "L2：sudo 提权"）。 */
   risk_reason?: string | null;
+  /** T-B3a：diff 预览（write_file / edit_file 有值，其余工具缺省）。 */
+  preview?: ToolPreview | null;
 }
 
 export interface AiToolStartedEvent {
@@ -397,14 +425,27 @@ export interface AiToolFinishedEvent {
   /** 工具回执给 LLM 的内容（成功输出或错误描述）。 */
   content: string;
   is_error: boolean;
+  /** T-A3：工具执行耗时（毫秒）。未执行路径（黑名单拦截 / 拒绝 / 未知工具）恒为 0。 */
+  elapsed_ms: number;
   /** 自动批准的原因（"L2：只读命令 ls" / "白名单：git status \*"）；
    * 走过 ask_user 弹窗的留 None。前端在 ToolCallBubble 上展示徽章。 */
   auto_approved_reason?: string | null;
+  /** T-B3a：同 AiToolRequestEvent.preview，历史气泡回看 diff 用。 */
+  preview?: ToolPreview | null;
 }
 
-/** 用户批准某个工具调用，喂回后端 tool loop。 */
-export async function aiToolApprove(callId: string): Promise<void> {
-  await invoke("ai_tool_approve", { callId });
+/**
+ * 用户批准某个工具调用，喂回后端 tool loop。
+ *
+ * v1.3.0 A1：`remember = true`（用户点「本会话都允许」）时，该工具在当前会话内
+ * 后续调用自动放行（后端内存态，进程重启即清空）。DESTRUCTIVE 永不适用——
+ * 前端不给按钮，后端也会兜底拒绝记账。
+ */
+export async function aiToolApprove(
+  callId: string,
+  remember = false,
+): Promise<void> {
+  await invoke("ai_tool_approve", { callId, remember });
 }
 
 /** 用户拒绝某个工具调用。 */
@@ -1048,9 +1089,20 @@ export async function browserNavigate(tabId: string, url: string): Promise<void>
   await invoke("browser_navigate", { tabId, url });
 }
 
-/** 把指定 tab show，其余 hide（多 webview 没有 z-index）。 */
+/** 把指定 tab show，其余 hide（多 webview 没有 z-index）。
+ *
+ *  v1.3.0 P7：后端没有这个 webview / show 失败时会 **reject**（旧版静默成功），
+ *  调用方必须处理，别再 `catch {}` 吞掉 —— 那正是 ghost webview 的源头。 */
 export async function browserSetActive(tabId: string): Promise<void> {
   await invoke("browser_set_active", { tabId });
+}
+
+/** v1.3.0 P7：告诉后端"前端也不确定哪个 tab 可见了"，清空后端 active 记录。
+ *
+ *  清空后 AI 的浏览器工具会明确报错并引导重新 browser_open，而不是拿着过期
+ *  的 active id 去操作一个用户看不见的 webview。 */
+export async function browserClearActive(): Promise<void> {
+  await invoke("browser_clear_active");
 }
 
 /** 重设 webview 的 position + size；ResizeObserver 60fps 节流上报。 */
@@ -1123,6 +1175,36 @@ export async function onBrowserUrlChanged(
   return await listen<BrowserUrlChangedEvent>("browser:url_changed", (e) =>
     cb(e.payload),
   );
+}
+
+/** v1.2.0 T-B3：后端（AI 的 `browser_open` / `browser_navigate` 工具）请求前端
+ *  打开浏览器面板。后端建不了 tab —— `browser_open_tab` 需要 bounds，而 bounds
+ *  只有前端布局算得出，所以走这条反向通道。 */
+export interface BrowserOpenRequestedEvent {
+  request_id: string;
+  /** 打开后要导航到的 URL；null → 开 about:blank。 */
+  url: string | null;
+}
+
+/** 监听 AI 请求打开浏览器面板。**必须在常驻组件订阅**（面板收起时 BrowserPanel
+ *  不渲染，不能由它订阅）；当前挂在 App.tsx 顶层。 */
+export async function onBrowserOpenRequested(
+  cb: (e: BrowserOpenRequestedEvent) => void,
+): Promise<UnlistenFn> {
+  return await listen<BrowserOpenRequestedEvent>("browser:open_requested", (e) =>
+    cb(e.payload),
+  );
+}
+
+/** v1.2.0 T-B3：把"面板开没开成"回报给后端等待中的 AI 工具。
+ *  失败也**必须**报（ok=false + error），否则工具要死等 10s 超时。 */
+export async function browserOpenResult(
+  requestId: string,
+  ok: boolean,
+  tabId: string | null,
+  error: string | null,
+): Promise<void> {
+  await invoke("browser_open_result", { requestId, ok, tabId, error });
 }
 
 /** v0.9.0 T3：后端 OSC 7 解析出 shell 新 cwd 时发的事件。 */

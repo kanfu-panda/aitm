@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { trackEvent } from "../lib/analytics";
 import {
+  browserClearActive,
   browserCloseTab,
   browserNavigate,
   browserOpenTab,
@@ -63,6 +64,16 @@ interface BrowserState {
   tabs: BrowserTab[];
   /** 当前 active tab 的 key（不是 id；id 在 suspend/resume 时会变）。 */
   activeKey: string | null;
+  /**
+   * v1.3.0 P7：前端 `activeKey` 与后端 `current_active_id` 失步的原因；
+   * `null` = 已同步。
+   *
+   * 后端"以为的 active tab"跟用户视觉看到的不是同一个，就是 ghost webview
+   * （AI 操作了一个用户看不见的页面）。所以 set_active 失败**绝不静默吞**：
+   * 重试仍失败就写这里 + 调 [`browserClearActive`] 让后端宁可不知道。
+   * AI 开面板路径（`lib/browserOpenRequest.ts`）见到非 null 会直接回报失败。
+   */
+  activeSyncError: string | null;
 
   // ===== 面板级 actions =====
 
@@ -124,6 +135,15 @@ interface BrowserState {
   /** 主动 resume 一个 suspended tab：重建 webview + 恢复滚动。 */
   resumeTab: (key: string, bounds: BrowserBounds) => Promise<void>;
 
+  /**
+   * v1.3.0 P7：把"当前 activeKey 对应的 webview"重新同步给后端。
+   *
+   * 用在 dialog 关闭后（`useBrowserModalGuard`）——后端 `show_all_active` 只
+   * 恢复它自己认为的 active，前端这边再断言一次，两边不一致时立刻掰正。
+   * 没有任何 tab 时不发任何 IPC（多数 dialog 场景根本没开浏览器）。
+   */
+  reassertActive: () => Promise<void>;
+
   // ===== 标记类（仅改 store） =====
 
   /** 切换 pin 状态。 */
@@ -143,10 +163,92 @@ function nextKey(): string {
   return `btab-${keyCounter}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+/* ===========================================================================
+ * v1.3.0 P7：前后端 active tab 同步（ghost webview 防线）
+ * ---------------------------------------------------------------------------
+ * 真机 bug：面板显示 baidu.com，AI 的 browser_eval 拿到的却是 GitHub —— 存在
+ * 一个用户看不见、AI 却在操作的 webview。根因之一就是这里原来把
+ * `browserSetActive` 的失败 `catch {}` 静默吞了：后端 `current_active_id` 停在
+ * 旧 tab，前端 UI 却已经切走，两边默默分叉。
+ *
+ * 现在的约定：**同步失败可以接受，状态默默分叉不行**。
+ * ======================================================================== */
+
+/** 同步结果：ok = 后端已确认；gone = 后端说这个 webview 没了；failed = 同步不上。 */
+type ActiveSyncResult = "ok" | "gone" | "failed";
+
+/** 后端 `apply_set_active` 报"这个 webview 不存在"的特征文案。 */
+function isTabGoneError(e: unknown): boolean {
+  const msg = e instanceof Error ? e.message : String(e);
+  return msg.includes("不存在") || msg.includes("suspend");
+}
+
+function errText(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
+/**
+ * 把"用户当前看的是这个 webview"同步给后端，失败不静默。
+ *
+ * - 第一次失败若是"webview 已不存在" → 直接返 `gone`（重试没意义，交给调用方自愈）
+ * - 其它失败 → 重试一次（IPC 抖动 / race）
+ * - 仍失败 → 返 `failed`，调用方负责调 [`clearBackendActive`] + 记 `activeSyncError`
+ */
+async function pushActiveToBackend(tabId: string): Promise<ActiveSyncResult> {
+  try {
+    await browserSetActive(tabId);
+    return "ok";
+  } catch (e) {
+    if (isTabGoneError(e)) return "gone";
+    try {
+      await browserSetActive(tabId);
+      return "ok";
+    } catch (e2) {
+      if (isTabGoneError(e2)) return "gone";
+      console.error("[browser] set_active 重试后仍失败，已清空后端 active", e2);
+      return "failed";
+    }
+  }
+}
+
+/** 让后端"宁可不知道 active 是谁"——AI 工具会明确报错而不是操作随机 webview。 */
+async function clearBackendActive(): Promise<void> {
+  try {
+    await browserClearActive();
+  } catch (e) {
+    // 连清空都失败：后端可能已经不可用；至少把原因留在控制台
+    console.error("[browser] clear_active 失败", e);
+  }
+}
+
+/**
+ * destroy 全部 webview（收起 / 清空面板共用）；失败重试一次。
+ *
+ * 返回 `null` = 成功；否则返回失败原因。失败意味着**后端可能还残留 webview**
+ * 而前端已经按"没有了"记账，属于典型的 ghost 温床 —— 至少要清掉后端 active
+ * 并把原因暴露到 `activeSyncError`，不能默默算过去。
+ */
+async function closeAllWithRetry(): Promise<string | null> {
+  try {
+    await browserPanelCloseAll();
+    return null;
+  } catch {
+    try {
+      await browserPanelCloseAll();
+      return null;
+    } catch (e2) {
+      console.error("[browser] panel_close_all 重试后仍失败，后端可能残留 webview", e2);
+      await clearBackendActive();
+      return errText(e2);
+    }
+  }
+}
+
 export const useBrowserStore = create<BrowserState>((set, get) => ({
   panelOpen: false,
   tabs: [],
   activeKey: null,
+  activeSyncError: null,
 
   openPanel: () => {
     set({ panelOpen: true });
@@ -156,22 +258,19 @@ export const useBrowserStore = create<BrowserState>((set, get) => ({
 
   closePanel: async () => {
     // destructive：清空全部。仅给"关闭所有标签"出口用。
-    try {
-      await browserPanelCloseAll();
-    } catch {
-      // close 失败不致命：前端 state 仍清空
-    }
-    set({ panelOpen: false, tabs: [], activeKey: null });
+    const err = await closeAllWithRetry();
+    set({
+      panelOpen: false,
+      tabs: [],
+      activeKey: null,
+      activeSyncError: err ? `关闭浏览器时 webview 未能全部销毁：${err}` : null,
+    });
   },
 
   minimizePanel: async () => {
     // 收起：destroy 所有 webview，但**保留** tabs/activeKey state。
     // 每个 tab 状态改为 suspended、id 清 null（webview 已不存在）。
-    try {
-      await browserPanelCloseAll();
-    } catch {
-      // 后端 destroy 失败不致命：state 仍标 suspended
-    }
+    const err = await closeAllWithRetry();
     set((s) => ({
       panelOpen: false,
       // activeKey 保留（不动）
@@ -181,6 +280,8 @@ export const useBrowserStore = create<BrowserState>((set, get) => ({
         // loading 中的 tab 直接降到 suspended（重新打开时由 restorePanel 恢复）
         state: "suspended" as const,
       })),
+      // 后端 destroy 失败 = 前端说"都没了"、后端可能还留着 webview → 记失步
+      activeSyncError: err ? `收起浏览器时 webview 未能全部销毁：${err}` : null,
     }));
   },
 
@@ -206,10 +307,22 @@ export const useBrowserStore = create<BrowserState>((set, get) => ({
 
     // 已 active（理论上 minimize 后不会有，但容错）→ 仅 setActive
     if (target.state === "active" && target.id) {
-      try {
-        await browserSetActive(target.id);
-      } catch {
-        // 失败不致命
+      const sync = await pushActiveToBackend(target.id);
+      if (sync === "gone") {
+        // 前端记着 active、后端 webview 其实早没了 → 标 suspended 后重建自愈
+        set((s) => ({
+          tabs: s.tabs.map((t) =>
+            t.key === targetKey ? { ...t, id: null, state: "suspended" } : t,
+          ),
+        }));
+        await get().resumeTab(targetKey, bounds);
+        return;
+      }
+      if (sync === "failed") {
+        await clearBackendActive();
+        set({ activeSyncError: `恢复面板时无法把 active tab 同步给后端` });
+      } else {
+        set({ activeSyncError: null });
       }
       set({ activeKey: targetKey });
       return;
@@ -247,11 +360,17 @@ export const useBrowserStore = create<BrowserState>((set, get) => ({
           t.key === key ? { ...t, id: result.tab_id, state: "active" } : t,
         ),
       }));
-      // 新开的 tab 即 active；调一次 set_active 把别的 hide 掉
-      try {
-        await browserSetActive(result.tab_id);
-      } catch {
-        // 失败不致命：UI 上只是多个 webview 同时显示，下一次 setActive 会修
+      // 新开的 tab 即 active；调一次 set_active 把别的 hide 掉。
+      // v1.3.0 P7：这里**不能**吞异常 —— 同步不上就意味着后端 current_active_id
+      // 还指着上一个 tab，而屏幕上显示的是刚建的这个：AI 操作的就成了 ghost。
+      const sync = await pushActiveToBackend(result.tab_id);
+      if (sync === "ok") {
+        set({ activeSyncError: null });
+      } else {
+        await clearBackendActive();
+        set({
+          activeSyncError: `新建浏览器 tab 后无法把 active 同步给后端（${sync}）`,
+        });
       }
     } catch (e) {
       // 创建失败：把占位 tab 撤销
@@ -294,6 +413,27 @@ export const useBrowserStore = create<BrowserState>((set, get) => ({
       newActive = remaining[idx]?.key ?? remaining[idx - 1]?.key ?? null;
     }
     set({ tabs: remaining, activeKey: newActive });
+
+    // v1.3.0 P7：关掉的是 active tab 时，后端的 current_active_id 已被清空
+    // （见 ipc/browser.rs 的 browser_close_tab）。这里必须把新 active 补同步过去，
+    // 否则后端"有 webview 却不知道哪个可见"：旧实现会退化成随机挑一个给 AI，
+    // 用户这边则是新 active 的 webview 还处于 hide 状态（面板空白）。
+    if (activeKey === key) {
+      const next = remaining.find((t) => t.key === newActive);
+      if (next?.id && next.state === "active") {
+        const sync = await pushActiveToBackend(next.id);
+        if (sync === "ok") {
+          set({ activeSyncError: null });
+        } else {
+          await clearBackendActive();
+          set({ activeSyncError: `关闭 tab 后无法把新 active 同步给后端` });
+        }
+      } else {
+        // 新 active 还是 suspended（等调用方带 bounds 来 resume）——
+        // 后端此刻没有对应 webview，明确告诉它"不知道"，别让 AI 猜。
+        await clearBackendActive();
+      }
+    }
     // 切到的新 active 若是 suspended，等下次 setActive 由调用方触发 resume；
     // store 内部不主动 resume，避免在 closeTab 路径需要传 bounds。
   },
@@ -310,10 +450,23 @@ export const useBrowserStore = create<BrowserState>((set, get) => ({
     }
 
     if (tab.id) {
-      try {
-        await browserSetActive(tab.id);
-      } catch {
-        // 失败不致命
+      const sync = await pushActiveToBackend(tab.id);
+      if (sync === "gone") {
+        // 后端 webview 已经不在（被 close / suspend 抢跑）：前端 state 是假的，
+        // 标回 suspended 再走 resume 重建 —— 自愈，而不是让两边继续分叉。
+        set((s) => ({
+          tabs: s.tabs.map((t) =>
+            t.key === key ? { ...t, id: null, state: "suspended" as const } : t,
+          ),
+        }));
+        await get().resumeTab(key, bounds);
+        return;
+      }
+      if (sync === "ok") {
+        set({ activeSyncError: null });
+      } else {
+        await clearBackendActive();
+        set({ activeSyncError: `切换 tab 后无法把 active 同步给后端` });
       }
     }
     set((s) => ({
@@ -378,10 +531,13 @@ export const useBrowserStore = create<BrowserState>((set, get) => ({
         ),
         activeKey: key,
       }));
-      try {
-        await browserSetActive(newId);
-      } catch {
-        // 失败不致命
+      // v1.3.0 P7：resume 出来的是**新** webview id，同步不上后端就还指着旧 id
+      const sync = await pushActiveToBackend(newId);
+      if (sync === "ok") {
+        set({ activeSyncError: null });
+      } else {
+        await clearBackendActive();
+        set({ activeSyncError: `恢复 tab 后无法把 active 同步给后端（${sync}）` });
       }
       // 恢复滚动：等 webview 加载完成再 eval。500ms 是经验值；
       // 真机上慢页面可能不够，但 T2 阶段保守即可——失败也只是回到顶部。
@@ -398,6 +554,25 @@ export const useBrowserStore = create<BrowserState>((set, get) => ({
         ),
       }));
     }
+  },
+
+  reassertActive: async () => {
+    const { tabs, activeKey } = get();
+    // 没开过浏览器 → 一个 IPC 都不发（绝大多数 dialog 场景都是这种）
+    if (tabs.length === 0) return;
+    const target = tabs.find((t) => t.key === activeKey);
+    if (target?.id && target.state === "active") {
+      const sync = await pushActiveToBackend(target.id);
+      if (sync === "ok") {
+        set({ activeSyncError: null });
+      } else {
+        await clearBackendActive();
+        set({ activeSyncError: `重新同步 active tab 失败（${sync}）` });
+      }
+      return;
+    }
+    // active tab 目前没有 webview（suspended / loading）→ 后端不该保留任何 active
+    await clearBackendActive();
   },
 
   pinTab: (key, pinned) =>

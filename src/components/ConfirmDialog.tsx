@@ -7,6 +7,7 @@ import {
   type AiToolRequestEvent,
 } from "../lib/tauri";
 import { useBrowserModalGuard } from "../lib/useBrowserModalGuard";
+import DiffView from "./DiffView";
 
 interface Props {
   conversationId: string;
@@ -17,8 +18,8 @@ interface Props {
  * 同一时刻只能有一个待审批 tool（后端 ToolLoopHandle 串行）。
  *
  * 风险等级：
- * - high：默认聚焦"拒绝"按钮，防误点
- * - destructive：必须输入"确认"二字才能解锁批准按钮
+ * - high：默认聚焦"拒绝"按钮，防误点；额外提供「本会话都允许」（v1.3.0 A1）
+ * - destructive：必须输入"确认"二字才能解锁批准按钮，**永不提供**「本会话都允许」
  * - low：不会触发本对话框（后端已自动批准）
  */
 export default function ConfirmDialog({ conversationId }: Props) {
@@ -60,11 +61,18 @@ export default function ConfirmDialog({ conversationId }: Props) {
   const isDestructive = pending.risk === "destructive";
   const approveLocked = isDestructive && confirmInput !== "确认";
 
-  const approve = async () => {
+  // v1.3.0 A1：仅 HIGH 提供「本会话都允许」——DESTRUCTIVE 红线不退，每次都要确认。
+  // run_command 也排除（维护者 2026-07-27 拍板）：工具级授权对它太粗，一个工具名
+  // 覆盖无限多命令；它的"记住允许"走设置面板的命令级 glob 白名单，粒度才对。
+  // 后端 resolve_approval 同样不给 run_command 记账，不依赖前端这层判断。
+  const canRememberAlways =
+    pending.risk === "high" && pending.name !== "run_command";
+
+  const approve = async (remember = false) => {
     const callId = pending.call_id;
     setPending(null);
     setConfirmInput("");
-    await aiToolApprove(callId);
+    await aiToolApprove(callId, remember);
   };
 
   const reject = async () => {
@@ -121,9 +129,19 @@ export default function ConfirmDialog({ conversationId }: Props) {
             </div>
           )}
 
-          <pre className="mb-3 max-h-48 overflow-auto rounded bg-[var(--c-bg-base)] p-2 font-mono text-xs text-[var(--c-text-muted)] whitespace-pre-wrap">
+          {pending.preview?.kind === "diff" ? (
+            <div className="mb-3">
+              <DiffView
+                path={pending.preview.path}
+                oldText={pending.preview.old_text}
+                newText={pending.preview.new_text}
+              />
+            </div>
+          ) : (
+            <pre className="mb-3 max-h-48 overflow-auto rounded bg-[var(--c-bg-base)] p-2 font-mono text-xs text-[var(--c-text-muted)] whitespace-pre-wrap">
 {pending.args_preview}
-          </pre>
+            </pre>
+          )}
 
           {isDestructive && (
             <div className="mb-3">
@@ -150,8 +168,18 @@ export default function ConfirmDialog({ conversationId }: Props) {
             >
               拒绝
             </button>
+            {canRememberAlways && (
+              <button
+                onClick={() => approve(true)}
+                title={`本会话内自动批准 ${pending.name}，无需再确认（重启应用即失效）`}
+                className="rounded border border-[var(--c-border-strong)] px-3 py-1 text-sm text-[var(--c-text-muted)] hover:bg-[var(--c-bg-elev-2)] hover:text-[var(--c-text-base)]"
+                aria-label="本会话都允许"
+              >
+                本会话都允许
+              </button>
+            )}
             <button
-              onClick={approve}
+              onClick={() => approve(false)}
               disabled={approveLocked}
               className={
                 "rounded px-3 py-1 text-sm " +

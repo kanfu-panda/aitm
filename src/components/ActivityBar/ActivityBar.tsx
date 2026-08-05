@@ -2,6 +2,7 @@ import { useState, type CSSProperties, type MouseEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { FileText, Folder, Globe, Settings, Sparkles } from "../icons";
 import { useBrowserStore } from "../../stores/browser";
+import { PLACEHOLDER_BROWSER_BOUNDS } from "../../lib/browserOpenRequest";
 import { useSidebarStore } from "../../stores/sidebar";
 import { useFileEditorStore } from "../../stores/file-editor";
 import { ActivityBarItem } from "./ActivityBarItem";
@@ -96,12 +97,16 @@ export function ActivityBar({ position, onSettingsOpen }: ActivityBarProps) {
    *
    * bounds 用 placeholder (0,0,800,600)，BrowserPanel mount 后由
    * ResizeObserver 立刻覆盖真值；这里只是为了让 webview 创建时有个起点。
+   *
+   * v1.2.0 T-B3：占位 bounds 抽成 `PLACEHOLDER_BROWSER_BOUNDS` 共享常量——
+   * AI 的 browser_open 走 `browserOpenRequest` 时用同一个值，保证"AI 开面板"
+   * 跟"用户点地球图标"是完全相同的代码路径（bounds 是本项目最容易翻车的地方）。
    */
   const handleBrowserClick = () => {
     if (browserPanelOpen) {
       void minimizeBrowserPanel();
     } else {
-      void restoreBrowserPanel({ x: 0, y: 0, w: 800, h: 600 });
+      void restoreBrowserPanel(PLACEHOLDER_BROWSER_BOUNDS);
     }
   };
 

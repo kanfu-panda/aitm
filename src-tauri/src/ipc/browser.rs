@@ -34,14 +34,15 @@
 //!   [`browser_set_scroll_y`] 恢复（不需单独 resume 命令）。
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use tauri::{
-    AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Url, Webview, WebviewUrl,
+    webview::PageLoadEvent, AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Url,
+    Webview, WebviewUrl,
 };
-use tokio::sync::{oneshot, Mutex};
+use tokio::sync::{oneshot, watch, Mutex};
 
 /// 内嵌浏览器后端状态。仅持有当前**未 suspend** 的 webview handle。
 ///
@@ -63,6 +64,62 @@ pub struct BrowserState {
     /// [`browser_set_active`] 时把当前 tab 记到这里。AI 工具
     /// `resolve_tab_id(None)` 优先用这个值。
     pub current_active_id: Mutex<Option<String>>,
+    /// v1.2.0 T-B3：**AI 自己开浏览器**的反向通道（跟 `pending_snapshots` 同构）。
+    ///
+    /// 后端物理上建不了 tab —— `browser_open_tab` 需要 bounds（webview 的屏幕
+    /// 位置 / 大小），而 bounds 只有前端布局算得出（BrowserPanel 的
+    /// ResizeObserver 上报）。所以 AI 工具的做法是：emit
+    /// `browser:open_requested` 请前端走**跟用户点地球图标完全相同的代码路径**，
+    /// 前端建好后调 [`browser_open_result`] 把 tab_id 送回这里的 oneshot。
+    ///
+    /// key = request_id（每次调用唯一）；value 里 `Ok(tab_id)` / `Err(错误原因)`。
+    pub pending_opens: Mutex<HashMap<String, oneshot::Sender<Result<String, String>>>>,
+    /// v1.2.0 T-B3：主 AppHandle。emit `browser:open_requested` 那一刻**没有任何
+    /// child webview** 可以借 `Webview::app_handle()`，所以启动期（lib.rs setup）
+    /// 存一份在这里。单测环境为 None → 相关工具明确报错，绝不谎报成功。
+    pub app: OnceLock<AppHandle>,
+    /// v1.3.0 P4：tab_id → 页面加载状态 watch channel。由 `browser_open_tab` 注册的
+    /// 原生 `on_page_load`（Finished）/ `on_document_title_changed` 钩子往里写；
+    /// `browser_navigate` / `browser_open` 订阅后等新一轮 Finished 事件真发生了
+    /// 再回，不再靠固定 sleep 猜时机。
+    ///
+    /// 为什么不用"eval 注入 + oneshot"这套（snapshot 那套）的思路：`wv.navigate()`
+    /// 调用后页面还没提交（commit）新文档前，紧跟着的 `wv.eval()` 打的其实是
+    /// **旧文档**（WKWebView `evaluateJavaScript` 只认当前已提交的文档），旧文档
+    /// `readyState` 早已是 `complete`，会立刻假成功——跟这次要修的 bug 是同一个
+    /// 时序坑。原生 `on_page_load` 钩子由 webview 引擎自己在文档真正提交/完成时
+    /// 触发，不吃这个竞态。
+    pub load_state: Mutex<HashMap<String, watch::Sender<PageLoadState>>>,
+    /// v1.3.0 R3b：tab_id → 上一次**打过日志**的 bounds，仅用于给
+    /// [`browser_set_bounds`] 的 `tracing::debug!` 去重，不参与任何实际行为。
+    ///
+    /// 为什么需要：前端 `report` 的触发源里有 `window.addEventListener("scroll",
+    /// …, true)`——应用里任何地方滚动（终端输出、侧栏、文件树）都会触发一次
+    /// 上报，值往往跟上次**完全一样**。不去重的话 dev log 每秒几十行同样的
+    /// set_bounds，真要排"网页不随面板自适应"时根本读不出有用信息。
+    pub last_logged_bounds: Mutex<HashMap<String, (f64, f64, f64, f64)>>,
+}
+
+/// 单个 tab 的加载状态快照（[`BrowserState::load_state`] 的 value 类型）。
+///
+/// `generation` 每次 `on_page_load` 报 `Finished` 就 +1；等待方靠比较
+/// "发起 navigate 前记的 generation" 和"当前 generation"判断是不是**这一次**
+/// navigate 触发的新一轮加载完成了（而不是上一轮遗留的 Finished）。
+#[derive(Debug, Clone, Default)]
+pub struct PageLoadState {
+    pub generation: u64,
+    /// Finished 时 `payload.url()` 给的 url（重定向后的真实落地页 url）。
+    pub url: String,
+    /// `on_document_title_changed` 给的最新标题；可能比 Finished 早到或晚到，
+    /// 尽力而为，不保证跟 Finished 那一刻精确同步。
+    pub title: String,
+}
+
+impl BrowserState {
+    /// lib.rs setup 里调一次；重复调忽略（[`OnceLock`] 语义）。
+    pub fn set_app_handle(&self, app: AppHandle) {
+        let _ = self.app.set(app);
+    }
 }
 
 /// `browser_open_tab` 返回值：刚创建的 tab id（即 webview label）。
@@ -131,6 +188,27 @@ fn pick_main_window<R: tauri::Runtime>(
         .ok_or_else(|| "未找到任何 window".to_string())
 }
 
+/// macOS child webview 用的 User-Agent（真机诊断后加，v1.2.0）。
+///
+/// **为什么必须显式设**：wry 在 macOS 上不设 UA 时，WKWebView 用的是"裸 UA"——
+/// 形如 `Mozilla/5.0 (Macintosh; ...) AppleWebKit/605.1.15 (KHTML, like Gecko)`，
+/// **尾部没有 `Version/x Safari/x`**。很多站点据此判定为爬虫 / 非标准客户端：
+///
+/// - 真机实测 `https://www.baidu.com`：裸 UA 只返回 **227 字节**，内容是
+///   `location.replace(...https→http...)` 把请求降级到明文 http；WKWebView 跟着跳
+///   明文 URL，再被 macOS ATS 拦掉 → **整页白屏**。同一请求换完整 Safari UA
+///   返回 **902 KB** 正常页面。
+/// - 这就是 STATUS 里长期记着的"baidu.com 在内嵌浏览器白屏、aitm 修不了"的真因，
+///   并非反爬不可解——补 UA 即可。example.org / github.com 不看 UA，所以一直正常，
+///   把问题掩盖了。
+///
+/// 维护提示：Safari 大版本升级后可同步更新此处版本号（非必需，站点一般只看
+/// `Safari/` 标识存在与否）。Windows 走 WebView2（Chromium 内核），默认 UA 已完整，
+/// 不需要覆盖。
+#[cfg(target_os = "macos")]
+const MAC_SAFARI_USER_AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) \
+     AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15";
+
 /// 在主 window 内创建一个子 webview 加载给定 URL。
 ///
 /// 返回 `tab_id`（即 webview label），前端用它作为后续 IPC 的 key。
@@ -148,14 +226,42 @@ pub async fn browser_open_tab(
     let parsed: Url = url.parse().map_err(|e| format!("URL 解析失败: {e}"))?;
     let label = make_tab_id();
 
+    // v1.3.0 P4：注册加载状态 watch channel。两个原生钩子（下面）在这个 tab
+    // **每一次**加载（含创建时的首屏、后续所有 navigate）都会触发，不是一次性的——
+    // 跟 HOTKEY_FORWARD_SCRIPT 用 `initialization_script` 能在每次导航后继续
+    // 生效是同一个道理（wry 对 webview 生命周期内的所有加载都重放这些钩子）。
+    let (load_tx, _load_rx) = watch::channel(PageLoadState::default());
+    let load_tx_for_page = load_tx.clone();
+    let load_tx_for_title = load_tx.clone();
+
     let builder = tauri::webview::WebviewBuilder::new(label.clone(), WebviewUrl::External(parsed))
-        .initialization_script(HOTKEY_FORWARD_SCRIPT);
+        .initialization_script(HOTKEY_FORWARD_SCRIPT)
+        .on_page_load(move |_wv, payload| {
+            if payload.event() == PageLoadEvent::Finished {
+                let url = payload.url().to_string();
+                load_tx_for_page.send_modify(|s| {
+                    s.generation = s.generation.wrapping_add(1);
+                    s.url = url;
+                });
+            }
+        })
+        .on_document_title_changed(move |_wv, title| {
+            load_tx_for_title.send_modify(|s| {
+                s.title = title;
+            });
+        });
+
+    // macOS：补一个完整的 Safari UA（见 MAC_SAFARI_USER_AGENT 的原因说明）。
+    // Windows 走 WebView2（Chromium），默认 UA 已完整，不动。
+    #[cfg(target_os = "macos")]
+    let builder = builder.user_agent(MAC_SAFARI_USER_AGENT);
 
     let child = parent_window
         .add_child(builder, LogicalPosition::new(x, y), LogicalSize::new(w, h))
         .map_err(|e| format!("创建 child webview 失败: {e}"))?;
 
     state.active.lock().await.insert(label.clone(), child);
+    state.load_state.lock().await.insert(label.clone(), load_tx);
     Ok(OpenTabResult { tab_id: label })
 }
 
@@ -175,6 +281,10 @@ pub async fn browser_close_tab(
             *current = None;
         }
     }
+    // v1.3.0 P4：tab 没了，对应的加载状态 channel 也没意义了，清掉避免泄漏
+    state.load_state.lock().await.remove(&tab_id);
+    // v1.3.0 R3b：日志去重表同步清理，别让已销毁的 tab_id 长期占着
+    state.last_logged_bounds.lock().await.remove(&tab_id);
     if let Some(wv) = removed {
         wv.close().map_err(|e| format!("close 失败: {e}"))?;
     }
@@ -221,27 +331,263 @@ pub struct UrlChangedEvent {
     pub url: String,
 }
 
+// =========================================================================
+// v1.3.0 P4：等页面真正加载完再回，而不是 navigate 一发就回
+// =========================================================================
+//
+// 真机反馈：`browser_navigate` 147ms 就返回成功，AI 立刻回复"已打开"，但
+// WKWebView 实际还在转圈圈——这是"navigate() 异步触发，命令却同步返回"的
+// 时序坑。原先 v0.5.8 的 fix 是固定 `sleep(800ms)`，对 GitHub 这类重站根本不够。
+//
+// 这里改用 webview 原生 `on_page_load`（[`PageLoadEvent::Finished`]）钩子驱动
+// 一个按 tab 维护的 watch channel（见 [`BrowserState::load_state`]），
+// `browser_navigate` / `browser_open` 发起导航前记一次 generation，导航后
+// 等 generation 真的变了（= 引擎自己确认这一轮加载完成了）再回，10s 兜底超时。
+
+/// `browser_navigate` / `browser_open` 等页面加载完成的超时上限。
+///
+/// child webview 创建 + 首屏加载比 snapshot 的纯 eval 往返慢得多，10s 是
+/// 给普通站点（含 GitHub 这类稍重的）留足余量；超时不算失败，只是"还没等到"。
+pub const NAVIGATE_LOAD_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// [`wait_for_page_load`] 的结果。
+#[derive(Debug, Clone)]
+pub(crate) enum LoadWaitOutcome {
+    /// 在超时前等到了新一轮 `Finished`（generation 变了），带最终快照。
+    Loaded(PageLoadState),
+    /// 超时内没等到——**不代表 navigate 失败**，页面可能仍在加载慢资源。
+    TimedOut,
+}
+
+/// 读一次 tab 当前的加载 generation。发起 navigate **之前**调用，拿到的值
+/// 作为 [`wait_for_page_load`] 的 baseline，用来分辨"这一次 navigate 触发的
+/// Finished"和"上一轮遗留的 Finished"。tab 不存在 / 还没注册 → 视为 0
+/// （新建 tab 时 watch channel 就是从 `PageLoadState::default()` 即 0 开始）。
+pub(crate) async fn current_load_generation(state: &Arc<BrowserState>, tab_id: &str) -> u64 {
+    match state.load_state.lock().await.get(tab_id) {
+        Some(tx) => tx.borrow().generation,
+        None => 0,
+    }
+}
+
+/// 等 tab 的加载状态 generation 超过 `baseline`，即等到**这一轮**导航的
+/// `Finished` 事件。
+///
+/// 关键点：先立即 `borrow()` 一次当前值——如果 generation 在我们订阅之前就
+/// 已经超过 baseline（比如 `browser_open` 带 url 建 webview，首屏加载可能在
+/// AI 工具拿到 tab_id 之前就已经跑完），直接判定完成，不必等一个可能永远不会
+/// 再来的 `changed()` 事件。之后才进入 `changed()` 循环等**未来**的变化。
+///
+/// 循环里过滤掉"只有 title 变了、generation 没变"的中间态通知（title 由
+/// `on_document_title_changed` 独立驱动，跟 Finished 不同步）。
+pub(crate) async fn wait_for_page_load(
+    state: &Arc<BrowserState>,
+    tab_id: &str,
+    baseline_generation: u64,
+    timeout: Duration,
+) -> LoadWaitOutcome {
+    let Some(tx) = state.load_state.lock().await.get(tab_id).cloned() else {
+        // tab 没注册加载状态（理论上不该发生：browser_open_tab 建 tab 时就插入了）
+        // —— 没法等，只能诚实报"没等到"，不谎报已完成。
+        return LoadWaitOutcome::TimedOut;
+    };
+    let mut rx = tx.subscribe();
+
+    {
+        let snapshot = rx.borrow().clone();
+        if snapshot.generation != baseline_generation {
+            return LoadWaitOutcome::Loaded(snapshot);
+        }
+    }
+
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            return LoadWaitOutcome::TimedOut;
+        }
+        match tokio::time::timeout(remaining, rx.changed()).await {
+            Ok(Ok(())) => {
+                let snapshot = rx.borrow().clone();
+                if snapshot.generation != baseline_generation {
+                    return LoadWaitOutcome::Loaded(snapshot);
+                }
+                // 只是 title 更新，generation 没变 → 继续等
+            }
+            Ok(Err(_)) => return LoadWaitOutcome::TimedOut, // channel 关了（tab 被关掉）
+            Err(_) => return LoadWaitOutcome::TimedOut,     // 超时
+        }
+    }
+}
+
+// =========================================================================
+// v1.3.0 P7：谁是"用户当前看得见的 tab" —— 唯一判定入口
+// =========================================================================
+//
+// 历史教训（v0.5.7 一次、v1.3.0 P7 又一次）：AI 工具操作的 webview 跟用户视觉
+// 上看到的不是同一个（ghost webview）。真机现象：面板显示 baidu.com，AI 跑
+// `document.title` 却拿到 "GitHub"。根因归纳为三类：
+//
+// 1. `current_active_id` 被写成一个后端根本不存在的 id（前端拿旧 id 调
+//    set_active，老实现无脑记下），之后校验失败又退化成随机兜底
+// 2. 判不出 active 时用 `HashMap::keys().next()` 兜底 —— HashMap 无序，
+//    等于随机挑一个 webview
+// 3. `browser_show_all_active` 把所有 webview 一起 show，"最上面那个"跟
+//    `current_active_id` 根本不是一回事
+//
+// 现在统一收敛到 [`resolve_active_tab`]：**判不出就明说判不出，绝不猜**。
+// 对 browser_eval（DESTRUCTIVE）这类工具，操作错对象远比操作失败严重。
+
+/// 后端对"用户当前看得见的 tab"的判定结果。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ActiveTabResolution {
+    /// 能唯一确定可见 tab。
+    Resolved(String),
+    /// 一个 webview 都没有（面板没开 / 全部 suspend）。
+    NoTab,
+    /// 有 N 个 webview，但后端无从判断哪个是用户看得见的那个。
+    Ambiguous(usize),
+}
+
+/// 纯函数：由 `current_active_id` + 当前 webview id 列表判定可见 tab。
+///
+/// 规则（顺序无关，绝不依赖 HashMap 迭代顺序）：
+/// - 没有 webview → [`ActiveTabResolution::NoTab`]
+/// - `current` 指向一个真实存在的 webview → 用它（前端 set_active 同步过来的真相）
+/// - `current` 失效但只有一个 webview → 它必然就是用户看到的那个，可唯一确定
+/// - 其余（多个 webview 且 `current` 失效 / 为空）→ [`ActiveTabResolution::Ambiguous`]
+pub(crate) fn resolve_active_tab(current: Option<&str>, tab_ids: &[String]) -> ActiveTabResolution {
+    if tab_ids.is_empty() {
+        return ActiveTabResolution::NoTab;
+    }
+    if let Some(id) = current {
+        if tab_ids.iter().any(|t| t == id) {
+            return ActiveTabResolution::Resolved(id.to_string());
+        }
+    }
+    if tab_ids.len() == 1 {
+        return ActiveTabResolution::Resolved(tab_ids[0].clone());
+    }
+    ActiveTabResolution::Ambiguous(tab_ids.len())
+}
+
+/// [`resolve_active_tab`] 的 state 版本。
+///
+/// 两把锁**分开取、不嵌套**：其它路径统一先 `active` 后 `current_active_id`，
+/// 这里也不同时持有，避免锁序倒置。
+pub(crate) async fn resolve_active_tab_of(state: &Arc<BrowserState>) -> ActiveTabResolution {
+    let ids: Vec<String> = {
+        let map = state.active.lock().await;
+        map.keys().cloned().collect()
+    };
+    let current = { state.current_active_id.lock().await.clone() };
+    resolve_active_tab(current.as_deref(), &ids)
+}
+
+/// 清空后端记录的 active tab。
+///
+/// 前端在"没法保证前后端一致"时主动调（见 `browser_clear_active`）：宁可让 AI
+/// 工具明确报"当前没有确定的 active tab"，也不要它拿着过期 id 去操作 ghost。
+pub(crate) async fn clear_current_active(state: &Arc<BrowserState>) {
+    *state.current_active_id.lock().await = None;
+}
+
+/// [`browser_set_active`] 的可测内核：把指定 tab `show()`，其余全 `hide()`。
+///
+/// **失败即失败，不再静默**（v1.3.0 P7）：
+/// - tab_id 不在 active map（前端拿的是旧 id）→ 清空 `current_active_id` 后返 Err，
+///   前端据此自愈（把该 tab 标 suspended 重建）
+/// - `show()` 失败 → 同样清空 + 返 Err
+///
+/// 只有真的 show 成功了才把它记成"用户看得见的 tab"。
+pub(crate) async fn apply_set_active(
+    state: &Arc<BrowserState>,
+    tab_id: &str,
+) -> Result<(), String> {
+    let shown = {
+        let map = state.active.lock().await;
+        if !map.contains_key(tab_id) {
+            None
+        } else {
+            let mut ok = false;
+            for (id, wv) in map.iter() {
+                if id == tab_id {
+                    ok = wv.show().is_ok();
+                } else {
+                    // 其它 tab hide 失败不致命（可能已被关闭），继续处理剩下的
+                    let _ = wv.hide();
+                }
+            }
+            Some(ok)
+        }
+    };
+
+    match shown {
+        Some(true) => {
+            // v0.5.7：把"用户看到的 tab"记到 state，AI 工具据此定位
+            *state.current_active_id.lock().await = Some(tab_id.to_string());
+            Ok(())
+        }
+        Some(false) => {
+            clear_current_active(state).await;
+            Err(format!("tab {tab_id} show 失败；后端已清空 active tab"))
+        }
+        None => {
+            clear_current_active(state).await;
+            Err(format!(
+                "tab {tab_id} 不存在或已 suspend；后端已清空 active tab"
+            ))
+        }
+    }
+}
+
 /// 切换前台 tab：把指定 tab `show()`，其余全 `hide()`。
 ///
 /// Tauri 多 webview 在同一个 Window 内没有 z-index 概念，全靠可见性切。
-/// 找不到 tab_id 不报错（前端可能在 race 期间调）。
+///
+/// v1.3.0 P7：**找不到 tab_id 现在会报错**（旧实现静默 Ok 且照样记下这个不存在
+/// 的 id，正是 ghost webview 的源头之一）。前端 store 收到错误后会把该 tab 标
+/// suspended 并重建 webview 自愈。
 #[tauri::command]
 pub async fn browser_set_active(
     state: tauri::State<'_, Arc<BrowserState>>,
     tab_id: String,
 ) -> Result<(), String> {
-    let map = state.active.lock().await;
-    for (id, wv) in map.iter() {
-        if id == &tab_id {
-            // show 失败不致命：可能 webview 已被关闭；继续处理其它 tab
-            let _ = wv.show();
-        } else {
-            let _ = wv.hide();
+    apply_set_active(state.inner(), &tab_id).await
+}
+
+/// v1.3.0 P7：前端主动声明"我也不确定哪个 tab 可见了"，清空后端 active。
+///
+/// 触发时机（见前端 `stores/browser.ts`）：set_active 重试后仍失败、
+/// panel_close_all 失败、关掉 active tab 后新 active 还没恢复 webview 等。
+/// 清空后 AI 工具会明确报错并引导重新 `browser_open`，而不是操作一个随机 webview。
+#[tauri::command]
+pub async fn browser_clear_active(
+    state: tauri::State<'_, Arc<BrowserState>>,
+) -> Result<(), String> {
+    clear_current_active(state.inner()).await;
+    Ok(())
+}
+
+/// bounds 日志去重：跟上次记录的值不同才返 `true`，同时把新值记下。
+///
+/// 纯函数（只操作传进来的表），方便单测。**仅影响日志**，不影响 webview 行为——
+/// 即使返回 `false`，[`browser_set_bounds`] 照样会把 bounds 应用到 webview，
+/// 所以不存在"去重把某次真实尺寸吞掉"的风险。
+pub(crate) fn bounds_log_changed(
+    logged: &mut HashMap<String, (f64, f64, f64, f64)>,
+    tab_id: &str,
+    next: (f64, f64, f64, f64),
+) -> bool {
+    match logged.get(tab_id) {
+        // f64 直接比相等即可：值来自前端同一份 rect，没有累积运算误差；
+        // 判错了最多多打 / 少打一行日志，不影响任何行为。
+        Some(prev) if *prev == next => false,
+        _ => {
+            logged.insert(tab_id.to_string(), next);
+            true
         }
     }
-    // v0.5.7：把"用户看到的 tab"记到 state，给 AI 工具 resolve_tab_id 优先用
-    *state.current_active_id.lock().await = Some(tab_id);
-    Ok(())
 }
 
 /// 重设 tab 的 position + size（前端 ResizeObserver 60fps 节流上报）。
@@ -257,10 +603,30 @@ pub async fn browser_set_bounds(
     w: f64,
     h: f64,
 ) -> Result<(), String> {
+    // 日志去重要在拿 active 锁之前算，避免嵌套持锁
+    let changed = {
+        let mut logged = state.last_logged_bounds.lock().await;
+        bounds_log_changed(&mut logged, &tab_id, (x, y, w, h))
+    };
+
     let map = state.active.lock().await;
     let Some(wv) = map.get(&tab_id) else {
+        // 上报了但 webview 不存在：常见于 tab 刚 destroy 的 race，本身无害。
+        // 但如果**持续** MISS，说明前端拿的 tab_id 跟后端对不上，webview 会一直
+        // 停在创建时的占位尺寸（800×600）→ 网页按 800 宽布局、面板再窄也不重排。
+        // 排查"网页不随面板自适应"时先看有没有一串 MISS。
+        if changed {
+            tracing::debug!("set_bounds 跳过：tab {tab_id} 不存在（w={w} h={h}）");
+        }
         return Ok(());
     };
+    if changed {
+        // 排查"网页不随面板自适应"就看这一行的 w：它应等于浏览器面板当前宽度
+        // （逻辑像素）。若始终是 800 = 占位尺寸没被覆盖；若等于面板宽度，
+        // 说明 webview 已收到正确尺寸，问题在页面自身（如 google.com 的
+        // `html,body{min-width:400px}` 让它低于 400 就不再重排，只会被裁剪）。
+        tracing::debug!("set_bounds tab={tab_id} x={x} y={y} w={w} h={h}");
+    }
     wv.set_position(LogicalPosition::new(x, y))
         .map_err(|e| format!("set_position 失败: {e}"))?;
     wv.set_size(LogicalSize::new(w, h))
@@ -315,6 +681,10 @@ pub async fn browser_panel_close_all(
     }
     // v0.5.7：全部关 → current_active_id 也清
     *state.current_active_id.lock().await = None;
+    // v1.3.0 P4：所有 tab 的加载状态 channel 一并清空
+    state.load_state.lock().await.clear();
+    // v1.3.0 R3b：日志去重表一并清空
+    state.last_logged_bounds.lock().await.clear();
     Ok(())
 }
 
@@ -330,20 +700,33 @@ pub async fn browser_hide_all_active(
     Ok(())
 }
 
-/// dialog 关闭后恢复所有 webview 显示。
+/// dialog 关闭后恢复 webview 显示。
 ///
-/// **注意**：这会让所有 active webview 都 show，跟 [`browser_set_active`] 的
-/// "只 show 一个"语义不同。前端调用顺序应是 hide_all → 弹 dialog → 关 dialog →
-/// show_all_active → 紧跟一次 set_active 把非 active 的 hide 回去。
+/// v1.3.0 P7 语义收紧：**只 show 回"当前 active"那一个**，其余保持 hide。
+///
+/// 旧实现是字面意义的"show 全部"，多个 webview 同时可见时用户看到的是最上面
+/// 那个，而 `current_active_id` 指的可能是另一个 —— AI 工具于是操作了一个用户
+/// 看不见的页面。AI 审批弹窗（ConfirmDialog）本身就走这条路径，browser_eval
+/// 这类 DESTRUCTIVE 工具批准后紧接着执行，正好踩中。
+///
+/// 判不出 active（多 webview 且 `current_active_id` 失效）时**一个都不 show**，
+/// 并返 Err：前端 store 的 `reassertActive` 会立刻用自己的 activeKey 重新
+/// set_active 把状态掰正 —— 宁可闪一下空白，也不要给 AI 一个错的操作对象。
 #[tauri::command]
 pub async fn browser_show_all_active(
     state: tauri::State<'_, Arc<BrowserState>>,
 ) -> Result<(), String> {
-    let map = state.active.lock().await;
-    for (_, wv) in map.iter() {
-        let _ = wv.show();
-    }
-    Ok(())
+    let resolution = resolve_active_tab_of(state.inner()).await;
+    let target = match resolution {
+        ActiveTabResolution::Resolved(id) => id,
+        ActiveTabResolution::NoTab => return Ok(()),
+        ActiveTabResolution::Ambiguous(n) => {
+            return Err(format!(
+                "有 {n} 个 webview 但无法确定哪个可见，已保持全部隐藏；请重新 set_active"
+            ));
+        }
+    };
+    apply_set_active(state.inner(), &target).await
 }
 
 /// 子 webview 注入脚本捕获到 Cmd+B/T/W/P/, 后调本命令；后端转发为
@@ -546,9 +929,216 @@ pub async fn browser_eval_js(
     Ok(())
 }
 
+// =========================================================================
+// v1.2.0 T-B3：AI 自己打开浏览器面板（后端 → 前端反向通道）
+// =========================================================================
+
+/// v1.2.0 T-B3：请前端打开浏览器面板的事件 payload。
+///
+/// 前端在**常驻组件**（App.tsx）订阅 `browser:open_requested`，收到后走跟用户点
+/// ActivityBar 地球图标一样的 store 路径建 tab，再调 [`browser_open_result`] 回报。
+#[derive(Debug, Clone, Serialize)]
+pub struct OpenRequestedEvent {
+    pub request_id: String,
+    /// 打开后要导航到的 URL；`None` → 前端开 `about:blank`。
+    pub url: Option<String>,
+}
+
+/// 等前端回报的超时。child webview 创建 + 首屏加载比 snapshot 慢得多
+/// （snapshot 只是注入 JS），给 10s。
+pub const OPEN_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+
+fn make_open_request_id() -> String {
+    format!("open-{}", uuid::Uuid::new_v4())
+}
+
+/// 登记一个待前端回报的 open 请求，返回 (request_id, receiver)。
+///
+/// 拆成独立函数是为了可单测：单测里没有 Tauri app 无法 emit，但可以
+/// register → resolve → await 走完整的通道逻辑。
+pub(crate) async fn register_pending_open(
+    state: &Arc<BrowserState>,
+) -> (String, oneshot::Receiver<Result<String, String>>) {
+    let req_id = make_open_request_id();
+    let (tx, rx) = oneshot::channel::<Result<String, String>>();
+    state.pending_opens.lock().await.insert(req_id.clone(), tx);
+    (req_id, rx)
+}
+
+/// await 前端回报，超时 / 通道异常时**清理 pending_opens** 再返错。
+pub(crate) async fn await_pending_open(
+    state: &Arc<BrowserState>,
+    request_id: &str,
+    rx: oneshot::Receiver<Result<String, String>>,
+    timeout: Duration,
+) -> Result<String, String> {
+    match tokio::time::timeout(timeout, rx).await {
+        Ok(Ok(res)) => res,
+        Ok(Err(_)) => {
+            state.pending_opens.lock().await.remove(request_id);
+            Err("打开浏览器的回报通道异常关闭".to_string())
+        }
+        Err(_) => {
+            state.pending_opens.lock().await.remove(request_id);
+            Err(format!(
+                "等前端打开浏览器超时（{}s）",
+                timeout.as_secs_f32()
+            ))
+        }
+    }
+}
+
+/// 把前端回报的结果送回等待中的 oneshot。
+///
+/// 命令 [`browser_open_result`] 的可测内核。`ok=true` 但 tab_id 空 → 判失败
+/// （**防谎报**：没拿到真 tab_id 就不能说"已打开"）。
+pub(crate) async fn resolve_pending_open(
+    state: &Arc<BrowserState>,
+    request_id: &str,
+    ok: bool,
+    tab_id: Option<String>,
+    error: Option<String>,
+) {
+    let Some(sender) = state.pending_opens.lock().await.remove(request_id) else {
+        // 找不到 request_id：await 已超时删掉（race），静默忽略
+        return;
+    };
+    let payload = if ok {
+        match tab_id
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+        {
+            Some(id) => Ok(id),
+            None => Err("前端回报成功但没给 tab_id".to_string()),
+        }
+    } else {
+        Err(error
+            .map(|e| e.trim().to_string())
+            .filter(|e| !e.is_empty())
+            .unwrap_or_else(|| "前端打开浏览器失败（未给原因）".to_string()))
+    };
+    // sender 可能已被 timeout 丢弃，send 失败不报错
+    let _ = sender.send(payload);
+}
+
+/// 请前端打开浏览器面板（可选直接导航到 `url`），await 到真 tab_id 才返 Ok。
+///
+/// AI 工具 `browser_open` 和 `browser_navigate`（面板未打开兜底）共用这条路径。
+///
+/// Tauri 2 multi-webview 下**必须** `emit_to(EventTarget::webview("main"))`——
+/// 裸 `emit` 会被 child webview 抢掉导致主 webview 漏收（v0.5.9 踩过）。
+pub(crate) async fn request_frontend_open(
+    state: &Arc<BrowserState>,
+    url: Option<&str>,
+) -> Result<String, String> {
+    let app = state
+        .app
+        .get()
+        .cloned()
+        .ok_or_else(|| "后端未持有 AppHandle（启动期未初始化）".to_string())?;
+
+    let (req_id, rx) = register_pending_open(state).await;
+    let payload = OpenRequestedEvent {
+        request_id: req_id.clone(),
+        url: url.map(|s| s.to_string()),
+    };
+    if let Err(e) = app.emit_to(
+        tauri::EventTarget::webview("main"),
+        "browser:open_requested",
+        &payload,
+    ) {
+        state.pending_opens.lock().await.remove(&req_id);
+        return Err(format!("emit browser:open_requested 失败: {e}"));
+    }
+    await_pending_open(state, &req_id, rx, OPEN_REQUEST_TIMEOUT).await
+}
+
+/// v1.2.0 T-B3：前端建好（或没建成）浏览器 tab 后回报结果。
+///
+/// - `ok=true` + `tab_id` → AI 工具那边 await 到 tab_id，可以如实说"已打开"
+/// - `ok=false` + `error` → AI 工具拿到失败原因，必须如实报告失败
+#[tauri::command]
+pub async fn browser_open_result(
+    state: tauri::State<'_, Arc<BrowserState>>,
+    request_id: String,
+    ok: bool,
+    tab_id: Option<String>,
+    error: Option<String>,
+) -> Result<(), String> {
+    resolve_pending_open(state.inner(), &request_id, ok, tab_id, error).await;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// v1.2.0 真机诊断：UA 尾部缺 `Safari/` 标识会被百度等站点判成非标准客户端，
+    /// 返回 https→http 降级脚本 → 被 ATS 拦 → 白屏。这里锁住关键特征防回退。
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn mac_user_agent_含完整_safari_标识() {
+        assert!(
+            MAC_SAFARI_USER_AGENT.starts_with("Mozilla/5.0 (Macintosh;"),
+            "UA 应声明为 macOS 客户端"
+        );
+        assert!(
+            MAC_SAFARI_USER_AGENT.contains("Safari/"),
+            "必须含 Safari/ 标识——缺它就是 baidu 白屏的根因"
+        );
+        assert!(
+            MAC_SAFARI_USER_AGENT.contains("Version/"),
+            "必须含 Version/ 段，裸 WKWebView UA 正是缺这两段"
+        );
+        // 换行续写的字符串字面量不该把缩进空格带进 UA
+        assert!(
+            !MAC_SAFARI_USER_AGENT.contains("  "),
+            "UA 不应含连续空格（\\ 续行缩进泄漏）"
+        );
+    }
+
+    // v1.3.0 R3b：bounds 日志去重（排查"网页不随面板自适应"时要能读懂 dev log）
+    #[test]
+    fn bounds_日志_首次必打_相同值不重复打() {
+        let mut logged = HashMap::new();
+        assert!(bounds_log_changed(&mut logged, "t1", (0.0, 30.0, 370.0, 500.0)));
+        // 前端 scroll 监听会用完全相同的值反复上报 → 不该刷屏
+        assert!(!bounds_log_changed(&mut logged, "t1", (0.0, 30.0, 370.0, 500.0)));
+        assert!(!bounds_log_changed(&mut logged, "t1", (0.0, 30.0, 370.0, 500.0)));
+    }
+
+    #[test]
+    fn bounds_日志_尺寸变化必打_拖窄面板不会被去重吞掉() {
+        let mut logged = HashMap::new();
+        assert!(bounds_log_changed(&mut logged, "t1", (0.0, 30.0, 800.0, 600.0)));
+        // 面板被拖窄：宽度变了，必须留下日志，否则排查时看不到真实尺寸
+        assert!(bounds_log_changed(&mut logged, "t1", (0.0, 30.0, 370.0, 600.0)));
+        // 只有 x 变（面板左右平移）同样要打
+        assert!(bounds_log_changed(&mut logged, "t1", (12.0, 30.0, 370.0, 600.0)));
+    }
+
+    #[test]
+    fn bounds_日志_按_tab_独立记账() {
+        let mut logged = HashMap::new();
+        assert!(bounds_log_changed(&mut logged, "t1", (0.0, 0.0, 370.0, 500.0)));
+        // 另一个 tab 即使数值相同也是首次 → 要打
+        assert!(bounds_log_changed(&mut logged, "t2", (0.0, 0.0, 370.0, 500.0)));
+        assert!(!bounds_log_changed(&mut logged, "t2", (0.0, 0.0, 370.0, 500.0)));
+        assert!(!bounds_log_changed(&mut logged, "t1", (0.0, 0.0, 370.0, 500.0)));
+    }
+
+    #[tokio::test]
+    async fn bounds_日志表_close_tab_后清理() {
+        let state = Arc::new(BrowserState::default());
+        {
+            let mut logged = state.last_logged_bounds.lock().await;
+            bounds_log_changed(&mut logged, "t1", (0.0, 0.0, 370.0, 500.0));
+        }
+        assert_eq!(state.last_logged_bounds.lock().await.len(), 1);
+        // 模拟 browser_close_tab / panel_close_all 的清理动作
+        state.last_logged_bounds.lock().await.remove("t1");
+        assert!(state.last_logged_bounds.lock().await.is_empty());
+    }
 
     #[test]
     fn make_tab_id_格式正确_且唯一() {
@@ -738,6 +1328,102 @@ mod tests {
         assert_eq!(result.unwrap().unwrap(), "{\"url\":\"x\"}");
     }
 
+    // =====================================================================
+    // v1.2.0 T-B3：AI 主动开浏览器（browser:open_requested 反向通道）
+    // =====================================================================
+
+    #[tokio::test]
+    async fn pending_opens_默认为空() {
+        let s = BrowserState::default();
+        assert_eq!(s.pending_opens.lock().await.len(), 0);
+        assert!(s.app.get().is_none(), "单测环境不应有 AppHandle");
+    }
+
+    #[test]
+    fn open_requested_event_序列化_snake_case() {
+        let ev = OpenRequestedEvent {
+            request_id: "open-1".to_string(),
+            url: Some("https://example.com".to_string()),
+        };
+        let json = serde_json::to_string(&ev).unwrap();
+        assert!(json.contains("\"request_id\":\"open-1\""));
+        assert!(json.contains("\"url\":\"https://example.com\""));
+        // url 缺省时序列化为 null（前端类型 string | null）
+        let ev2 = OpenRequestedEvent {
+            request_id: "open-2".to_string(),
+            url: None,
+        };
+        assert!(serde_json::to_string(&ev2).unwrap().contains("\"url\":null"));
+    }
+
+    #[tokio::test]
+    async fn 前端回报成功_await_拿到_tab_id() {
+        let state = Arc::new(BrowserState::default());
+        let (req_id, rx) = register_pending_open(&state).await;
+        assert!(req_id.starts_with("open-"));
+        assert_eq!(state.pending_opens.lock().await.len(), 1);
+
+        resolve_pending_open(&state, &req_id, true, Some("browser-x".into()), None).await;
+        let got = await_pending_open(&state, &req_id, rx, Duration::from_secs(1)).await;
+        assert_eq!(got.unwrap(), "browser-x");
+        assert_eq!(
+            state.pending_opens.lock().await.len(),
+            0,
+            "resolve 后 pending 必须清空"
+        );
+    }
+
+    #[tokio::test]
+    async fn 前端回报失败_await_拿到_错误原因() {
+        let state = Arc::new(BrowserState::default());
+        let (req_id, rx) = register_pending_open(&state).await;
+        resolve_pending_open(&state, &req_id, false, None, Some("openTab 被拒".into())).await;
+        let got = await_pending_open(&state, &req_id, rx, Duration::from_secs(1)).await;
+        assert_eq!(got.unwrap_err(), "openTab 被拒");
+    }
+
+    #[tokio::test]
+    async fn 前端回报_ok_但没给_tab_id_视为失败() {
+        // 防谎报：没有真 tab_id 就不能算"已打开"
+        let state = Arc::new(BrowserState::default());
+        let (req_id, rx) = register_pending_open(&state).await;
+        resolve_pending_open(&state, &req_id, true, Some("   ".into()), None).await;
+        let got = await_pending_open(&state, &req_id, rx, Duration::from_secs(1)).await;
+        assert!(got.is_err(), "空 tab_id 必须判失败");
+    }
+
+    #[tokio::test]
+    async fn await_pending_open_超时_清理_pending_并报错() {
+        let state = Arc::new(BrowserState::default());
+        let (req_id, rx) = register_pending_open(&state).await;
+        let got = await_pending_open(&state, &req_id, rx, Duration::from_millis(30)).await;
+        let err = got.unwrap_err();
+        assert!(err.contains("超时"), "错误应说明超时，实际: {err}");
+        assert_eq!(
+            state.pending_opens.lock().await.len(),
+            0,
+            "超时必须清理 pending_opens，避免泄漏"
+        );
+    }
+
+    #[tokio::test]
+    async fn resolve_pending_open_未知_request_id_静默忽略() {
+        // race：await 已超时删掉 pending，前端结果才到
+        let state = Arc::new(BrowserState::default());
+        resolve_pending_open(&state, "ghost", true, Some("t".into()), None).await;
+        assert_eq!(state.pending_opens.lock().await.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn request_frontend_open_无_app_handle_报错_且不残留_pending() {
+        // 单测环境没有 Tauri app → 必须明确失败（不能谎报成功），且不泄漏 pending
+        let state = Arc::new(BrowserState::default());
+        let r = request_frontend_open(&state, Some("https://example.com")).await;
+        let err = r.unwrap_err();
+        assert!(!err.is_empty());
+        assert_eq!(state.pending_opens.lock().await.len(), 0);
+    }
+
     #[test]
     fn hotkey_inject_script_含有_必要_dispatch() {
         // sanity 检查：注入脚本里必须含 invoke 调用 + browser_forward_hotkey 命令名
@@ -751,5 +1437,243 @@ mod tests {
         assert!(HOTKEY_FORWARD_SCRIPT.contains("','"));
         // 必须 preventDefault 否则浏览器 default 行为会触发
         assert!(HOTKEY_FORWARD_SCRIPT.contains("preventDefault"));
+    }
+
+    // =====================================================================
+    // v1.3.0 P4：等页面真正加载完（wait_for_page_load / current_load_generation）
+    // =====================================================================
+
+    #[tokio::test]
+    async fn current_load_generation_未注册_tab_视为_0() {
+        let state = Arc::new(BrowserState::default());
+        assert_eq!(current_load_generation(&state, "ghost").await, 0);
+    }
+
+    #[tokio::test]
+    async fn current_load_generation_读到_channel_里的实际值() {
+        let state = Arc::new(BrowserState::default());
+        let (tx, _rx) = watch::channel(PageLoadState {
+            generation: 3,
+            url: "https://x.com".into(),
+            title: "X".into(),
+        });
+        state.load_state.lock().await.insert("tab-1".into(), tx);
+        assert_eq!(current_load_generation(&state, "tab-1").await, 3);
+    }
+
+    #[tokio::test]
+    async fn wait_for_page_load_tab_不存在_视为超时_不谎报完成() {
+        let state = Arc::new(BrowserState::default());
+        let outcome = wait_for_page_load(&state, "ghost", 0, Duration::from_millis(50)).await;
+        assert!(matches!(outcome, LoadWaitOutcome::TimedOut));
+    }
+
+    #[tokio::test]
+    async fn wait_for_page_load_订阅前就已完成_立即返回不空等() {
+        // 模拟 browser_open 带 url 建 webview：等 AI 工具拿到 tab_id、
+        // 调 wait_for_page_load 之前，首屏加载可能已经跑完了。
+        let state = Arc::new(BrowserState::default());
+        let (tx, _rx) = watch::channel(PageLoadState::default());
+        tx.send_modify(|s| {
+            s.generation = 1;
+            s.url = "https://example.com".into();
+            s.title = "Example".into();
+        });
+        state.load_state.lock().await.insert("tab-1".into(), tx);
+
+        let started = tokio::time::Instant::now();
+        let outcome = wait_for_page_load(&state, "tab-1", 0, Duration::from_secs(5)).await;
+        // 立即返回，不应该真等了 5s 超时
+        assert!(started.elapsed() < Duration::from_secs(1));
+        match outcome {
+            LoadWaitOutcome::Loaded(s) => {
+                assert_eq!(s.generation, 1);
+                assert_eq!(s.url, "https://example.com");
+                assert_eq!(s.title, "Example");
+            }
+            LoadWaitOutcome::TimedOut => panic!("已完成的加载不该判超时"),
+        }
+    }
+
+    #[tokio::test]
+    async fn wait_for_page_load_晚到的_finished_也能等到() {
+        let state = Arc::new(BrowserState::default());
+        let (tx, _rx) = watch::channel(PageLoadState::default());
+        state.load_state.lock().await.insert("tab-1".into(), tx.clone());
+
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(30)).await;
+            tx.send_modify(|s| {
+                s.generation = 1;
+                s.url = "https://x.com".into();
+            });
+        });
+
+        let outcome = wait_for_page_load(&state, "tab-1", 0, Duration::from_secs(2)).await;
+        assert!(matches!(outcome, LoadWaitOutcome::Loaded(_)));
+    }
+
+    #[tokio::test]
+    async fn wait_for_page_load_只有_title_变化_generation_不变_继续等到超时() {
+        // title 由 on_document_title_changed 独立驱动，不代表 Finished；
+        // 不能把纯 title 更新误判成"加载完成"。
+        let state = Arc::new(BrowserState::default());
+        let (tx, _rx) = watch::channel(PageLoadState::default());
+        state.load_state.lock().await.insert("tab-1".into(), tx.clone());
+
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            tx.send_modify(|s| {
+                s.title = "loading...".into();
+            });
+        });
+
+        let outcome = wait_for_page_load(&state, "tab-1", 0, Duration::from_millis(150)).await;
+        assert!(matches!(outcome, LoadWaitOutcome::TimedOut));
+    }
+
+    #[tokio::test]
+    async fn wait_for_page_load_baseline_非_0_只认超过_baseline_的新一轮() {
+        // 模拟"第二次 navigate"：tab 已经加载过一次（generation=1），
+        // baseline 传 1，只有 generation 变成 2 才算这一轮完成。
+        let state = Arc::new(BrowserState::default());
+        let (tx, _rx) = watch::channel(PageLoadState {
+            generation: 1,
+            url: "https://old.example".into(),
+            title: "旧页面".into(),
+        });
+        state.load_state.lock().await.insert("tab-1".into(), tx.clone());
+
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            tx.send_modify(|s| {
+                s.generation = 2;
+                s.url = "https://new.example".into();
+            });
+        });
+
+        let outcome = wait_for_page_load(&state, "tab-1", 1, Duration::from_secs(2)).await;
+        match outcome {
+            LoadWaitOutcome::Loaded(s) => assert_eq!(s.url, "https://new.example"),
+            LoadWaitOutcome::TimedOut => panic!("应等到 generation=2 的新一轮完成"),
+        }
+    }
+
+    #[tokio::test]
+    async fn browser_open_tab_注册的_load_state_默认_generation_0() {
+        // browser_open_tab 里 watch::channel(PageLoadState::default()) 的起始值
+        // 就是 default；这里单独锁死这个约定（新建 tab 首次 Finished 才是 gen=1）。
+        assert_eq!(PageLoadState::default().generation, 0);
+        assert_eq!(PageLoadState::default().url, "");
+        assert_eq!(PageLoadState::default().title, "");
+    }
+
+    // =====================================================================
+    // v1.3.0 P7：ghost webview —— "用户当前看得见的 tab" 判定
+    // =====================================================================
+
+    #[test]
+    fn resolve_active_tab_没有任何_webview_时_no_tab() {
+        assert_eq!(resolve_active_tab(None, &[]), ActiveTabResolution::NoTab);
+        assert_eq!(
+            resolve_active_tab(Some("browser-1"), &[]),
+            ActiveTabResolution::NoTab,
+            "current_active_id 是过期值时也不能凭空造出一个 tab"
+        );
+    }
+
+    #[test]
+    fn resolve_active_tab_current_有效时直接用() {
+        let ids = vec!["browser-a".to_string(), "browser-b".to_string()];
+        assert_eq!(
+            resolve_active_tab(Some("browser-b"), &ids),
+            ActiveTabResolution::Resolved("browser-b".to_string())
+        );
+    }
+
+    #[test]
+    fn resolve_active_tab_current_失效_且有多个_webview_必须_ambiguous() {
+        // 这是 ghost webview 的核心：绝不允许退化成 keys().next() 随机挑一个
+        let ids = vec![
+            "browser-a".to_string(),
+            "browser-b".to_string(),
+            "browser-c".to_string(),
+        ];
+        assert_eq!(
+            resolve_active_tab(Some("已被关掉的-tab"), &ids),
+            ActiveTabResolution::Ambiguous(3)
+        );
+        assert_eq!(resolve_active_tab(None, &ids), ActiveTabResolution::Ambiguous(3));
+    }
+
+    #[test]
+    fn resolve_active_tab_只有一个_webview_时可唯一确定() {
+        // 只有一个 webview → 它必然就是用户看到的那个，不存在"操作错对象"
+        let ids = vec!["browser-only".to_string()];
+        assert_eq!(
+            resolve_active_tab(None, &ids),
+            ActiveTabResolution::Resolved("browser-only".to_string())
+        );
+        assert_eq!(
+            resolve_active_tab(Some("过期 id"), &ids),
+            ActiveTabResolution::Resolved("browser-only".to_string())
+        );
+    }
+
+    #[test]
+    fn resolve_active_tab_结果不依赖_tab_顺序() {
+        // 锁死"不能靠 HashMap 迭代顺序"的约定：换个顺序结果必须一样
+        let a = vec!["x".to_string(), "y".to_string()];
+        let b = vec!["y".to_string(), "x".to_string()];
+        assert_eq!(resolve_active_tab(None, &a), resolve_active_tab(None, &b));
+        assert_eq!(
+            resolve_active_tab(Some("y"), &a),
+            resolve_active_tab(Some("y"), &b)
+        );
+    }
+
+    #[tokio::test]
+    async fn apply_set_active_对不存在的_tab_报错_且清空_current_active_id() {
+        // 前端拿旧 id 调 set_active 时，旧实现会把这个"幽灵 id"记成 current_active_id，
+        // 之后 AI 侧校验失败又退化成随机兜底 —— 这里改成明确失败 + 清空。
+        let state = Arc::new(BrowserState::default());
+        *state.current_active_id.lock().await = Some("browser-old".to_string());
+
+        let r = apply_set_active(&state, "browser-ghost").await;
+
+        assert!(r.is_err(), "后端没有这个 webview 时必须报错");
+        assert!(
+            state.current_active_id.lock().await.is_none(),
+            "失败后绝不能残留任何 active id（宁可不知道，也不要指错）"
+        );
+    }
+
+    #[tokio::test]
+    async fn clear_current_active_把_active_置空() {
+        let state = Arc::new(BrowserState::default());
+        *state.current_active_id.lock().await = Some("browser-a".to_string());
+        clear_current_active(&state).await;
+        assert!(state.current_active_id.lock().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn resolve_active_tab_of_空_state_是_no_tab() {
+        let state = Arc::new(BrowserState::default());
+        assert_eq!(
+            resolve_active_tab_of(&state).await,
+            ActiveTabResolution::NoTab
+        );
+    }
+
+    #[tokio::test]
+    async fn close_tab_同时清理_load_state_避免泄漏() {
+        // 直接操作 state 模拟 browser_close_tab 内部逻辑（单测没有真 Webview）
+        let state = Arc::new(BrowserState::default());
+        let (tx, _rx) = watch::channel(PageLoadState::default());
+        state.load_state.lock().await.insert("tab-1".into(), tx);
+        assert_eq!(state.load_state.lock().await.len(), 1);
+
+        state.load_state.lock().await.remove("tab-1");
+        assert_eq!(state.load_state.lock().await.len(), 0);
     }
 }

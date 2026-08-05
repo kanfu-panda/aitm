@@ -41,7 +41,7 @@ use crate::settings::AppSettings;
 use crate::store::AitmDb;
 use crate::store::repo_global;
 use crate::store::repo_project;
-use crate::tools::{ToolContext, registry::ToolRegistry};
+use crate::tools::{RiskClass, ToolContext, ToolPreview, registry::ToolRegistry};
 
 // 让旧路径（如 settings、tests）继续 `use crate::ipc::ai::AiDoneEvent` / `UsageInfo` 不破。
 pub use crate::orchestrator::tool_loop::{AiDoneEvent, UsageInfo};
@@ -356,7 +356,12 @@ AI 回复："已跳转到 Google。"  ← **调了工具才说"已跳转"**
 - `search_history(query, max_results?)`：跨所有终端 tab 搜关键字
 - `run_command(session_id, cmd)`：在指定终端 tab 执行命令（每次会问用户确认）
 
-浏览器类（v0.5.5，aitm 内嵌浏览器；用户在 ActivityBar 点地球图标打开）：
+Skills 类（v1.3.0，兼容 Claude Code skills）：
+- `list_skills(query?)`：搜索可用 skill。**system prompt 里没有 skill 清单**（太长会挤掉上面的规则），要找 skill 一律先调本工具：传 `query` 按关键词匹配名字 + 简介，不传只返回全部名字
+- `load_skill(name, file?)`：加载一个 skill 的完整指令正文。要照某个 skill 干活**必须先调本工具拿正文**，不要凭名字猜。`file` 传相对路径可读该 skill 目录下的辅助文件（如 `references/xxx.md`）——这些文件在工作目录之外，`read_file` 读不到，只能用本工具
+
+浏览器类（v0.5.5，aitm 内嵌浏览器；**面板由你自己调 `browser_open` 打开**）：
+- `browser_open(url?)`：打开内嵌浏览器面板。带 url 就直接导航过去，不带就开空白页；已打开时自动复用当前 tab。**需要浏览器时先调这个**，绝对不要让用户手动去点活动栏的地球图标
 - `browser_snapshot(tab_id?)`：抓内嵌浏览器当前页面的可交互元素（a11y 树）。返回 url/title/elements 数组（每个 element 有 ref/tag/text）。**用户提到"看页面 / 看网页 / 看 xx 网站有什么"时主动调这个**
 - `browser_navigate(url, tab_id?)`：让内嵌浏览器导航到 URL。**用户说"跳/到/去/打开/导航 X"无条件调本工具，不要根据会话历史判断"已经在 X"**
 - `browser_click(ref, tab_id?)`：点击 snapshot 抓到的元素（按 ref 引用）。**先 snapshot 拿 ref**
@@ -364,10 +369,15 @@ AI 回复："已跳转到 Google。"  ← **调了工具才说"已跳转"**
 - `browser_eval(script, tab_id?)`：任意 JS eval（仅必要时用）
 - 这些工具的 `tab_id` 不传时自动用 active 浏览器 tab
 
+**浏览器面板没打开时**（v1.2.0）：
+- `browser_navigate` 会**自动打开面板并导航**，所以"打开 / 跳转到某网站"直接调 `browser_navigate` 一步到位
+- `browser_snapshot` / `click` / `fill` / `eval` 会报"面板未打开"→ 这时**你自己调 `browser_open`**，然后重试原操作
+- **禁止**回复"请你在活动栏点地球图标打开浏览器"这类把活推回给用户的话
+
 # 其他行为约定
 
 1. 用户问"看 / 读 / 列 / 查 / 搜 / 跑 / 执行"类问题时，**直接调对应工具**
-2. 用户提到"页面 / 网页 / 浏览器 / 网站"时，**用 browser_* 工具操作内嵌浏览器**（不要建议用户自己打开浏览器）
+2. 用户提到"页面 / 网页 / 浏览器 / 网站"时，**用 browser_* 工具操作内嵌浏览器**（不要建议用户自己打开浏览器，也不要让用户手动开面板——你有 `browser_open`）
 3. **区分两种"搜索"**：
    - 用户在 **浏览器上下文**中说"搜索 / 在搜索框填 X / 点搜索按钮"：先 `browser_snapshot` 找搜索框 ref → `browser_fill(ref=搜索框, value="X")` → `browser_snapshot` 找搜索按钮 → `browser_click`
    - 用户在 **终端上下文**中说"搜历史输出 X" / "查终端日志里有没有 X"：用 `search_history(query="X")`
@@ -384,23 +394,42 @@ AI 回复："已跳转到 Google。"  ← **调了工具才说"已跳转"**
 /// 1F 持久化版本的 EventSink：包装 [`TauriSink`]，在 emit_token 累积 assistant
 /// 文本，emit_done 时一次性把 assistant message + token usage 写 SQLite。
 ///
-/// 设计取舍（plan §2.5）：
+/// 设计取舍（plan §2.5 + T-B4）：
 /// - **token delta 不写盘**：流式 50+ chunks/s 同步写 sqlite 会拖慢 LLM 响应；
 ///   累积到内存的 String，emit_done 时一次写
-/// - **tool_call 暂不持久化**：完整持久化要在 sink 里维护 call_id → 元信息
-///   的 map（emit_tool_request 时存 args_preview/risk，emit_tool_finished
-///   时合并成完整 payload）。T8 简化只持久化 user + assistant + token usage；
-///   工具调用气泡仍是 in-memory，重启后丢失（接受 — 用户极少在工具执行中重启）
+/// - **tool_call 持久化（T-B4）**：工具调用信息横跨多个事件——name/args/risk/
+///   preview 在 request/started 阶段给出，result/status 在 finished 阶段给出。
+///   sink 用 `pending_tools` 这张 `call_id → ToolCallAccum` 表把跨事件信息攒齐，
+///   在 emit_tool_finished 时合并成完整 payload（`kind = "tool_call"`）落盘。
+///   落盘前先 flush 累积的 assistant 文本，保证「文本 → 工具 → 文本」时序正确，
+///   重启回看时工具气泡插在正确位置。
 struct PersistenceSink {
     inner: TauriSink,
     db: Arc<AitmDb>,
     bucket: String,
-    /// 同一 conversation 流式累积 assistant text；done 时 drain 写 db
+    /// 同一 conversation 流式累积 assistant text；done / 工具落盘前 drain 写 db
     assistant_buffer: StdMutex<String>,
+    /// T-B4：call_id → 该工具调用的跨事件累积信息（request/started 阶段填 name/
+    /// args/risk/preview，finished 阶段合并 result/status 后落盘并移除）。
+    pending_tools: StdMutex<HashMap<String, ToolCallAccum>>,
     /// 该 sink 服务的 conversation id（与 emit 事件里的 cid 比对一致）
     cid: String,
     /// provider id 用于 token usage 累加
     provider_id: String,
+}
+
+/// T-B4：一次工具调用跨事件累积的元信息。
+///
+/// `ai:tool_request`（仅 High/Destructive 触发）给出 name/args/risk/risk_reason/
+/// preview；`ai:tool_started`（Low 自动批也会触发）兜底补 name；`ai:tool_finished`
+/// 给出 result/status/auto_approved_reason/preview，合并后落盘。
+#[derive(Default, Clone)]
+struct ToolCallAccum {
+    name: String,
+    args_preview: String,
+    risk: Option<RiskClass>,
+    risk_reason: Option<String>,
+    preview: Option<ToolPreview>,
 }
 
 impl PersistenceSink {
@@ -410,6 +439,59 @@ impl PersistenceSink {
             .map(|mut b| std::mem::take(&mut *b))
             .unwrap_or_default()
     }
+
+    /// T-B4：把当前累积的 assistant 文本落盘成一条 `assistant` 消息（无 usage）。
+    ///
+    /// 在工具调用落盘之前调，保证 db 里「assistant 文本 → tool_call → 后续文本」
+    /// 的 seq 顺序与真实对话时序一致。缓冲区为空时静默跳过。
+    fn flush_assistant_text(&self) {
+        let text = self.drain_assistant_text();
+        if text.is_empty() {
+            return;
+        }
+        let payload = serde_json::json!({ "content": text }).to_string();
+        if let Err(err) = persist_message(&self.db, &self.bucket, &self.cid, "assistant", &payload) {
+            tracing::warn!("persist assistant (工具前) message failed: {err}");
+        }
+    }
+}
+
+/// T-B4：把攒齐的工具调用信息拼成 `tool_call` 消息的 JSON payload 字符串。
+///
+/// 抽成纯函数便于单测（不碰 db）。字段与前端 `messagesDtoToEntries` 恢复逻辑对齐：
+/// `call_id / name / args_preview / risk / status / result{content,is_error}`，
+/// 可选 `risk_reason / auto_approved_reason / preview`。
+fn build_tool_call_payload(
+    call_id: &str,
+    accum: &ToolCallAccum,
+    content: &str,
+    is_error: bool,
+    elapsed_ms: u64,
+    auto_approved_reason: Option<&str>,
+    preview: Option<&ToolPreview>,
+) -> String {
+    // status 与前端 onAiToolFinished 的映射保持一致：is_error → "error"，否则 "done"
+    let status = if is_error { "error" } else { "done" };
+    let mut payload = serde_json::json!({
+        "call_id": call_id,
+        "name": accum.name,
+        "args_preview": accum.args_preview,
+        "risk": accum.risk.unwrap_or(RiskClass::Low),
+        "status": status,
+        // T-A3：工具耗时（毫秒）落盘，重启回看仍能显示耗时
+        "elapsed_ms": elapsed_ms,
+        "result": { "content": content, "is_error": is_error },
+    });
+    if let Some(rr) = &accum.risk_reason {
+        payload["risk_reason"] = serde_json::Value::String(rr.clone());
+    }
+    if let Some(ar) = auto_approved_reason {
+        payload["auto_approved_reason"] = serde_json::Value::String(ar.to_string());
+    }
+    if let Some(p) = preview {
+        payload["preview"] = serde_json::to_value(p).unwrap_or(serde_json::Value::Null);
+    }
+    payload.to_string()
 }
 
 impl EventSink for PersistenceSink {
@@ -423,19 +505,64 @@ impl EventSink for PersistenceSink {
     }
 
     fn emit_tool_request(&self, e: &AiToolRequestEvent) {
+        // T-B4：request 阶段拿到 name/args/risk/risk_reason/preview，攒进 accum
+        if e.conversation_id == self.cid {
+            if let Ok(mut m) = self.pending_tools.lock() {
+                let a = m.entry(e.call_id.clone()).or_default();
+                a.name = e.name.clone();
+                a.args_preview = e.args_preview.clone();
+                a.risk = Some(e.risk);
+                a.risk_reason = e.risk_reason.clone();
+                if e.preview.is_some() {
+                    a.preview = e.preview.clone();
+                }
+            }
+        }
         self.inner.emit_tool_request(e);
     }
 
     fn emit_tool_started(&self, e: &AiToolStartedEvent) {
+        // T-B4：Low 自动批不发 request 事件，靠 started 兜底补 name（不覆盖已有）
+        if e.conversation_id == self.cid {
+            if let Ok(mut m) = self.pending_tools.lock() {
+                let a = m.entry(e.call_id.clone()).or_default();
+                if a.name.is_empty() {
+                    a.name = e.name.clone();
+                }
+            }
+        }
         self.inner.emit_tool_started(e);
     }
 
     fn emit_tool_finished(&self, e: &AiToolFinishedEvent) {
-        // 工具开始下一轮 LLM 之前，assistant 已经有累积的 text → 也要写一次（
-        // 否则跨工具调用的中间文本会丢）。这种 case：assistant 说"我先看一下"
-        // → tool_call → assistant 继续。如果不在 tool_finished 时 flush，
-        // "我先看一下" 会和最后一段文本被合并到一条 assistant 消息里。
-        // 简化：暂不在这里 flush（这两段文本本来在 LLM 视角就是同一回合）。
+        // T-B4：finished 阶段合并 accum + result/status/preview 落盘 tool_call。
+        // 先 flush 累积的 assistant 文本，保证「文本 → 工具 → 文本」时序正确
+        // （这种 case：assistant 说"我先看一下" → tool_call → assistant 继续）。
+        if e.conversation_id == self.cid {
+            self.flush_assistant_text();
+            let accum = self
+                .pending_tools
+                .lock()
+                .ok()
+                .and_then(|mut m| m.remove(&e.call_id))
+                .unwrap_or_default();
+            // preview 优先用 finished 事件的，回退到 request 阶段攒的
+            let preview = e.preview.as_ref().or(accum.preview.as_ref());
+            let payload = build_tool_call_payload(
+                &e.call_id,
+                &accum,
+                &e.content,
+                e.is_error,
+                e.elapsed_ms,
+                e.auto_approved_reason.as_deref(),
+                preview,
+            );
+            if let Err(err) =
+                persist_message(&self.db, &self.bucket, &self.cid, "tool_call", &payload)
+            {
+                tracing::warn!("persist tool_call message failed: {err}");
+            }
+        }
         self.inner.emit_tool_finished(e);
     }
 
@@ -607,6 +734,26 @@ pub(crate) fn resolve_tool_cwd(scope: &Scope, session_cwd: Option<PathBuf>) -> P
     dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"))
 }
 
+/// v1.3.0 P8：把 CC skills 的**导航说明**（几百字节）追加到 system prompt 尾部。
+///
+/// **不再注入全量清单**。真机实证：118 个 skill 的清单撑到 20KB 后，AI 只「看到」
+/// 三分之一（连续两次回答「共 37 个」），还把排在前面的反幻觉铁律冲淡到没调工具
+/// 就宣称「浏览器已经打开了」。清单改由 `list_skills` 工具按需搜索，
+/// 正文仍由 `load_skill` 按需加载。段落内容见 [`crate::skills::render_hint`]。
+///
+/// 没扫到任何 skill（没装 / 目录不存在 / 读取失败）→ 原样返回 `system`，
+/// **绝不让 AI 主流程崩**。
+///
+/// 阻塞 IO（首次扫目录 + 读 SKILL.md；后续 60s 内命中
+/// [`crate::skills::load_skills_cached`] 的缓存），调用方须放在 `spawn_blocking` 里。
+pub(crate) fn append_skills_hint(system: String, cwd: &std::path::Path) -> String {
+    let found = crate::skills::load_skills_cached(cwd);
+    match crate::skills::render_hint(&found, cwd) {
+        Some(block) => format!("{system}\n\n{block}"),
+        None => system,
+    }
+}
+
 #[tauri::command]
 pub async fn ai_chat_send(
     args: ChatSendArgs,
@@ -754,14 +901,26 @@ async fn spawn_chat_with_scope(
         .await;
     }
 
-    // 2. compose system prompt（base + 全局 MEMORY + 项目 MEMORY）
+    // HR5-3 沙盒根：项目 scope 用项目根；其他 scope 先查 active session cwd 再 HOME 兜底。
+    // v1.3.0 B2：提到 system prompt 组装之前算 —— 项目级 skills 要按这个 cwd 扫
+    // （`<cwd>/.claude/skills`）。
+    let session_cwd = match args.active_session_id.as_deref() {
+        Some(sid) if !sid.is_empty() => session_arc.current_cwd(sid).await,
+        _ => None,
+    };
+    let cwd = resolve_tool_cwd(&scope, session_cwd);
+
+    // 2. compose system prompt（base + 全局 MEMORY + 项目 MEMORY + skills 导航说明）
     let base_system = args
         .system
         .clone()
         .unwrap_or_else(default_system_prompt);
     let scope_for_compose = scope.clone();
+    let cwd_for_skills = cwd.clone();
     let composed = tokio::task::spawn_blocking(move || {
-        crate::scope::memory::compose_system_prompt(&base_system, &scope_for_compose)
+        let with_memory =
+            crate::scope::memory::compose_system_prompt(&base_system, &scope_for_compose);
+        append_skills_hint(with_memory, &cwd_for_skills)
     })
     .await
     .unwrap_or_else(|_| default_system_prompt());
@@ -805,13 +964,6 @@ async fn spawn_chat_with_scope(
         Arc::new(wl)
     };
 
-    // HR5-3 沙盒根：项目 scope 用项目根；其他 scope 先查 active session cwd 再 HOME 兜底
-    let session_cwd = match args.active_session_id.as_deref() {
-        Some(sid) if !sid.is_empty() => session_arc.current_cwd(sid).await,
-        _ => None,
-    };
-    let cwd = resolve_tool_cwd(&scope, session_cwd);
-
     let ctx = ToolContext {
         session_state: session_arc,
         cwd,
@@ -825,12 +977,21 @@ async fn spawn_chat_with_scope(
         db,
         bucket,
         assistant_buffer: StdMutex::new(String::new()),
+        pending_tools: StdMutex::new(HashMap::new()),
         cid: cid.clone(),
         provider_id,
     });
 
+    // C1：查当前 model 的上下文窗口（token）透传给 loop 做预算裁剪；
+    // 查不到 → None（loop 用保守默认 32k）。
+    let context_window = provider
+        .list_models()
+        .into_iter()
+        .find(|m| m.id == args.model)
+        .map(|m| m.context_window);
+
     let task = tokio::spawn(async move {
-        run_tool_loop(req, provider, tools, ctx, sink, cid, handle).await;
+        run_tool_loop(req, provider, tools, ctx, sink, cid, handle, context_window).await;
     });
 
     *state.active.lock().await = Some(task);
@@ -872,12 +1033,24 @@ pub async fn ai_chat_cancel(state: State<'_, AiState>) -> Result<(), String> {
 }
 
 /// 用户在前端 ConfirmDialog 点了"批准" → 喂回 tool loop。
+///
+/// v1.3.0 A1：`remember = Some(true)` 表示用户点的是「本会话都允许」，
+/// 该工具在**当前会话**内后续调用自动放行（内存态，进程重启即清空）。
+/// 参数可缺省（老前端不传 → `None` → 视为 false），保持向后兼容。
+/// DESTRUCTIVE 的兜底拦截在 [`tool_loop::resolve_approval`] 里，不信前端。
 #[tauri::command]
 pub async fn ai_tool_approve(
     call_id: String,
+    remember: Option<bool>,
     state: State<'_, AiState>,
 ) -> Result<(), String> {
-    tool_loop::resolve_approval(&state.tool_loop_handle, &call_id, true).await;
+    tool_loop::resolve_approval(
+        &state.tool_loop_handle,
+        &call_id,
+        true,
+        remember.unwrap_or(false),
+    )
+    .await;
     Ok(())
 }
 
@@ -887,7 +1060,7 @@ pub async fn ai_tool_reject(
     call_id: String,
     state: State<'_, AiState>,
 ) -> Result<(), String> {
-    tool_loop::resolve_approval(&state.tool_loop_handle, &call_id, false).await;
+    tool_loop::resolve_approval(&state.tool_loop_handle, &call_id, false, false).await;
     Ok(())
 }
 
@@ -971,6 +1144,18 @@ mod tests {
     }
 
     #[test]
+    fn default_system_prompt_要求_ai_自己调_browser_open() {
+        // v1.2.0 T-B3：真机 smoke 暴露 AI 只会说"请你点地球图标"。
+        // prompt 必须列出 browser_open 并明确禁止把打开面板推回给用户。
+        let prompt = default_system_prompt();
+        assert!(prompt.contains("browser_open"), "工具清单缺 browser_open");
+        assert!(
+            prompt.contains("地球图标"),
+            "prompt 必须明确禁止让用户手动点地球图标"
+        );
+    }
+
+    #[test]
     fn default_system_prompt_含铁律_v2_段() {
         // v0.9.2 HR5-4：system prompt 必须含"铁律 v2"段，引导 LLM
         // 看 tool_result.ok 判断 browser_navigate 是否真成功。
@@ -996,6 +1181,101 @@ mod tests {
             prompt.contains("attempted_url") || prompt.contains("ok: false"),
             "铁律 v2 应说明 tool_result 是结构化对象"
         );
+    }
+
+    #[test]
+    fn default_system_prompt_含_skills_两个工具的引导() {
+        // v1.3.0 B2 + P8：prompt 必须列出 list_skills（搜）和 load_skill（拿正文），
+        // 并说清「不要凭名字猜」，否则 LLM 会凭 skill 名字瞎编内容。
+        let prompt = default_system_prompt();
+        assert!(prompt.contains("load_skill"), "工具清单缺 load_skill");
+        assert!(prompt.contains("list_skills"), "工具清单缺 list_skills");
+        assert!(
+            prompt.contains("没有 skill 清单"),
+            "必须说清 system prompt 里没有清单，要搜"
+        );
+        assert!(
+            prompt.contains("不要凭名字猜"),
+            "必须明确禁止凭 skill 名字猜内容"
+        );
+        assert!(
+            prompt.contains("references/"),
+            "必须说明辅助文件也走 load_skill（read_file 读不到）"
+        );
+    }
+
+    // ============================================================
+    // v1.3.0 P8：skills 只往 system prompt 注入导航说明，不注入清单
+    // ============================================================
+
+    /// 在 `<cwd>/.claude/skills/` 下造一个项目级 skill。
+    fn write_test_skill(cwd: &std::path::Path, name: &str, desc: &str, body: &str) {
+        let dir = cwd.join(".claude").join("skills").join(name);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("SKILL.md"),
+            format!("---\nname: {name}\ndescription: {desc}\n---\n{body}"),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn append_skills_hint_保留原文并点名项目级_skill() {
+        let cwd = tempfile::TempDir::new().unwrap();
+        write_test_skill(
+            cwd.path(),
+            "aitm-test-inject",
+            "注入测试用简介",
+            "# 正文不该进 system prompt\n",
+        );
+
+        let got = append_skills_hint("BASE_PROMPT".to_string(), cwd.path());
+        assert!(got.starts_with("BASE_PROMPT"), "原 system prompt 必须保留在前");
+        assert!(got.contains("aitm-test-inject"), "项目级 skill 应被点名");
+        assert!(got.contains("list_skills"), "应引导去搜索");
+        assert!(got.contains("load_skill"), "应引导去加载正文");
+        assert!(
+            !got.contains("注入测试用简介"),
+            "🔴 P8：简介不再进 system prompt（要看简介调 list_skills）"
+        );
+        assert!(
+            !got.contains("# 正文不该进 system prompt"),
+            "🔴 skill 正文绝不能进 system prompt（会爆上下文）"
+        );
+    }
+
+    /// 🔴 P8 的核心回归：注入段必须是**数百字节**，不是老实现的 20KB 全量清单。
+    ///
+    /// 真机实证：20KB 清单一来 AI 只「看到」三分之一（118 个说成 37 个），
+    /// 二来把排在 prompt 前面的反幻觉铁律冲淡（没调工具就说「浏览器已经打开了」）。
+    #[test]
+    fn append_skills_hint_注入体积在数百字节量级() {
+        let cwd = tempfile::TempDir::new().unwrap();
+        // 造 30 个项目级 skill，每个都带 300 字符的长简介（真机 description 就这么长）
+        for i in 0..30 {
+            write_test_skill(
+                cwd.path(),
+                &format!("aitm-test-size-{i:02}"),
+                &"描".repeat(300),
+                "正文",
+            );
+        }
+        let base = "BASE_PROMPT".to_string();
+        let got = append_skills_hint(base.clone(), cwd.path());
+        let injected = got.len() - base.len();
+        assert!(
+            injected < 1024,
+            "注入段应在数百字节量级（老实现 20KB），实得 {injected} 字节：\n{got}"
+        );
+        assert!(!got.contains("描描描"), "🔴 任何 skill 的简介都不该出现");
+    }
+
+    #[test]
+    fn append_skills_hint_目录不存在也不炸() {
+        // 项目下没有 .claude/skills：不应 panic，且原 prompt 必须完整保留
+        let cwd = tempfile::TempDir::new().unwrap();
+        let got = append_skills_hint("BASE_PROMPT".to_string(), cwd.path());
+        assert!(got.starts_with("BASE_PROMPT"));
     }
 
     // ============================================================
@@ -1306,5 +1586,93 @@ mod tests {
         assert_eq!(term.session_id, "sess-uuid-1");
         assert_eq!(term.cwd.as_deref(), Some("/tmp"));
         assert_eq!(rc.os, "macos");
+    }
+
+    // ============================================================
+    // T-B4：build_tool_call_payload（tool_call 消息 payload 拼装）
+    // ============================================================
+
+    #[test]
+    fn build_tool_call_payload_成功工具_含全字段() {
+        // High 风险 + 有 args + preview + auto_approved_reason 的完整场景
+        let accum = ToolCallAccum {
+            name: "edit_file".into(),
+            args_preview: r#"{"path":"a.txt"}"#.into(),
+            risk: Some(RiskClass::High),
+            risk_reason: Some("L2：写文件".into()),
+            preview: None,
+        };
+        let preview = ToolPreview {
+            kind: "diff".into(),
+            path: "a.txt".into(),
+            old_text: "旧".into(),
+            new_text: "新".into(),
+        };
+        let s = build_tool_call_payload(
+            "tc1",
+            &accum,
+            "已改 1 处",
+            false,
+            1234,
+            Some("白名单：edit_file *"),
+            Some(&preview),
+        );
+        let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+        assert_eq!(v["call_id"], "tc1");
+        assert_eq!(v["name"], "edit_file");
+        assert_eq!(v["elapsed_ms"], 1234);
+        assert_eq!(v["args_preview"], r#"{"path":"a.txt"}"#);
+        assert_eq!(v["risk"], "high");
+        assert_eq!(v["status"], "done");
+        assert_eq!(v["result"]["content"], "已改 1 处");
+        assert_eq!(v["result"]["is_error"], false);
+        assert_eq!(v["risk_reason"], "L2：写文件");
+        assert_eq!(v["auto_approved_reason"], "白名单：edit_file *");
+        // preview 一并持久化（回看 diff 用）
+        assert_eq!(v["preview"]["kind"], "diff");
+        assert_eq!(v["preview"]["path"], "a.txt");
+        assert_eq!(v["preview"]["old_text"], "旧");
+        assert_eq!(v["preview"]["new_text"], "新");
+    }
+
+    #[test]
+    fn build_tool_call_payload_错误工具_status_为_error() {
+        // is_error=true → status="error"；缺省字段（无 accum 信息）也能拼
+        let accum = ToolCallAccum::default();
+        let s = build_tool_call_payload("tc2", &accum, "L1 黑名单拦截", true, 0, None, None);
+        let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+        assert_eq!(v["status"], "error");
+        assert_eq!(v["result"]["is_error"], true);
+        assert_eq!(v["result"]["content"], "L1 黑名单拦截");
+        // 无 accum 信息时 name 空、risk 兜底 low
+        assert_eq!(v["name"], "");
+        assert_eq!(v["risk"], "low");
+        // 未提供的可选字段不应出现
+        assert!(v.get("risk_reason").is_none());
+        assert!(v.get("auto_approved_reason").is_none());
+        assert!(v.get("preview").is_none());
+    }
+
+    #[test]
+    fn build_tool_call_payload_preview_从_finished_优先() {
+        // finished 阶段 preview 优先于 accum 里 request 阶段攒的（本函数传入已择优的）
+        let accum = ToolCallAccum {
+            name: "write_file".into(),
+            args_preview: String::new(),
+            risk: Some(RiskClass::High),
+            risk_reason: None,
+            preview: None,
+        };
+        let fin_preview = ToolPreview {
+            kind: "diff".into(),
+            path: "new.txt".into(),
+            old_text: String::new(),
+            new_text: "hello".into(),
+        };
+        let s = build_tool_call_payload("tc3", &accum, "已写入", false, 42, None, Some(&fin_preview));
+        let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+        assert_eq!(v["preview"]["path"], "new.txt");
+        assert_eq!(v["preview"]["new_text"], "hello");
+        assert_eq!(v["preview"]["old_text"], "");
     }
 }

@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import MessageBubble from "../MessageBubble";
 import type { AssistantMessage, UserMessage } from "../../stores/chat";
@@ -115,5 +115,125 @@ describe("MessageBubble v1.1.0 F7 md 代码块语法高亮", () => {
     const after = container.querySelector("code")!.className;
     expect(after).toBe(before);
     document.documentElement.dataset.theme = "dark";
+  });
+});
+
+describe("MessageBubble A1 已停止标记", () => {
+  it("assistant.stopped=true 时气泡尾部显示「已停止」", () => {
+    render(
+      <MessageBubble message={{ kind: "assistant", content: "部分内容", stopped: true }} />,
+    );
+    expect(screen.getByText("已停止")).toBeInTheDocument();
+  });
+
+  it("assistant.stopped 缺省（正常完成）不显示「已停止」", () => {
+    render(<MessageBubble message={assistant("正常回答")} />);
+    expect(screen.queryByText("已停止")).not.toBeInTheDocument();
+  });
+
+  it("user 消息不受 stopped 影响（类型上 user 没有该字段，纯防御性验证渲染不炸）", () => {
+    render(<MessageBubble message={user("你好")} />);
+    expect(screen.queryByText("已停止")).not.toBeInTheDocument();
+  });
+});
+
+describe("MessageBubble A2 重试按钮", () => {
+  it("最后一条 assistant 气泡、非 streaming、传了 onRetry → 显示重试按钮", () => {
+    const onRetry = vi.fn();
+    render(
+      <MessageBubble
+        message={assistant("回答完毕")}
+        isLast
+        onRetry={onRetry}
+      />,
+    );
+    const btn = screen.getByRole("button", { name: "重试此回复" });
+    expect(btn).toBeInTheDocument();
+    fireEvent.click(btn);
+    expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+
+  it("streaming 中不显示重试按钮（哪怕是最后一条 + 传了 onRetry）", () => {
+    render(
+      <MessageBubble
+        message={assistant("正在生成…")}
+        isLast
+        streaming
+        onRetry={vi.fn()}
+      />,
+    );
+    expect(
+      screen.queryByRole("button", { name: "重试此回复" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("不是最后一条消息（isLast=false）不显示重试按钮", () => {
+    render(
+      <MessageBubble message={assistant("更早的一轮回答")} onRetry={vi.fn()} />,
+    );
+    expect(
+      screen.queryByRole("button", { name: "重试此回复" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("未传 onRetry 不显示重试按钮", () => {
+    render(<MessageBubble message={assistant("回答")} isLast />);
+    expect(
+      screen.queryByRole("button", { name: "重试此回复" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("user 消息永不显示重试按钮（哪怕是最后一条 + 传了 onRetry）", () => {
+    render(<MessageBubble message={user("你好")} isLast onRetry={vi.fn()} />);
+    expect(
+      screen.queryByRole("button", { name: "重试此回复" }),
+    ).not.toBeInTheDocument();
+  });
+});
+
+describe("MessageBubble v1.3.0 反幻觉警告", () => {
+  it("带 hallucination 时渲染警告条并点名缺失的工具类别", () => {
+    render(
+      <MessageBubble
+        message={{
+          kind: "assistant",
+          content: "已跳转到 GitHub ✅",
+          hallucination: { missing: ["browser"] },
+        }}
+      />,
+    );
+    const warn = screen.getByTestId("hallucination-warning");
+    expect(warn).toBeInTheDocument();
+    expect(warn).toHaveTextContent("浏览器");
+    expect(warn).toHaveTextContent("可能不属实");
+  });
+
+  it("多类缺失时用「/」并列", () => {
+    render(
+      <MessageBubble
+        message={{
+          kind: "assistant",
+          content: "已改好文件并跳转了",
+          hallucination: { missing: ["browser", "file"] },
+        }}
+      />,
+    );
+    expect(screen.getByTestId("hallucination-warning")).toHaveTextContent(
+      "浏览器 / 文件",
+    );
+  });
+
+  it("没有 hallucination 的正常回复不渲染警告条", () => {
+    render(<MessageBubble message={assistant("正常回答")} />);
+    expect(
+      screen.queryByTestId("hallucination-warning"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("user 消息不渲染警告条", () => {
+    render(<MessageBubble message={user("你好")} />);
+    expect(
+      screen.queryByTestId("hallucination-warning"),
+    ).not.toBeInTheDocument();
   });
 });

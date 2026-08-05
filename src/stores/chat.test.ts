@@ -24,7 +24,13 @@ vi.mock("../lib/tauri", async (orig) => {
 });
 
 import { useChatStore } from "./chat";
-import { aiChatCancel } from "../lib/tauri";
+import {
+  aiChatCancel,
+  convGetMessages,
+  convList,
+  type ConversationDto,
+  type MessageDto,
+} from "../lib/tauri";
 
 const mockCancel = aiChatCancel as unknown as ReturnType<typeof vi.fn>;
 
@@ -397,5 +403,250 @@ describe("useChatStore", () => {
     expect(useChatStore.getState().messages).toHaveLength(1);
     const m = useChatStore.getState().messages[0];
     if (m.kind === "user") expect(m.content).toBe("第一对话的话");
+  });
+
+  // ===== T-B4：工具调用持久化恢复 =====
+
+  const convRow = (id: string): ConversationDto => ({
+    id,
+    title: "T",
+    title_auto: true,
+    provider_id: "",
+    model_id: "",
+    created_at: 0,
+    updated_at: 0,
+  });
+
+  const msgRow = (
+    seq: number,
+    kind: string,
+    payload: Record<string, unknown>,
+  ): MessageDto => ({
+    id: seq,
+    seq,
+    kind,
+    payload_json: JSON.stringify(payload),
+    created_at: 0,
+  });
+
+  it("loadFromScope 恢复 tool_call 气泡（含 preview / status / result / 时序）", async () => {
+    const rows: MessageDto[] = [
+      msgRow(1, "user", { content: "改下 a.txt" }),
+      msgRow(2, "assistant", { content: "我先看一下" }),
+      msgRow(3, "tool_call", {
+        call_id: "tc1",
+        name: "edit_file",
+        args_preview: '{"path":"a.txt"}',
+        risk: "high",
+        risk_reason: "L2：写文件",
+        auto_approved_reason: "白名单：edit_file *",
+        status: "done",
+        result: { content: "已改 1 处", is_error: false },
+        preview: {
+          kind: "diff",
+          path: "a.txt",
+          old_text: "旧",
+          new_text: "新",
+        },
+      }),
+      msgRow(4, "assistant", { content: "改好了" }),
+    ];
+    vi.mocked(convList).mockResolvedValueOnce([convRow("c1")]);
+    vi.mocked(convGetMessages).mockResolvedValueOnce(rows);
+
+    await useChatStore.getState().loadFromScope({ kind: "global" });
+
+    const msgs = useChatStore.getState().messages;
+    // 时序：文本 → 工具 → 文本，工具气泡插在正确位置
+    expect(msgs.map((m) => m.kind)).toEqual([
+      "user",
+      "assistant",
+      "tool_call",
+      "assistant",
+    ]);
+    const tc = msgs[2];
+    expect(tc.kind).toBe("tool_call");
+    if (tc.kind === "tool_call") {
+      expect(tc.name).toBe("edit_file");
+      expect(tc.args_preview).toBe('{"path":"a.txt"}');
+      expect(tc.risk).toBe("high");
+      expect(tc.risk_reason).toBe("L2：写文件");
+      expect(tc.auto_approved_reason).toBe("白名单：edit_file *");
+      expect(tc.status).toBe("done");
+      expect(tc.result?.content).toBe("已改 1 处");
+      expect(tc.result?.is_error).toBe(false);
+      // preview 一并恢复，回看仍能渲染 diff
+      expect(tc.preview?.kind).toBe("diff");
+      expect(tc.preview?.old_text).toBe("旧");
+      expect(tc.preview?.new_text).toBe("新");
+    }
+  });
+
+  it("恢复无 preview 的 tool_call 气泡 preview 为 undefined（不崩）", async () => {
+    const rows: MessageDto[] = [
+      msgRow(1, "tool_call", {
+        call_id: "tc2",
+        name: "read_file",
+        args_preview: '{"path":"b.txt"}',
+        risk: "low",
+        status: "done",
+        result: { content: "文件内容", is_error: false },
+      }),
+    ];
+    vi.mocked(convList).mockResolvedValueOnce([convRow("c2")]);
+    vi.mocked(convGetMessages).mockResolvedValueOnce(rows);
+
+    await useChatStore.getState().loadFromScope({ kind: "global" });
+
+    const tc = useChatStore.getState().messages[0];
+    expect(tc.kind).toBe("tool_call");
+    if (tc.kind === "tool_call") {
+      expect(tc.name).toBe("read_file");
+      expect(tc.preview).toBeUndefined();
+      expect(tc.risk_reason).toBeUndefined();
+    }
+  });
+
+  it("向后兼容：旧会话仅 user/assistant 消息恢复正常（无 tool_call）", async () => {
+    const rows: MessageDto[] = [
+      msgRow(1, "user", { content: "你好" }),
+      msgRow(2, "assistant", { content: "你好，有什么可以帮你" }),
+    ];
+    vi.mocked(convList).mockResolvedValueOnce([convRow("old")]);
+    vi.mocked(convGetMessages).mockResolvedValueOnce(rows);
+
+    await useChatStore.getState().loadFromScope({ kind: "global" });
+
+    const msgs = useChatStore.getState().messages;
+    expect(msgs.map((m) => m.kind)).toEqual(["user", "assistant"]);
+    if (msgs[0].kind === "user") expect(msgs[0].content).toBe("你好");
+  });
+
+  it("恢复时 status 缺失 / 非法 → 归一为 done（不卡在 running）", async () => {
+    const rows: MessageDto[] = [
+      msgRow(1, "tool_call", {
+        call_id: "tc3",
+        name: "list_files",
+        result: { content: "a\nb", is_error: false },
+      }),
+    ];
+    vi.mocked(convList).mockResolvedValueOnce([convRow("c3")]);
+    vi.mocked(convGetMessages).mockResolvedValueOnce(rows);
+
+    await useChatStore.getState().loadFromScope({ kind: "global" });
+
+    const tc = useChatStore.getState().messages[0];
+    if (tc.kind === "tool_call") expect(tc.status).toBe("done");
+  });
+
+  // ============================================================
+  // A1：stopStreaming
+  // ============================================================
+
+  describe("stopStreaming（A1 停止生成）", () => {
+    it("末条 assistant 标 stopped、streaming 置 false、保留已生成内容", () => {
+      const { appendUserMessage, startAssistant, appendAssistantDelta } =
+        useChatStore.getState();
+      appendUserMessage("你好");
+      startAssistant();
+      appendAssistantDelta("正在生成的部分内容");
+      const cid = useChatStore.getState().conversationId;
+
+      useChatStore.getState().stopStreaming(cid);
+
+      const s = useChatStore.getState();
+      expect(s.streaming).toBe(false);
+      const last = s.messages.at(-1);
+      expect(last?.kind).toBe("assistant");
+      if (last && last.kind === "assistant") {
+        expect(last.stopped).toBe(true);
+        expect(last.content).toBe("正在生成的部分内容");
+      }
+    });
+
+    it("对不存在 / 不匹配的 cid 调用是 no-op（不影响 active 对话）", () => {
+      const { appendUserMessage, startAssistant } = useChatStore.getState();
+      appendUserMessage("你好");
+      startAssistant();
+
+      useChatStore.getState().stopStreaming("不存在的-cid");
+
+      const s = useChatStore.getState();
+      expect(s.streaming).toBe(true);
+      const last = s.messages.at(-1);
+      if (last && last.kind === "assistant") {
+        expect(last.stopped).toBeUndefined();
+      }
+    });
+
+    it("没有 assistant 消息时不报错，只置 streaming=false", () => {
+      const { appendUserMessage } = useChatStore.getState();
+      appendUserMessage("你好");
+      const cid = useChatStore.getState().conversationId;
+
+      expect(() => useChatStore.getState().stopStreaming(cid)).not.toThrow();
+      expect(useChatStore.getState().streaming).toBe(false);
+    });
+  });
+
+  // ============================================================
+  // A2：retryLast
+  // ============================================================
+
+  describe("retryLast（A2 重试/regenerate）", () => {
+    it("移除末条 assistant 消息，保留之前的 user 消息，不新增消息", () => {
+      const { appendUserMessage, startAssistant, appendAssistantDelta } =
+        useChatStore.getState();
+      appendUserMessage("第一条问题");
+      startAssistant();
+      appendAssistantDelta("回答内容");
+      const cid = useChatStore.getState().conversationId;
+
+      useChatStore.getState().retryLast(cid);
+
+      const s = useChatStore.getState();
+      expect(s.messages).toHaveLength(1);
+      expect(s.messages[0].kind).toBe("user");
+      if (s.messages[0].kind === "user") {
+        expect(s.messages[0].content).toBe("第一条问题");
+      }
+    });
+
+    it("末条不是 assistant（如只有 user）时不误删", () => {
+      const { appendUserMessage } = useChatStore.getState();
+      appendUserMessage("只有提问，还没回答");
+      const cid = useChatStore.getState().conversationId;
+
+      useChatStore.getState().retryLast(cid);
+
+      expect(useChatStore.getState().messages).toHaveLength(1);
+    });
+
+    it("error 态（空 assistant 占位）也能被移除，并清空 error", () => {
+      const { appendUserMessage, startAssistant, setError } =
+        useChatStore.getState();
+      appendUserMessage("会失败的问题");
+      startAssistant(); // 空 assistant 占位，未收到任何 delta
+      setError({ message: "网络错误", kind: "network" });
+      const cid = useChatStore.getState().conversationId;
+
+      useChatStore.getState().retryLast(cid);
+
+      const s = useChatStore.getState();
+      expect(s.messages).toHaveLength(1);
+      expect(s.error).toBeNull();
+    });
+
+    it("对不匹配的 cid 调用是 no-op", () => {
+      const { appendUserMessage, startAssistant, appendAssistantDelta } =
+        useChatStore.getState();
+      appendUserMessage("问题");
+      startAssistant();
+      appendAssistantDelta("回答");
+
+      useChatStore.getState().retryLast("不存在的-cid");
+
+      expect(useChatStore.getState().messages).toHaveLength(2);
+    });
   });
 });

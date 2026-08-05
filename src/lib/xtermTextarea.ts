@@ -83,10 +83,10 @@ export function shouldFixSwallowedShiftKey(
  *
  * WKWebView 上空格的 keydown 一律走 IME 处理路径（keyCode=229），无论是否在
  * 合成中。用"距上次 onData 的时间差"猜被吞，分不清三类空格——它们的
- * `isComposing` / `composing` 标志**全是 false**（真机实测 28/28 中文
+ * `isComposing` / `composing` 标志**全是 false**（真机 diag 实测 28/28 中文
  * 确认空格标志都为 false）。
  *
- * ## 真机实测数据揭示的干净分界（59 个空格样本）
+ * ## 真机 diag 数据揭示的干净分界（$HOME/aitm-space-diag.log，59 个空格样本）
  *
  * | 类别 | 样本 | 识别信号 |
  * |---|---|---|

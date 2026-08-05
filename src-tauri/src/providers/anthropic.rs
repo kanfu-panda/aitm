@@ -251,11 +251,29 @@ fn build_request_body(req: &ChatRequest) -> serde_json::Value {
         body["system"] = json!(s);
     }
     if !req.tools.is_empty() {
-        body["tools"] = json!(req.tools.iter().map(|t| json!({
-            "name": t.name,
-            "description": t.description,
-            "input_schema": t.input_schema,
-        })).collect::<Vec<_>>());
+        // prompt caching：tools 块跨轮稳定（工具定义不随对话变），给**最后一个** tool 打
+        // ephemeral cache 断点，Anthropic 会缓存整个 tools 块（tools 在缓存序里最靠前，
+        // 位于 system / messages 之前，单独缓存即生效）。省掉每轮重发全部工具 schema 的
+        // 输入 token。注意断点只打在稳定块上——system 里每轮变的 runtime_context 不在此列，
+        // 其稳定段缓存需要 ChatRequest 带 stable/volatile 切分，留作后续（见 plan §3 C3）。
+        let last = req.tools.len() - 1;
+        body["tools"] = json!(
+            req.tools
+                .iter()
+                .enumerate()
+                .map(|(i, t)| {
+                    let mut tool = json!({
+                        "name": t.name,
+                        "description": t.description,
+                        "input_schema": t.input_schema,
+                    });
+                    if i == last {
+                        tool["cache_control"] = json!({ "type": "ephemeral" });
+                    }
+                    tool
+                })
+                .collect::<Vec<_>>()
+        );
     }
     body
 }
@@ -384,5 +402,42 @@ mod tests {
         let body = build_request_body(&req);
         assert!(body["tools"].is_array());
         assert_eq!(body["tools"][0]["name"], "run");
+    }
+
+    #[test]
+    fn build_request_body_最后一个_tool_打_cache_断点() {
+        let mk = |name: &str| ToolDef {
+            name: name.into(),
+            description: "d".into(),
+            input_schema: serde_json::json!({"type":"object"}),
+        };
+        let req = ChatRequest {
+            model: "claude".into(),
+            messages: vec![],
+            tools: vec![mk("a"), mk("b"), mk("c")],
+            system: None,
+            max_tokens: 100,
+            temperature: 1.0,
+        };
+        let body = build_request_body(&req);
+        // 只有最后一个 tool 带 ephemeral cache 断点，缓存整个 tools 块
+        assert_eq!(body["tools"][2]["cache_control"]["type"], "ephemeral");
+        // 前面的 tool 不带（否则多余断点，Anthropic 上限 4 个）
+        assert!(body["tools"][0].get("cache_control").is_none());
+        assert!(body["tools"][1].get("cache_control").is_none());
+    }
+
+    #[test]
+    fn build_request_body_无_tools_时_不打断点() {
+        let req = ChatRequest {
+            model: "claude".into(),
+            messages: vec![],
+            tools: vec![],
+            system: Some("s".into()),
+            max_tokens: 100,
+            temperature: 1.0,
+        };
+        let body = build_request_body(&req);
+        assert!(body.get("tools").is_none());
     }
 }

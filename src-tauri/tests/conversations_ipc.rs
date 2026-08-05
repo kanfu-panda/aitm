@@ -473,6 +473,152 @@ fn conv_create_id_格式_uuid_v7() {
     });
 }
 
+// ===================== T-B4：工具调用持久化 + 向后兼容 =====================
+
+#[test]
+fn tool_call_消息_往返_含_preview() {
+    // T-B4：tool_call 消息（含结构化 preview）存进去 → 读回来 payload 原样
+    with_home(|_| {
+        let db = AitmDb::new();
+        let scope = global_scope();
+        let c = conv_create_impl(&db, &scope, "写文件会话".into()).unwrap();
+
+        let payload = serde_json::json!({
+            "call_id": "tc1",
+            "name": "edit_file",
+            "args_preview": r#"{"path":"a.txt"}"#,
+            "risk": "high",
+            "status": "done",
+            "result": { "content": "已改 1 处", "is_error": false },
+            "preview": {
+                "kind": "diff",
+                "path": "a.txt",
+                "old_text": "旧内容",
+                "new_text": "新内容"
+            }
+        })
+        .to_string();
+
+        conv_append_message_impl(&db, &scope, c.id.clone(), "tool_call".into(), payload.clone())
+            .unwrap();
+
+        let list = conv_get_messages_impl(&db, &scope, c.id.clone()).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].kind, "tool_call");
+        // payload 原样回传（db 层不解析），解析后校验 preview 一并持久化
+        let v: serde_json::Value = serde_json::from_str(&list[0].payload_json).unwrap();
+        assert_eq!(v["name"], "edit_file");
+        assert_eq!(v["status"], "done");
+        assert_eq!(v["result"]["content"], "已改 1 处");
+        assert_eq!(v["preview"]["kind"], "diff");
+        assert_eq!(v["preview"]["old_text"], "旧内容");
+        assert_eq!(v["preview"]["new_text"], "新内容");
+    });
+}
+
+#[test]
+fn 混合消息_时序_user_assistant_tool_call_assistant() {
+    // T-B4：一个真实工具调用会话的落盘顺序——文本 → 工具 → 文本，seq 递增，
+    // 回看时序正确（这是 PersistenceSink 在 finished 前 flush assistant 文本的意义）
+    with_home(|_| {
+        let db = AitmDb::new();
+        let scope = global_scope();
+        let c = conv_create_impl(&db, &scope, "会话".into()).unwrap();
+
+        conv_append_message_impl(
+            &db,
+            &scope,
+            c.id.clone(),
+            "user".into(),
+            r#"{"content":"改下 a.txt"}"#.into(),
+        )
+        .unwrap();
+        conv_append_message_impl(
+            &db,
+            &scope,
+            c.id.clone(),
+            "assistant".into(),
+            r#"{"content":"我先看一下"}"#.into(),
+        )
+        .unwrap();
+        conv_append_message_impl(
+            &db,
+            &scope,
+            c.id.clone(),
+            "tool_call".into(),
+            r#"{"call_id":"t1","name":"read_file","status":"done","result":{"content":"...","is_error":false}}"#.into(),
+        )
+        .unwrap();
+        conv_append_message_impl(
+            &db,
+            &scope,
+            c.id.clone(),
+            "assistant".into(),
+            r#"{"content":"改好了"}"#.into(),
+        )
+        .unwrap();
+
+        let list = conv_get_messages_impl(&db, &scope, c.id.clone()).unwrap();
+        let kinds: Vec<&str> = list.iter().map(|m| m.kind.as_str()).collect();
+        assert_eq!(kinds, vec!["user", "assistant", "tool_call", "assistant"]);
+        // seq 严格递增
+        assert_eq!(list.iter().map(|m| m.seq).collect::<Vec<_>>(), vec![1, 2, 3, 4]);
+    });
+}
+
+#[test]
+fn 向后兼容_旧会话_只有_user_assistant_读取正常_再追加_tool_call() {
+    // T-B4 §7 红线：schema 未改（messages.kind + payload 一直存在），旧库里只有
+    // user/assistant 的会话必须照常读；新代码往同一会话追加 tool_call 也正常，
+    // 二者混排读回不崩、顺序正确。模拟「旧库 → 新代码」路径。
+    with_home(|_| {
+        let db = AitmDb::new();
+        let scope = global_scope();
+        // 「旧会话」：仅 user + assistant（v1.2.0 之前的落盘形态）
+        let c = conv_create_impl(&db, &scope, "旧会话".into()).unwrap();
+        conv_append_message_impl(
+            &db,
+            &scope,
+            c.id.clone(),
+            "user".into(),
+            r#"{"content":"你好"}"#.into(),
+        )
+        .unwrap();
+        conv_append_message_impl(
+            &db,
+            &scope,
+            c.id.clone(),
+            "assistant".into(),
+            r#"{"content":"你好，有什么可以帮你"}"#.into(),
+        )
+        .unwrap();
+
+        // 旧会话读取正常（不崩、kind 仍是 user/assistant）
+        let before = conv_get_messages_impl(&db, &scope, c.id.clone()).unwrap();
+        assert_eq!(before.len(), 2);
+        assert_eq!(before[0].kind, "user");
+        assert_eq!(before[1].kind, "assistant");
+
+        // 新代码往旧会话追加一条 tool_call（新 kind 值 + 富 payload）
+        conv_append_message_impl(
+            &db,
+            &scope,
+            c.id.clone(),
+            "tool_call".into(),
+            r#"{"call_id":"tc9","name":"list_files","status":"done","result":{"content":"a\nb","is_error":false}}"#.into(),
+        )
+        .unwrap();
+
+        let after = conv_get_messages_impl(&db, &scope, c.id.clone()).unwrap();
+        assert_eq!(after.len(), 3);
+        // 旧两条不受影响，新 tool_call 追加在末尾
+        assert_eq!(after[0].kind, "user");
+        assert_eq!(after[1].kind, "assistant");
+        assert_eq!(after[2].kind, "tool_call");
+        assert_eq!(after[2].seq, 3);
+    });
+}
+
 #[test]
 fn append_刷新_conversation_的_updated_at_在_list_排前() {
     with_home(|_| {

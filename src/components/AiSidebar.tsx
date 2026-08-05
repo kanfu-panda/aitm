@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
+  aiChatCancel,
   aiChatSend,
   listProviders,
   onAiDone,
@@ -24,12 +25,25 @@ import ToolCallBubble from "./ToolCallBubble";
 import ConfirmDialog from "./ConfirmDialog";
 import ConversationSwitcher from "./conversation/ConversationSwitcher";
 import InitProjectDialog from "./conversation/InitProjectDialog";
-import { Sparkles } from "./icons";
+import { RotateCcw, Sparkles, Square } from "./icons";
 import { trackEvent } from "../lib/analytics";
 import { collectRuntimeContext } from "../lib/aiContext";
 import { useChatStore } from "../stores/chat";
 import { useSidebarStore } from "../stores/sidebar";
 import { useTabsStore } from "../stores/tabs";
+
+/** send() 首次发送 / retry() 重新发送共用的历史快照：把当前 store 消息列表转成
+ *  后端要的 AiMessage[]；tool_call 卡片只是前端展示，后端只关心 user/assistant 文本。 */
+function snapshotHistory(): AiMessage[] {
+  return useChatStore
+    .getState()
+    .messages.flatMap<AiMessage>((m) => {
+      if (m.kind === "user") return [{ role: "user", content: m.content }];
+      if (m.kind === "assistant")
+        return [{ role: "assistant", content: m.content }];
+      return [];
+    });
+}
 
 export default function AiSidebar() {
   const open = useSidebarStore((s) => s.open);
@@ -367,7 +381,8 @@ function ChatBody({ providerId, modelId }: { providerId: string; modelId: string
       unDone = await onAiDone(conversationId, (e) => {
         if (!alive) return;
         const s = useChatStore.getState();
-        s.finishAssistant();
+        // v1.3.0 反幻觉：后端检测到"声称完成但本轮没调对应工具"时会带上警告
+        s.finishAssistant(e.hallucination);
         if (e.usage) s.setUsage(e.usage.input_tokens, e.usage.output_tokens);
       });
       unErr = await onAiError(conversationId, (e) => {
@@ -385,6 +400,7 @@ function ChatBody({ providerId, modelId }: { providerId: string; modelId: string
           risk: e.risk,
           risk_reason: e.risk_reason ?? undefined,
           status: "awaiting_approval",
+          preview: e.preview ?? undefined,
         });
       });
       // tool_started：low 风险首次出现也进这里（addToolCall 兜底插入）
@@ -415,6 +431,10 @@ function ChatBody({ providerId, modelId }: { providerId: string; modelId: string
           status: e.is_error ? "error" : "done",
           result: { content: e.content, is_error: e.is_error },
           auto_approved_reason: e.auto_approved_reason ?? undefined,
+          // T-A3：工具耗时存进 entry，状态行展示（如 1.2s）
+          elapsed_ms: e.elapsed_ms,
+          // T-B4：finished 事件带 diff preview 时存进 entry，历史回看仍能渲染
+          ...(e.preview ? { preview: e.preview } : {}),
         });
       });
     })();
@@ -430,28 +450,10 @@ function ChatBody({ providerId, modelId }: { providerId: string; modelId: string
     };
   }, [conversationId]);
 
-  const send = async () => {
-    const text = input.trim();
-    if (!text || streaming) return;
-
-    const store = useChatStore.getState();
-    store.appendUserMessage(text);
-    setInput("");
-
-    // 在 startAssistant 之前 snapshot 历史消息发给后端：
-    // 此刻 messages 已含刚加的 user，不含空 assistant 占位。
-    // 后端只关心 user/assistant 文本，tool_call 卡片是前端展示，过滤掉。
-    const all: AiMessage[] = useChatStore
-      .getState()
-      .messages.flatMap<AiMessage>((m) => {
-        if (m.kind === "user") return [{ role: "user", content: m.content }];
-        if (m.kind === "assistant")
-          return [{ role: "assistant", content: m.content }];
-        return [];
-      });
-
+  // send() 首发 / retry() 重发共用的尾段：加空 assistant 占位 → 收集运行时上下文 → 调 aiChatSend。
+  const sendMessages = async (all: AiMessage[]) => {
     // 加空 assistant 气泡，streaming 期间显示加载动画
-    store.startAssistant();
+    useChatStore.getState().startAssistant();
 
     // 取当前活跃 tab 的 session_id 和 cwd，给后端 scope 解析 + 工具兜底用
     const tabsState = useTabsStore.getState();
@@ -484,11 +486,44 @@ function ChatBody({ providerId, modelId }: { providerId: string; modelId: string
         runtime_context: runtimeContext,
       });
     } catch (e) {
-      store.setError({ message: String(e), kind: "other" });
+      useChatStore.getState().setError({ message: String(e), kind: "other" });
     }
   };
 
+  const send = async () => {
+    const text = input.trim();
+    if (!text || streaming) return;
 
+    useChatStore.getState().appendUserMessage(text);
+    setInput("");
+
+    // 在 appendUserMessage 之后、startAssistant 之前 snapshot：
+    // 此刻 messages 已含刚加的 user，不含空 assistant 占位。
+    await sendMessages(snapshotHistory());
+  };
+
+  // A2：重试/regenerate —— 移除末条 assistant（done/stopped/error 态下恒为最后一条），
+  // 用**上一条 user 消息**重新发起，不追加新 user 消息。
+  const retry = async () => {
+    if (streaming) return;
+    useChatStore.getState().retryLast(conversationId);
+    await sendMessages(snapshotHistory());
+  };
+
+  // A1：停止生成。选择「前端本地 finalize」而非后端 emit stopped 收尾事件——
+  // ai_chat_cancel 走 JoinHandle::abort() 硬中断 task，中断点在 provider 流读取内部，
+  // 无法从 cancel 命令里安全拿到当时的 assistant 缓冲区状态去补发一个准确的收尾事件；
+  // 前端本身已经持有当前已流式渲染出的文本，直接本地终结更简单可靠，且不影响已生成内容。
+  // 无论 aiChatCancel 是否成功，UI 都应立即停下（优先响应用户点击，而不是等后端确认）。
+  const handleStop = async () => {
+    try {
+      await aiChatCancel();
+    } catch (e) {
+      console.warn("aiChatCancel 失败", e);
+    } finally {
+      useChatStore.getState().stopStreaming(conversationId);
+    }
+  };
 
   return (
     // min-h-0 + flex flex-col 让自身能被父 flex 容器压缩，scrollRef 的
@@ -515,6 +550,15 @@ function ChatBody({ providerId, modelId }: { providerId: string; modelId: string
             : t("aiSidebar.errorGeneric")}
           {t("aiSidebar.errorSeparator")}
           {error.message}
+          {/* A2：error banner 也给一个重试入口，跟末条 assistant 气泡的重试按钮走同一逻辑 */}
+          <button
+            onClick={retry}
+            className="ml-2 inline-flex items-center gap-1 rounded px-1 py-0.5 underline decoration-dotted hover:bg-[var(--c-bg-elev-3)] hover:decoration-solid"
+            aria-label={t("aiSidebar.retryAria")}
+          >
+            <RotateCcw size={11} />
+            {t("aiSidebar.retryLabel")}
+          </button>
         </div>
       )}
 
@@ -526,44 +570,63 @@ function ChatBody({ providerId, modelId }: { providerId: string; modelId: string
         )}
         {messages.map((m, i) => {
           if (m.kind === "tool_call") {
-            return <ToolCallBubble key={`${m.call_id}-${i}`} entry={m} />;
+            return (
+              <ToolCallBubble
+                key={`${m.call_id}-${i}`}
+                entry={m}
+                preview={m.preview}
+              />
+            );
           }
+          const isLastMsg = i === messages.length - 1;
           return (
             <MessageBubble
               key={i}
               message={m}
-              streaming={
-                streaming &&
-                i === messages.length - 1 &&
-                m.kind === "assistant"
-              }
+              streaming={streaming && isLastMsg && m.kind === "assistant"}
+              isLast={isLastMsg}
+              onRetry={m.kind === "assistant" ? retry : undefined}
             />
           );
         })}
       </div>
 
       <footer className="border-t border-[var(--c-border)] px-3 py-2">
-        <textarea
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            // Enter 发送，Shift+Enter 换行；
-            // Cmd+Enter（Mac）/ Ctrl+Enter（Win/Linux）不拦截，让浏览器走默认行为（例如换行）
-            if (
-              e.key === "Enter" &&
-              !e.shiftKey &&
-              !e.metaKey &&
-              !e.ctrlKey
-            ) {
-              e.preventDefault();
-              send();
-            }
-          }}
-          placeholder={t("aiSidebar.inputPlaceholder")}
-          rows={2}
-          className="w-full resize-none rounded border border-[var(--c-border)] bg-[var(--c-bg-base)] px-2 py-1.5 text-sm text-[var(--c-text-base)] focus:border-[var(--c-text-dim)] focus:outline-none"
-          disabled={streaming}
-        />
+        <div className="relative">
+          <textarea
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              // Enter 发送，Shift+Enter 换行；
+              // Cmd+Enter（Mac）/ Ctrl+Enter（Win/Linux）不拦截，让浏览器走默认行为（例如换行）
+              if (
+                e.key === "Enter" &&
+                !e.shiftKey &&
+                !e.metaKey &&
+                !e.ctrlKey
+              ) {
+                e.preventDefault();
+                send();
+              }
+            }}
+            placeholder={t("aiSidebar.inputPlaceholder")}
+            rows={2}
+            className="w-full resize-none rounded border border-[var(--c-border)] bg-[var(--c-bg-base)] px-2 py-1.5 pr-8 text-sm text-[var(--c-text-base)] focus:border-[var(--c-text-dim)] focus:outline-none"
+            disabled={streaming}
+          />
+          {/* A1：streaming 中发送按钮位置切换成停止按钮；textarea 仍 disabled，
+              但停止键必须可点——不能一起被 disabled 锁死。 */}
+          {streaming && (
+            <button
+              onClick={handleStop}
+              className="absolute bottom-1.5 right-1.5 rounded p-1 text-[var(--c-error)] hover:bg-[var(--c-bg-elev-2)]"
+              aria-label={t("aiSidebar.stopAria")}
+              title={t("aiSidebar.stopTitle")}
+            >
+              <Square size={14} fill="currentColor" />
+            </button>
+          )}
+        </div>
         <div className="mt-1 text-[10px] text-[var(--c-text-faint)]">
           {t("aiSidebar.tokensLabel", {
             input: usage.input_tokens,

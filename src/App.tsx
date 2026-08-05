@@ -22,6 +22,7 @@ import { PaneDndContext } from "./components/panes/PaneDndContext";
 import {
   onAppCloseActiveTab,
   onBrowserHotkey,
+  onBrowserOpenRequested,
   onBrowserUrlChanged,
   onMenuFontAction,
   onNotificationReceived,
@@ -61,6 +62,7 @@ import {
   startBrowserSuspendTimer,
   stopBrowserSuspendTimer,
 } from "./lib/browserSuspend";
+import { handleBrowserOpenRequested } from "./lib/browserOpenRequest";
 
 export default function App() {
   const { t } = useTranslation();
@@ -766,6 +768,30 @@ export default function App() {
     };
   }, []);
 
+  // v1.2.0 T-B3：订阅 browser:open_requested —— AI 的 browser_open /
+  // browser_navigate 工具请求打开浏览器面板（后端拿不到 bounds 建不了 tab）。
+  // **必须挂在 App.tsx 这种常驻组件**：面板收起时 BrowserPanel 根本不渲染，
+  // 由它订阅就永远收不到"请打开面板"的事件。
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let alive = true;
+    onBrowserOpenRequested((e) => {
+      if (!alive) return;
+      void handleBrowserOpenRequested(e);
+    })
+      .then((u) => {
+        if (alive) unlisten = u;
+        else u();
+      })
+      .catch(() => {
+        // 注册失败：fail-soft，AI 工具会在 10s 后超时并如实报告失败
+      });
+    return () => {
+      alive = false;
+      unlisten?.();
+    };
+  }, []);
+
   // v0.9.0 T3：订阅后端 OSC 7 解析事件 → 更新 tab cwd + auto_title 时同步 title。
   // 路由：按 sessionId 找 tab。tabs store 内部判 auto_title 决定是否覆盖 title。
   useEffect(() => {
@@ -1014,10 +1040,37 @@ export default function App() {
  *   PTY 输出 ring buffer 还在但 viewport 会丢已渲染内容。imperativePanelApi
  *   改比例不重建子组件，xterm 保活。
  *
- * fileEditorActive=false 时（openFiles 为空 / FilePreview 收起）切到无
- * PanelGroup 的纯终端分支；file-editor.ts:275 closeFile 时已经把 maximized
- * 同步重置为 false，preMaxLayoutRef 在组件 unmount 自然 GC。
+ * ---------------------------------------------------------------------------
+ * v1.3.0 P10（终端关掉文件预览后滚不动）：**PanelGroup 必须常驻**。
+ *
+ * 上面 T3 那条"不能条件 unmount PanelGroup"的结论只落实了一半 —— 之前
+ * `fileEditorActive=false` 时会 `return` 一个裸 div 分支，React 在这个位置
+ * 看到元素类型从 `PanelGroup` 变成 `div`，照样把**整棵终端子树 unmount 重建**：
+ * `TerminalView` cleanup 调 `term.dispose()`，remount 时 `new Terminal()`。
+ * 后果不只是丢 scrollback，更要命的是**终端模式全部复位**：
+ *   - `ESC[?1049h`（进备用屏）、鼠标追踪、DECCKM 都是**旧实例**消费掉的，
+ *     PTY 不会重发；Claude Code 这类全屏 TUI 只在 SIGWINCH 时重绘内容。
+ *   - 于是新 xterm 自认为在普通屏 → `altScroll.shouldAltScroll` 判 false →
+ *     滚轮不再转方向键交给 CC，只能滚新实例那点空 scrollback
+ *     = 维护者真机反馈的"关掉文件预览后终端上滚不了太多"。
+ *   - 完整退出 CC 再进来，新实例这次真收到了 `ESC[?1049h` → 又能滚了。
+ *
+ * 修法：PanelGroup 常驻，只把「分割条 + 编辑器 Panel」按 fileEditorActive
+ * 条件渲染。react-resizable-panels 对条件 Panel 的要求（稳定 `id` + `order`）
+ * 本来就已满足；只剩一个 Panel 时库会把它归一到 100%，视觉与旧的纯终端分支
+ * 等价，而终端子树在同一位置原地保活（xterm 实例、备用屏状态、scrollback 全留）。
+ *
+ * file-editor.ts:275 closeFile 时已经把 maximized 同步重置为 false；
+ * preMaxLayoutRef 不再靠 unmount GC，改为 fileEditorActive 转 false 时显式清空。
  */
+/**
+ * 终端 Panel 被视为"异常塌陷"的百分比阈值。
+ *
+ * 非 maximize 态下终端不该只剩这么点——只可能是 autoSave 把上次 maximize 的
+ * [0, 100] 存下来了。低于此值就当作残留布局纠正回默认分屏。
+ */
+const TERMINAL_COLLAPSED_THRESHOLD = 10;
+
 export function CentralMainArea({
   fileEditorActive,
 }: {
@@ -1031,57 +1084,113 @@ export function CentralMainArea({
 
   useEffect(() => {
     const g = panelGroupRef.current;
-    if (!g || !fileEditorActive) return;
-    if (maximized) {
-      preMaxLayoutRef.current = g.getLayout();
-      g.setLayout([0, 100]);
-    } else if (preMaxLayoutRef.current) {
-      g.setLayout(preMaxLayoutRef.current);
+    if (!g) return;
+    if (!fileEditorActive) {
+      // 预览收起：编辑器 Panel 已卸载，比例交给库自动归一到 100%，这里不 setLayout
+      // （对单 Panel 布局调 setLayout([...2 项]) 会被库判非法）。同时清掉 maximize
+      // 前的比例快照 —— 等价于 P10 之前"整个组件 unmount 自然 GC"的语义。
       preMaxLayoutRef.current = null;
-    } else {
-      // 没记录过 preMax（首次直接退出 max 或反方向：例如外部代码直接置 false）
-      // 退回默认 55/45。
-      g.setLayout([55, 45]);
+      return;
     }
+    // 只有终端 + 编辑器两个 Panel 都注册好了才动比例。预览刚展开的那一帧
+    // 编辑器 Panel 可能还没 register 完，此时 setLayout 会被库判"panel 数与
+    // layout 长度不符"直接 throw（`Invalid 0 panel layout: 55%, 45%`）。
+    //
+    // 🔴 不能像最初那样"这一帧不管它"就 return：effect 依赖只有
+    // [maximized, fileEditorActive]，Panel 注册完并不会让它重跑，于是比例**永远
+    // 不会被修正**（真机回归：打开预览直接占满全屏）。改为 rAF 重试到注册完成。
+    let raf = 0;
+    const apply = () => {
+      raf = 0;
+      const current = g.getLayout();
+      if (current.length !== 2) {
+        raf = requestAnimationFrame(apply);
+        return;
+      }
+      if (maximized) {
+        preMaxLayoutRef.current = current;
+        g.setLayout([0, 100]);
+      } else if (preMaxLayoutRef.current) {
+        g.setLayout(preMaxLayoutRef.current);
+        preMaxLayoutRef.current = null;
+      } else if (current[0] < TERMINAL_COLLAPSED_THRESHOLD) {
+        // 🔴 自愈 autoSave 残留的 maximize 布局。
+        //
+        // P10 让 PanelGroup 常驻后，`autoSaveId` 会把 maximize 时的 [0, 100] 持久化，
+        // 下次打开预览就恢复成"终端 0% / 编辑器 100%"——用户看到的是"一打开预览
+        // 就占满全屏"，双击 maximize 反而把它掰回分屏（真机反馈）。
+        // 非 maximize 态下终端不该被压到近 0，这里强制回默认分屏。
+        //
+        // 注意只在**异常**时纠正：正常比例（含用户自己拖过的）一律保留，
+        // 这样 P10 带来的"分屏比例跨开关预览保留"仍然成立。
+        g.setLayout([55, 45]);
+      }
+    };
+    apply();
+    return () => {
+      if (raf) cancelAnimationFrame(raf);
+    };
   }, [maximized, fileEditorActive]);
 
-  if (!fileEditorActive) {
-    return (
-      <div className="relative flex-1 min-h-0 flex">
-        <LayoutNodeRendererRoot />
-      </div>
-    );
-  }
+  /**
+   * 🔴 布局守卫：非 maximize 态下终端被压到近 0，一律纠正回默认分屏。
+   *
+   * **为什么光靠上面那个 effect 不够**（真机回归两次才定位）：
+   * react-resizable-panels 从 `autoSaveId` 恢复布局发生在 **effect 之后**——
+   * effect 里 `getLayout()` 读到的还是正常值，检查完库才把上次 maximize 存下来的
+   * `[0, 100]` 恢复上去，于是自愈逻辑根本没机会触发，用户看到的就是"一打开预览
+   * 终端就没了"。
+   *
+   * `onLayout` 会在**每一次**布局变化后触发（含 autoSave 恢复那一次），是唯一能
+   * 兜住这个时序的钩子。setLayout 会再触发一次 onLayout，但那时 layout[0]=55
+   * 不再满足条件，不会自激。
+   */
+  const handleLayout = useCallback(
+    (layout: number[]) => {
+      if (!fileEditorActive || maximized) return;
+      if (layout.length !== 2) return;
+      if (layout[0] >= TERMINAL_COLLAPSED_THRESHOLD) return;
+      panelGroupRef.current?.setLayout([55, 45]);
+    },
+    [fileEditorActive, maximized],
+  );
 
+  // P10：PanelGroup 无条件渲染 —— 终端子树必须始终待在**同一个位置的同一种元素**
+  // 下，React 才不会重建它（连带重建 xterm 实例）。
   return (
     <PanelGroup
       ref={panelGroupRef}
       direction="vertical"
       autoSaveId="aitm-terminal-editor-split-v3"
       className="flex flex-1 min-h-0 flex-col"
+      onLayout={handleLayout}
     >
       {/* terminal panel：minSize=0 + collapsible 允许 maximize 时完全收起；
           collapsedSize=0 让 react-resizable-panels 把 0 视为 collapse 状态
-          而不是被 minSize 弹回，避免 setLayout([0, 100]) 后被库内部纠正。 */}
-      <Panel
-        id="terminal"
-        order={1}
-        defaultSize={55}
-        minSize={0}
-        collapsible
-        collapsedSize={0}
-      >
+          而不是被 minSize 弹回，避免 setLayout([0, 100]) 后被库内部纠正。
+          终端 Panel **故意不写 defaultSize**：react-resizable-panels 会把"剩下的"
+          尺寸分给没写 defaultSize 的 Panel —— 有编辑器时 = 100-45 = 55（跟以前一样），
+          预览收起只剩它自己时 = 100。若写死 55，单 Panel 布局合计只有 55%，库会
+          走 validatePanelGroupLayout 的归一化分支并打 "Invalid layout total size" 警告。 */}
+      <Panel id="terminal" order={1} minSize={0} collapsible collapsedSize={0}>
         <div className="relative flex h-full w-full min-h-0 min-w-0">
           <LayoutNodeRendererRoot />
         </div>
       </Panel>
-      <PanelResizeHandle
-        className="h-1 bg-[var(--c-border)] hover:bg-[var(--c-border-strong)] transition-colors"
-        aria-label={t("splitDivider.terminalEditorHeight")}
-      />
-      <Panel id="editor" order={2} defaultSize={45} minSize={15}>
-        <FilePreviewWorkspace />
-      </Panel>
+      {/* 分割条与编辑器 Panel 成对条件渲染。两处都写成 `cond && ...` 而不是合并
+          成一个 fragment：保持 children 槽位数固定，React 按索引 diff 时终端
+          Panel 永远是 index 0，不会被挪位。 */}
+      {fileEditorActive && (
+        <PanelResizeHandle
+          className="h-1 bg-[var(--c-border)] hover:bg-[var(--c-border-strong)] transition-colors"
+          aria-label={t("splitDivider.terminalEditorHeight")}
+        />
+      )}
+      {fileEditorActive && (
+        <Panel id="editor" order={2} defaultSize={45} minSize={15}>
+          <FilePreviewWorkspace />
+        </Panel>
+      )}
     </PanelGroup>
   );
 }

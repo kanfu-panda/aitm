@@ -764,6 +764,7 @@ export async function installTauriMock(
           cmd === "browser_close_tab" ||
           cmd === "browser_navigate" ||
           cmd === "browser_set_active" ||
+          cmd === "browser_clear_active" ||
           cmd === "browser_set_bounds" ||
           cmd === "browser_suspend_tab" ||
           cmd === "browser_set_scroll_y" ||

@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { useBrowserStore } from "../stores/browser";
 import { browserHideAllActive, browserShowAllActive } from "./tauri";
 
 /**
@@ -35,9 +36,17 @@ export function useBrowserModalGuard(isOpen: boolean): void {
       console.warn("[modal-guard] browserHideAllActive 失败", e);
     });
     return () => {
-      browserShowAllActive().catch((e) => {
-        console.warn("[modal-guard] browserShowAllActive 失败", e);
-      });
+      // v1.3.0 P7：恢复显示后**必须**再断言一次 active。
+      // 后端 show_all_active 已收紧成"只 show 它认为的 active"，但它认为的可能
+      // 是过期值；前端 activeKey 才是"用户看到什么"的真相源，这里补一次同步，
+      // 避免 dialog（含 AI 工具审批弹窗）关闭后可见页面与 AI 操作对象错位。
+      browserShowAllActive()
+        .catch((e) => {
+          console.warn("[modal-guard] browserShowAllActive 失败", e);
+        })
+        .finally(() => {
+          void useBrowserStore.getState().reassertActive();
+        });
     };
   }, [isOpen]);
 }

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TreeNode } from "../../lib/tauri";
 
@@ -420,7 +420,7 @@ describe("FileTree", () => {
     });
   });
 
-  it("收到 fs:changed 事件 → debounce 后重新拉取目录树", async () => {
+  it("收到 fs:changed 事件（根目录下新增文件）→ debounce 后只重拉根目录", async () => {
     const tabId = useTabsStore.getState().addTab();
     useTabsStore.getState().setSessionId(tabId, "sid");
     sessionCurrentCwdMock.mockResolvedValue("/Users/me/myproj");
@@ -443,7 +443,7 @@ describe("FileTree", () => {
     const callsBefore = fsTreeMock.mock.calls.length;
     fsChangedHandler!({ paths: ["/Users/me/myproj/new.txt"] });
 
-    // 前端再 debounce ~200ms 才触发 reloadTree（内部又调一次 fsTree(rootCwd, 1)）
+    // 前端再 debounce 一小段才刷新；变更落在根目录 → 只重拉 fsTree(root, 1)
     await waitFor(
       () => {
         expect(fsTreeMock.mock.calls.length).toBeGreaterThan(callsBefore);
@@ -483,5 +483,212 @@ describe("FileTree", () => {
     });
     expect(fsWatchStartMock).not.toHaveBeenCalled();
     expect(onFsChangedMock).not.toHaveBeenCalled();
+  });
+
+  // ============================================================
+  // v1.3.0 P9：fs 变更 → 增量刷新（保住展开状态，只重拉受影响目录）
+  // 真机反馈：打开工作目录浏览时，watcher 一触发整棵树重刷、展开全部折回，
+  // 完全没法用。参考 VS Code：变更只影响所在目录层级，其它分支原样保留。
+  // ============================================================
+
+  describe("fs 变更增量刷新", () => {
+    const ROOT = "/Users/me/myproj";
+    const SRC = "/Users/me/myproj/src";
+
+    /** 按路径分发的假树工厂表；单 case 可改写某个 key 模拟磁盘变化。 */
+    let treeFactories: Record<string, () => TreeNode>;
+    let fsChangedHandler: ((e: { paths: string[] }) => void) | null;
+
+    /** 统计某路径被 fsTree 请求的次数（增量刷新断言核心）。 */
+    const treeCallsFor = (path: string) =>
+      fsTreeMock.mock.calls.filter((c) => c[0] === path).length;
+
+    beforeEach(async () => {
+      fsChangedHandler = null;
+      treeFactories = {
+        [ROOT]: fakeRootTree,
+        [SRC]: () => ({
+          name: "src",
+          path: SRC,
+          kind: "dir",
+          children: [
+            { name: "main.rs", path: `${SRC}/main.rs`, kind: "file", children: null },
+          ],
+        }),
+      };
+      fsTreeMock.mockImplementation((path: string) => {
+        const factory = treeFactories[path];
+        return factory
+          ? Promise.resolve(factory())
+          : Promise.reject(new Error(`路径不存在：${path}`));
+      });
+      onFsChangedMock.mockImplementation(
+        (cb: (e: { paths: string[] }) => void) => {
+          fsChangedHandler = cb;
+          return Promise.resolve(fsChangedUnlistenMock);
+        },
+      );
+      sessionCurrentCwdMock.mockResolvedValue(ROOT);
+      const tabId = useTabsStore.getState().addTab();
+      useTabsStore.getState().setSessionId(tabId, "sid");
+    });
+
+    /** 渲染 + 展开 src，返回时 main.rs 已可见、watcher 回调已注册。 */
+    async function renderWithSrcExpanded() {
+      const view = render(<FileTree />);
+      await waitFor(() => {
+        expect(screen.getByText("src")).toBeTruthy();
+      });
+      fireEvent.click(screen.getByText("src"));
+      await waitFor(() => {
+        expect(screen.getByText("main.rs")).toBeTruthy();
+      });
+      await waitFor(() => {
+        expect(fsChangedHandler).not.toBeNull();
+      });
+      return view;
+    }
+
+    it("变更落在已展开子目录 → 只重拉该子目录，不重拉根目录", async () => {
+      await renderWithSrcExpanded();
+      const rootCallsBefore = treeCallsFor(ROOT);
+      const srcCallsBefore = treeCallsFor(SRC);
+
+      // src/ 下新增文件
+      treeFactories[SRC] = () => ({
+        name: "src",
+        path: SRC,
+        kind: "dir",
+        children: [
+          { name: "lib.rs", path: `${SRC}/lib.rs`, kind: "file", children: null },
+          { name: "main.rs", path: `${SRC}/main.rs`, kind: "file", children: null },
+        ],
+      });
+      fsChangedHandler!({ paths: [`${SRC}/lib.rs`] });
+
+      await waitFor(
+        () => {
+          expect(screen.getByText("lib.rs")).toBeTruthy();
+        },
+        { timeout: 1000 },
+      );
+      expect(treeCallsFor(SRC)).toBe(srcCallsBefore + 1);
+      // 根目录没被牵连（这是"整树重刷"退化的直接信号）
+      expect(treeCallsFor(ROOT)).toBe(rootCallsBefore);
+    });
+
+    it("刷新后已展开目录保持展开（不折叠回去）", async () => {
+      await renderWithSrcExpanded();
+      fsChangedHandler!({ paths: [`${ROOT}/new.txt`] });
+
+      await waitFor(
+        () => {
+          expect(treeCallsFor(ROOT)).toBeGreaterThan(1);
+        },
+        { timeout: 1000 },
+      );
+      // 根目录重拉后 src 仍展开、子项仍在
+      expect(screen.getByText("main.rs")).toBeTruthy();
+    });
+
+    it("无关分支的 DOM 节点未被重建（不整树 remount）", async () => {
+      await renderWithSrcExpanded();
+      const readmeBefore = screen.getByText("README.md");
+      const srcCallsBefore = treeCallsFor(SRC);
+
+      fsChangedHandler!({ paths: [`${SRC}/main.rs`] });
+      await waitFor(
+        () => {
+          expect(treeCallsFor(SRC)).toBe(srcCallsBefore + 1);
+        },
+        { timeout: 1000 },
+      );
+
+      // 同一个 DOM 元素实例 —— 整树 remount 会换成新元素
+      expect(screen.getByText("README.md")).toBe(readmeBefore);
+    });
+
+    it("短时间多批 fs:changed 合并成一次刷新", async () => {
+      await renderWithSrcExpanded();
+      const srcCallsBefore = treeCallsFor(SRC);
+
+      fsChangedHandler!({ paths: [`${SRC}/a.rs`] });
+      fsChangedHandler!({ paths: [`${SRC}/b.rs`] });
+      fsChangedHandler!({ paths: [`${SRC}/c.rs`] });
+
+      await waitFor(
+        () => {
+          expect(treeCallsFor(SRC)).toBe(srcCallsBefore + 1);
+        },
+        { timeout: 1000 },
+      );
+      // 再等一拍确认没有后续补刷
+      await new Promise((r) => setTimeout(r, 300));
+      expect(treeCallsFor(SRC)).toBe(srcCallsBefore + 1);
+    });
+
+    it("已展开子目录被删除 → 该分支从树里移除且展开态被清理", async () => {
+      await renderWithSrcExpanded();
+      // 磁盘上 src/ 被删：根目录不再有 src，src 自身也读不到
+      delete treeFactories[SRC];
+      treeFactories[ROOT] = () => ({
+        name: "myproj",
+        path: ROOT,
+        kind: "dir",
+        children: [
+          { name: "README.md", path: `${ROOT}/README.md`, kind: "file", children: null },
+        ],
+      });
+
+      fsChangedHandler!({ paths: [SRC] });
+
+      await waitFor(
+        () => {
+          expect(screen.queryByText("src")).toBeNull();
+        },
+        { timeout: 1000 },
+      );
+      expect(screen.queryByText("main.rs")).toBeNull();
+    });
+
+    it("变更落在未加载（未展开）的分支 → 不发任何 fsTree 请求", async () => {
+      await renderWithSrcExpanded();
+      const callsBefore = fsTreeMock.mock.calls.length;
+
+      // docs/ 从没展开过（也不在树里）→ 它下面的变更不该触发任何重拉
+      fsChangedHandler!({ paths: [`${ROOT}/docs/deep/nested/a.md`] });
+      await new Promise((r) => setTimeout(r, 300));
+
+      expect(fsTreeMock.mock.calls.length).toBe(callsBefore);
+    });
+
+    it("切到同 cwd 的另一个终端 tab → 展开态保留（不重置成新树）", async () => {
+      await renderWithSrcExpanded();
+      // 另开一个终端 tab，cwd 相同
+      const otherTab = useTabsStore.getState().addTab();
+      useTabsStore.getState().setSessionId(otherTab, "sid-2");
+      act(() => {
+        useTabsStore.setState({ activeId: otherTab });
+      });
+
+      await waitFor(() => {
+        expect(sessionCurrentCwdMock).toHaveBeenCalledWith("sid-2");
+      });
+      // 同一个 cwd → 只刷根子项，src 仍然展开
+      expect(screen.getByText("main.rs")).toBeTruthy();
+    });
+
+    it("手动刷新（header 刷新按钮）也保持展开状态", async () => {
+      await renderWithSrcExpanded();
+      fireEvent.click(screen.getByTestId("file-tree-refresh-btn"));
+
+      await waitFor(
+        () => {
+          expect(treeCallsFor(ROOT)).toBeGreaterThan(1);
+        },
+        { timeout: 1000 },
+      );
+      expect(screen.getByText("main.rs")).toBeTruthy();
+    });
   });
 });

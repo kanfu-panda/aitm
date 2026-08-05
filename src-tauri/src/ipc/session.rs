@@ -43,6 +43,38 @@ impl SessionState {
         self.mgr.current_cwd(id).await
     }
 
+    /// 给 `run_command` 用：查某个 session 跑的是哪个 shell，决定能否用 sentinel
+    /// 包装拿退出码。解析失败 / session 不存在 → None（调用方按"不能包装"处理）。
+    pub async fn shell_of(&self, session_id: &str) -> Option<String> {
+        let id = parse_session_id(session_id)?;
+        self.mgr.shell(id).await
+    }
+
+    /// 给 `run_command` 用：查某个 session 的 shell integration 钩子是否可用。
+    /// 可用 → 命令原样写进 PTY（无回显噪音）靠钩子拿退出码；
+    /// 不可用 → 退回 sentinel 包装法。解析失败 / session 不存在 → false。
+    pub async fn hook_active(&self, session_id: &str) -> bool {
+        let Some(id) = parse_session_id(session_id) else {
+            return false;
+        };
+        self.mgr.hook_active(id).await
+    }
+
+    /// 给 `run_command` 用：命令写进去了却收不到钩子的 `aitm-exec` 标记 → 标记失效，
+    /// 后续命令退回包装法（防止每条命令都熬到 120s 超时）。
+    pub async fn disable_hook(&self, session_id: &str) {
+        if let Some(id) = parse_session_id(session_id) {
+            self.mgr.disable_hook(id).await;
+        }
+    }
+
+    /// 给 `run_command` 用：之后又在缓冲区里看到钩子标记 → 恢复钩子模式。
+    pub async fn enable_hook(&self, session_id: &str) {
+        if let Some(id) = parse_session_id(session_id) {
+            self.mgr.enable_hook(id).await;
+        }
+    }
+
     /// 给 AI 工具用：跨所有 session 子串搜索，返回 (session_id 字符串, 行) 元组。
     pub async fn search_recent(
         &self,

@@ -16,11 +16,16 @@ use thiserror::Error;
 
 pub mod ansi;
 pub mod browser;
+pub mod browser_open;
+pub mod edit_file;
 pub mod list_files;
+pub mod list_skills;
+pub mod load_skill;
 pub mod read_file;
 pub mod registry;
 pub mod run_command;
 pub mod terminal_history;
+pub mod write_file;
 
 /// 风险等级。1E-1 只静态分级（read_file → Low、run_command → High）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -38,6 +43,24 @@ pub struct ToolResult {
     pub content: String,
     /// 是否是错误（影响 LLM 下一步决策）。
     pub is_error: bool,
+}
+
+/// 工具「将要做的改动」的结构化预览，随审批事件 / 完成事件发给前端，
+/// 用于审批弹窗和历史气泡里渲染 diff。
+///
+/// 设计成可扩展：`kind` 未来可能有别的类型（如 "rename" / "delete"），
+/// v1.2.0（T-B3a）只产出 `kind = "diff"`（write_file / edit_file 用）。
+/// serde 字段保持 snake_case（前端直接吃 `old_text` / `new_text`）。
+#[derive(Debug, Clone, Serialize)]
+pub struct ToolPreview {
+    /// 预览类型标签；当前恒为 "diff"。
+    pub kind: String,
+    /// 目标文件路径（展示用，通常是相对沙盒根的路径）。
+    pub path: String,
+    /// 改动前的文本（新建文件时为空串）。
+    pub old_text: String,
+    /// 改动后的文本。
+    pub new_text: String,
 }
 
 /// 工具执行错误。
@@ -98,11 +121,23 @@ pub trait Tool: Send + Sync {
 
     /// 执行工具。返回的 ToolResult 会作为 ContentBlock::ToolResult 喂回 LLM。
     async fn execute(&self, args: Value, ctx: &ToolContext) -> Result<ToolResult, ToolError>;
+
+    /// 计算「将要做的改动」的 diff 预览，供审批弹窗 + 历史气泡渲染。
+    ///
+    /// 默认返回 None（大多数工具没有可预览的改动）。write_file / edit_file（B1/B2）
+    /// override 之，返回改动前后文本让前端渲染 diff。
+    ///
+    /// 约定：本方法应**无副作用**且尽量**不 panic**——orchestrator 在发审批事件前
+    /// 调它，返回 None 时静默降级（不影响主循环）。
+    async fn preview(&self, _args: &Value, _ctx: &ToolContext) -> Option<ToolPreview> {
+        None
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use async_trait::async_trait;
 
     #[test]
     fn tool_error_to_result_是_error() {
@@ -133,5 +168,112 @@ mod tests {
         let e = ToolError::Blocked { reason: "越界".into() };
         let r: ToolResult = e.into();
         assert!(r.content.contains("越界"));
+    }
+
+    // ============================================================
+    // T-B3a：ToolPreview + Tool::preview 默认实现
+    // ============================================================
+
+    #[test]
+    fn tool_preview_serialize_snake_case_字段() {
+        // 前端要吃 old_text / new_text，字段名必须 snake_case
+        let p = ToolPreview {
+            kind: "diff".into(),
+            path: "a.txt".into(),
+            old_text: "旧".into(),
+            new_text: "新".into(),
+        };
+        let j = serde_json::to_value(&p).unwrap();
+        assert_eq!(j["kind"], "diff");
+        assert_eq!(j["path"], "a.txt");
+        assert_eq!(j["old_text"], "旧");
+        assert_eq!(j["new_text"], "新");
+    }
+
+    /// 构造最小 ToolContext（preview 默认实现忽略 ctx，仅需能编译 + 跑通）。
+    fn dummy_ctx() -> ToolContext {
+        ToolContext {
+            session_state: Arc::new(crate::ipc::session::SessionState::new()),
+            cwd: PathBuf::from("/tmp"),
+            active_session_id: None,
+            whitelist: Arc::new(crate::safety::whitelist::CompiledWhitelist::empty()),
+            browser_state: Arc::new(crate::ipc::browser::BrowserState::default()),
+        }
+    }
+
+    /// 沿用 trait 默认 preview（返回 None）的工具。
+    struct DefaultPreviewTool;
+    #[async_trait]
+    impl Tool for DefaultPreviewTool {
+        fn name(&self) -> &str {
+            "default_preview_tool"
+        }
+        fn description(&self) -> &str {
+            "默认 preview"
+        }
+        fn input_schema(&self) -> Value {
+            serde_json::json!({"type":"object"})
+        }
+        fn risk_class(&self, _args: &Value) -> RiskClass {
+            RiskClass::Low
+        }
+        async fn execute(&self, _args: Value, _ctx: &ToolContext) -> Result<ToolResult, ToolError> {
+            Ok(ToolResult {
+                content: "ok".into(),
+                is_error: false,
+            })
+        }
+    }
+
+    /// override preview 返回 Some(diff) 的工具。
+    struct OverridePreviewTool;
+    #[async_trait]
+    impl Tool for OverridePreviewTool {
+        fn name(&self) -> &str {
+            "override_preview_tool"
+        }
+        fn description(&self) -> &str {
+            "带 diff 预览"
+        }
+        fn input_schema(&self) -> Value {
+            serde_json::json!({"type":"object"})
+        }
+        fn risk_class(&self, _args: &Value) -> RiskClass {
+            RiskClass::High
+        }
+        async fn execute(&self, _args: Value, _ctx: &ToolContext) -> Result<ToolResult, ToolError> {
+            Ok(ToolResult {
+                content: "ok".into(),
+                is_error: false,
+            })
+        }
+        async fn preview(&self, _args: &Value, _ctx: &ToolContext) -> Option<ToolPreview> {
+            Some(ToolPreview {
+                kind: "diff".into(),
+                path: "hello.txt".into(),
+                old_text: String::new(),
+                new_text: "world".into(),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn tool_default_preview_返回_none() {
+        let ctx = dummy_ctx();
+        let got = DefaultPreviewTool.preview(&serde_json::json!({}), &ctx).await;
+        assert!(got.is_none(), "沿用默认实现的工具 preview 应返回 None");
+    }
+
+    #[tokio::test]
+    async fn tool_override_preview_返回_some_diff() {
+        let ctx = dummy_ctx();
+        let got = OverridePreviewTool
+            .preview(&serde_json::json!({}), &ctx)
+            .await
+            .expect("override 应返回 Some");
+        assert_eq!(got.kind, "diff");
+        assert_eq!(got.path, "hello.txt");
+        assert_eq!(got.old_text, "");
+        assert_eq!(got.new_text, "world");
     }
 }
