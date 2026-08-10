@@ -10,17 +10,13 @@ import SafetySection from "./safety/SafetySection";
 import PrivacySection from "./privacy/PrivacySection";
 import BrowserSettingsSection from "./browser/BrowserSettingsSection";
 import KeybindingsSection from "./settings/KeybindingsSection";
+import AboutSection from "./settings/AboutSection";
 import type {
   ActivityBarPosition,
   SidePanelPosition,
   ThemeMode,
 } from "../lib/tauri";
 import { useBrowserModalGuard } from "../lib/useBrowserModalGuard";
-
-interface Props {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-}
 
 type TabValue =
   | "appearance"
@@ -30,9 +26,18 @@ type TabValue =
   | "privacy"
   | "browser"
   | "keybindings"
-  | "language";
+  | "language"
+  | "about";
 
-export default function SettingsModal({ open, onOpenChange }: Props) {
+interface Props {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  /** 打开时强制切到指定页。用于 NSMenu「关于 aitm」直达关于页；
+   *  不传则保留用户上次停留的 tab。 */
+  initialTab?: TabValue;
+}
+
+export default function SettingsModal({ open, onOpenChange, initialTab }: Props) {
   const { t } = useTranslation();
   const init = useSettingsStore((s) => s.init);
   const loaded = useSettingsStore((s) => s.loaded);
@@ -47,6 +52,14 @@ export default function SettingsModal({ open, onOpenChange }: Props) {
       init();
     }
   }, [open, loaded, init]);
+
+  // 带 initialTab 打开（如菜单「关于 aitm」）→ 切到指定页。
+  // 依赖里带 open：同一 tab 关掉再从菜单打开时也要重新切回去。
+  useEffect(() => {
+    if (open && initialTab) {
+      setActiveTab(initialTab);
+    }
+  }, [open, initialTab]);
 
   // 让浏览器 webview 在 modal 弹起时让位（v0.4.1 真机 smoke：WKWebView native overlay 盖住 React DOM）
   useBrowserModalGuard(open);
@@ -82,6 +95,7 @@ export default function SettingsModal({ open, onOpenChange }: Props) {
               <TabTrigger value="browser" label={t("settingsModal.sections.browser")} />
               <TabTrigger value="keybindings" label={t("settingsModal.sections.keybindings")} />
               <TabTrigger value="language" label={t("settingsModal.sections.language")} />
+              <TabTrigger value="about" label={t("settingsModal.sections.about")} />
             </Tabs.List>
 
             <div className="min-w-0 flex-1 overflow-y-auto p-5">
@@ -108,6 +122,9 @@ export default function SettingsModal({ open, onOpenChange }: Props) {
               </Tabs.Content>
               <Tabs.Content value="language" className="focus:outline-none">
                 <LanguageSection />
+              </Tabs.Content>
+              <Tabs.Content value="about" className="focus:outline-none">
+                <AboutSection />
               </Tabs.Content>
             </div>
           </Tabs.Root>

@@ -1,6 +1,6 @@
 [package]
 name = "aitm"
-version = "1.3.0"
+version = "1.3.1"
 description = "AI Terminal — Rust + Tauri"
 authors = ["kanfu-panda"]
 license = "Apache-2.0"
@@ -61,6 +61,7 @@ tempfile = "3"
 # watcher），debouncer-full 把突发事件聚合成批次，避免大 repo 一次性刷屏。
 notify = "6"
 notify-debouncer-full = "0.3"
+tauri-plugin-process = "2.3.1"
 
 # macOS 原生 Dock 角标：直接走 AppKit NSDockTile.setBadgeLabel，绕开
 # Tauri Window::setBadgeCount 在 macOS 的 bug（tauri#13905）。objc2 系列已由
@@ -75,6 +76,9 @@ objc2-app-kit = { version = "0.3", default-features = false, features = [
 objc2-foundation = { version = "0.3", default-features = false, features = [
     "NSString",
 ] }
+
+[target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
+tauri-plugin-updater = "2.10.1"
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }

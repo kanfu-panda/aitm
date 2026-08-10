@@ -33,6 +33,15 @@ pub fn app_quit_confirmed(app: AppHandle) {
     app.exit(0);
 }
 
+/// 返回当前应用版本（编译期烘焙的 `CARGO_PKG_VERSION`）。
+///
+/// 设置面板"关于"页要在无网络时也能立刻显示版本号，所以不复用
+/// `update_check`（它要走 GitHub API，最长等 5s 且可能失败）。
+#[tauri::command]
+pub fn app_version() -> String {
+    crate::version::current().to_string()
+}
+
 /// v1.0.1：原生设置 macOS Dock 角标（红色数字 / 文本）。
 ///
 /// 不走 Tauri `Window::setBadgeCount`——它在 macOS 上有 bug（tauri#13905 未修，

@@ -123,7 +123,8 @@
       "keybindings": "快捷键",
       "language": "语言",
       "privacy": "隐私",
-      "notifications": "通知"
+      "notifications": "通知",
+      "about": "关于"
     },
     "languageHelp": "无需重启，UI 即刻更新。"
   },
@@ -450,5 +451,20 @@
     "aiSidebarWidth": "调整 AI 侧栏宽度",
     "terminalEditorHeight": "拖拽调整终端 / 编辑器分屏高度",
     "terminalBrowserRatio": "拖拽调整终端 / 浏览器分屏比例"
+  },
+  "about": {
+    "version": "版本 {{version}}",
+    "checkUpdate": "检查更新",
+    "checking": "正在检查…",
+    "upToDate": "已是最新版本",
+    "newVersion": "发现新版本 v{{version}}",
+    "download": "下载",
+    "releaseNotes": "更新说明",
+    "checkFailed": "检查失败：{{error}}",
+    "repo": "项目主页",
+    "installNow": "下载并安装",
+    "installHint": "下载完成后应用会自动重启",
+    "downloading": "正在下载…",
+    "downloadingPercent": "正在下载… {{percent}}%"
   }
 }

@@ -9,13 +9,16 @@ import { updateCheck, type UpdateCheckResult } from "../lib/tauri";
  * 渲染一个小链接 "↑ vX.Y.Z 可用"，点击在系统浏览器打开 release 页让用户
  * 自行下载安装。
  *
- * 设计决议（维护者 选 A 档）：
- * - 仅提示，不自动升级（无 Apple 证书 + 跨平台分发未完）
+ * 设计决议：
  * - 启动一次，不轮询（用户重启不频繁；偶尔错过一周更新可接受）
  * - API 失败静默 → 不打扰
+ * - 点击**打开"关于"页**而不是浏览器：那里能直接应用内下载安装，
+ *   装不了时也还有手动下载链接兜底
  *
  * **统一渲染策略**：没有更新或检查未完成 → 返回 null，不占空间。
  */
+/** 请求打开设置面板的"关于"页。App.tsx 监听 window 上的这个事件。 */
+export const OPEN_ABOUT_EVENT = "aitm:open-about";
 export default function UpdateBadge() {
   const { t } = useTranslation();
   const [info, setInfo] = useState<UpdateCheckResult | null>(null);
@@ -32,14 +35,10 @@ export default function UpdateBadge() {
       });
   }, []);
 
-  if (!info || !info.available || !info.release_url) return null;
+  if (!info?.available) return null;
 
   const handleClick = () => {
-    // 用 window.open 而非 anchor href —— Tauri webview 可能拦截 a 标签的 navigation
-    // window.open 在 Tauri 默认走系统浏览器（除非配置 webview 拦截）
-    if (info.release_url) {
-      window.open(info.release_url, "_blank", "noopener");
-    }
+    window.dispatchEvent(new CustomEvent(OPEN_ABOUT_EVENT));
   };
 
   const tooltip = info.release_notes

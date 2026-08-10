@@ -29,7 +29,7 @@ vi.mock("../../lib/tauri", async (orig) => {
   };
 });
 
-import UpdateBadge from "../UpdateBadge";
+import UpdateBadge, { OPEN_ABOUT_EVENT } from "../UpdateBadge";
 
 describe("UpdateBadge", () => {
   beforeEach(() => {
@@ -91,7 +91,7 @@ describe("UpdateBadge", () => {
     expect(title).toContain("新功能 X / Y / Z");
   });
 
-  it("点击调 window.open 打开 release URL", async () => {
+  it("点击派发打开\"关于\"页事件（不再直接开浏览器）", async () => {
     mockResult = {
       available: true,
       current_version: "0.2.1",
@@ -100,17 +100,18 @@ describe("UpdateBadge", () => {
       release_notes: null,
       error: null,
     };
+    const onOpenAbout = vi.fn();
+    window.addEventListener(OPEN_ABOUT_EVENT, onOpenAbout);
     render(<UpdateBadge />);
     const btn = await screen.findByTestId("update-badge");
     btn.click();
-    expect(openSpy).toHaveBeenCalledWith(
-      "https://example.com/release",
-      "_blank",
-      "noopener",
-    );
+    window.removeEventListener(OPEN_ABOUT_EVENT, onOpenAbout);
+
+    expect(onOpenAbout).toHaveBeenCalledTimes(1);
+    expect(openSpy).not.toHaveBeenCalled();
   });
 
-  it("available true 但 release_url 缺失时不渲染（防御）", async () => {
+  it("release_url 缺失也照常提示（关于页里还能再查一次）", async () => {
     mockResult = {
       available: true,
       current_version: "0.2.1",
@@ -119,9 +120,7 @@ describe("UpdateBadge", () => {
       release_notes: null,
       error: null,
     };
-    const { container } = render(<UpdateBadge />);
-    await waitFor(() => {
-      expect(container.firstChild).toBeNull();
-    });
+    render(<UpdateBadge />);
+    expect(await screen.findByTestId("update-badge")).toBeTruthy();
   });
 });

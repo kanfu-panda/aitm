@@ -824,6 +824,17 @@ export async function updateCheck(): Promise<UpdateCheckResult> {
   return await invoke<UpdateCheckResult>("update_check");
 }
 
+/** 当前应用版本（后端 CARGO_PKG_VERSION）。不走网络，"关于"页立刻可显示。 */
+export async function appVersion(): Promise<string> {
+  return await invoke<string>("app_version");
+}
+
+/** 订阅 NSMenu「关于 aitm」触发的 `menu:open-about` 事件。
+ *  App.tsx 收到后打开设置面板并切到"关于"页。 */
+export async function onMenuOpenAbout(cb: () => void): Promise<UnlistenFn> {
+  return await listen<null>("menu:open-about", () => cb());
+}
+
 // === Phase 3A T3：文件读取（给 MD 预览） ===
 
 /** 读文本文件；max_bytes 默认 2MB；二进制 / 大文件 / 不存在都 → reject。

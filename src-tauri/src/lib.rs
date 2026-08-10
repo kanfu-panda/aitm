@@ -113,6 +113,11 @@ pub fn run_gui() {
                 .build(),
         )
         .plugin(tauri_plugin_notification::init())
+        // 应用内自动更新：前端「关于」页调 plugin 的 check/downloadAndInstall，
+        // 装完调 process plugin 的 relaunch 重启。更新包由 GitHub Release 上的
+        // latest.json 描述，签名用 minisign 公钥（tauri.conf.json plugins.updater）。
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         // v0.7.0-A：Aptabase 匿名使用统计 plugin。
         // App Key `A-US-6820213489` 是公开 Key（不是 secret），可硬编码；
         // 上报开关由前端 `analytics_opt_in` 控制（关时前端 wrapper 静默丢弃）。
@@ -291,6 +296,8 @@ pub fn run_gui() {
             ipc::app::app_quit_confirmed,
             // v1.0.1：原生 macOS Dock 角标（绕开 tauri#13905）
             ipc::app::set_dock_badge,
+            // 设置面板"关于"页显示的版本号
+            ipc::app::app_version,
             // v0.10.6 T1：切语言时重建 NSMenu（macOS only；其他平台 no-op）
             ipc::menu::menu_rebuild,
         ])
