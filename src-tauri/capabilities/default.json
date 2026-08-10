@@ -8,6 +8,8 @@
     "core:event:default",
     "notification:default",
     "aptabase:allow-track-event",
-    "core:window:allow-set-badge-count"
+    "core:window:allow-set-badge-count",
+    "updater:default",
+    "process:allow-restart"
   ]
 }

@@ -8,8 +8,8 @@
 //! **设计决策**（v1.0 切换）：
 //! - 直接调 GitHub Releases API，**真相源就是 GitHub 仓库本身**——不需要中转 CDN
 //! - GitHub API 未认证 rate limit 60 req/h/IP；单用户启动频率远低于此，足够用
-//! - dmg 下载链接从 release assets 里按 `aitm_*_aarch64.dmg` 模式匹配
-//! - 用户主动升级（点链接下 dmg 手动装）—— 不做 tauri-plugin-updater
+//! - 下载链接按**当前运行平台**从 release assets 里挑（macOS dmg / Windows
+//!   setup.exe / msi）；本平台无产物时回退到 release 页而非给错平台的包
 //! - 网络 / rate limit / 解析失败一律返回 `available: false` + 简短 `error` 字段
 //! - 比较算法：剥 `v` 前缀 + 简化 SemVer（pre-release 视为 < 同 major.minor.patch 正式版）
 
@@ -22,8 +22,32 @@ const RELEASES_API_URL: &str =
 /// HTTP 客户端 timeout（毫秒）—— 启动调用，不希望挂太久
 const HTTP_TIMEOUT_MS: u64 = 5_000;
 
-/// macOS aarch64 dmg 文件名模式（按约定 `aitm_<version>_aarch64.dmg` 匹配）
-const DMG_ASSET_SUFFIX: &str = "_aarch64.dmg";
+/// 当前运行平台对应的安装包文件名后缀，按优先级从高到低。
+///
+/// 文件名遵循 Tauri bundler 约定（对照 v1.3.0 实际产物）：
+/// `aitm_1.3.0_aarch64.dmg` / `aitm_1.3.0_x64-setup.exe` / `aitm_1.3.0_arm64_en-US.msi` …
+///
+/// 用 `cfg!` 而非 `#[cfg]`：所有分支都参与编译，不会因为漏写某个
+/// os×arch 组合而编不过；分支消解在优化期完成，无运行时开销。
+///
+/// Linux 暂无发布产物 → 空表，调用方回退到 release 页。
+fn platform_asset_suffixes() -> &'static [&'static str] {
+    if cfg!(target_os = "macos") {
+        if cfg!(target_arch = "aarch64") {
+            &["_aarch64.dmg"]
+        } else {
+            &["_x64.dmg"]
+        }
+    } else if cfg!(target_os = "windows") {
+        if cfg!(target_arch = "aarch64") {
+            &["_arm64-setup.exe", "_arm64_en-US.msi"]
+        } else {
+            &["_x64-setup.exe", "_x64_en-US.msi"]
+        }
+    } else {
+        &[]
+    }
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct UpdateCheckResult {
@@ -51,6 +75,9 @@ struct GitHubRelease {
     /// release notes（markdown 原文）
     #[serde(default)]
     body: Option<String>,
+    /// release 页面地址；本平台没有直链产物时回退到它
+    #[serde(default)]
+    html_url: Option<String>,
     /// release 产物
     #[serde(default)]
     assets: Vec<GitHubAsset>,
@@ -113,7 +140,7 @@ async fn check_inner(current: &str) -> UpdateCheckResult {
     let latest = strip_v_prefix(&payload.tag_name);
     let available = is_newer(&latest, current);
 
-    let release_url = pick_dmg_asset(&payload.assets);
+    let release_url = resolve_download_url(&payload, platform_asset_suffixes());
 
     UpdateCheckResult {
         available,
@@ -125,14 +152,24 @@ async fn check_inner(current: &str) -> UpdateCheckResult {
     }
 }
 
-/// 从 release assets 里挑 macOS aarch64 dmg。
+/// 从 release assets 里挑本平台的安装包，按 `suffixes` 给的优先级依次尝试。
 ///
-/// 按约定文件名 `aitm_<version>_aarch64.dmg` 匹配；找不到返 None。
-fn pick_dmg_asset(assets: &[GitHubAsset]) -> Option<String> {
-    assets
-        .iter()
-        .find(|a| a.name.ends_with(DMG_ASSET_SUFFIX))
-        .map(|a| a.browser_download_url.clone())
+/// 一个后缀都匹配不上返 None（调用方负责回退）。
+fn pick_asset(assets: &[GitHubAsset], suffixes: &[&str]) -> Option<String> {
+    suffixes.iter().find_map(|suffix| {
+        assets
+            .iter()
+            .find(|a| a.name.ends_with(suffix))
+            .map(|a| a.browser_download_url.clone())
+    })
+}
+
+/// 决定"点了徽标去哪"：优先本平台安装包直链，没有则退到 release 页。
+///
+/// 回退这一步是必须的——Linux 无产物、或某次发布漏传某平台包时，
+/// 给 release 页也好过给一个别的平台的安装包（v1.3.0 之前的行为）。
+fn resolve_download_url(release: &GitHubRelease, suffixes: &[&str]) -> Option<String> {
+    pick_asset(&release.assets, suffixes).or_else(|| release.html_url.clone())
 }
 
 /// 剥 `v` 前缀；`v0.2.0` → `0.2.0`，`0.2.0` 原样
@@ -284,33 +321,106 @@ mod tests {
         assert_eq!(strip_v_prefix(&p.tag_name), "1.0.0");
     }
 
-    #[test]
-    fn pick_dmg_asset_找到_aarch64() {
-        let assets = vec![
-            GitHubAsset {
-                name: "install-aitm.sh".to_string(),
-                browser_download_url: "https://x/y/install-aitm.sh".to_string(),
-            },
-            GitHubAsset {
-                name: "aitm_1.0.0_aarch64.dmg".to_string(),
-                browser_download_url: "https://x/y/aitm_1.0.0_aarch64.dmg".to_string(),
-            },
-        ];
-        let url = pick_dmg_asset(&assets);
-        assert_eq!(url.as_deref(), Some("https://x/y/aitm_1.0.0_aarch64.dmg"));
+    /// 造一组真实 release 的资产（照抄 v1.3.0 的实际文件名）
+    fn 全平台资产() -> Vec<GitHubAsset> {
+        ["aarch64.dmg", "arm64-setup.exe", "arm64_en-US.msi", "x64-setup.exe", "x64_en-US.msi"]
+            .iter()
+            .map(|tail| GitHubAsset {
+                name: format!("aitm_1.3.0_{tail}"),
+                browser_download_url: format!("https://x/y/aitm_1.3.0_{tail}"),
+            })
+            .collect()
     }
 
     #[test]
-    fn pick_dmg_asset_无_aarch64_返_none() {
-        let assets = vec![GitHubAsset {
-            name: "install-aitm.sh".to_string(),
-            browser_download_url: "https://x/y/install-aitm.sh".to_string(),
-        }];
-        assert!(pick_dmg_asset(&assets).is_none());
+    fn pick_asset_macos_arm_取_dmg() {
+        let url = pick_asset(&全平台资产(), &["_aarch64.dmg"]);
+        assert_eq!(url.as_deref(), Some("https://x/y/aitm_1.3.0_aarch64.dmg"));
     }
 
     #[test]
-    fn pick_dmg_asset_空_assets() {
-        assert!(pick_dmg_asset(&[]).is_none());
+    fn pick_asset_windows_x64_取_setup_exe_不取_dmg() {
+        let url = pick_asset(&全平台资产(), &["_x64-setup.exe", "_x64_en-US.msi"]);
+        assert_eq!(url.as_deref(), Some("https://x/y/aitm_1.3.0_x64-setup.exe"));
+    }
+
+    #[test]
+    fn pick_asset_windows_arm_取_arm64_不取_x64() {
+        let url = pick_asset(&全平台资产(), &["_arm64-setup.exe", "_arm64_en-US.msi"]);
+        assert_eq!(url.as_deref(), Some("https://x/y/aitm_1.3.0_arm64-setup.exe"));
+    }
+
+    #[test]
+    fn pick_asset_按后缀优先级回退到次选() {
+        // setup.exe 缺失时应退到 msi，而不是直接放弃
+        let assets: Vec<GitHubAsset> = 全平台资产()
+            .into_iter()
+            .filter(|a| !a.name.ends_with("-setup.exe"))
+            .collect();
+        let url = pick_asset(&assets, &["_x64-setup.exe", "_x64_en-US.msi"]);
+        assert_eq!(url.as_deref(), Some("https://x/y/aitm_1.3.0_x64_en-US.msi"));
+    }
+
+    #[test]
+    fn pick_asset_匹配不上返_none() {
+        // Linux（无候选后缀）与"资产里没有本平台包"两种情况都应为 None
+        assert!(pick_asset(&全平台资产(), &[]).is_none());
+        assert!(pick_asset(&全平台资产(), &["_riscv64.deb"]).is_none());
+    }
+
+    #[test]
+    fn pick_asset_空_assets() {
+        assert!(pick_asset(&[], &["_aarch64.dmg"]).is_none());
+    }
+
+    #[test]
+    fn 本平台后缀非空_且不跨平台() {
+        // 回归：v1.3.0 之前只认 _aarch64.dmg，Windows 用户会拿到 macOS dmg
+        let s = platform_asset_suffixes();
+        if cfg!(any(target_os = "macos", target_os = "windows")) {
+            assert!(!s.is_empty(), "macOS/Windows 必须有候选后缀");
+        }
+        if cfg!(target_os = "windows") {
+            assert!(s.iter().all(|x| !x.ends_with(".dmg")), "Windows 不该匹配 dmg：{s:?}");
+        }
+        if cfg!(target_os = "macos") {
+            assert!(s.iter().all(|x| x.ends_with(".dmg")), "macOS 只该匹配 dmg：{s:?}");
+        }
+    }
+
+    #[test]
+    fn 无本平台资产时回退到_release_页() {
+        let payload = GitHubRelease {
+            tag_name: "v9.9.9".to_string(),
+            body: None,
+            html_url: Some("https://github.com/kanfu-panda/aitm/releases/tag/v9.9.9".to_string()),
+            assets: vec![],
+        };
+        assert_eq!(
+            resolve_download_url(&payload, &["_aarch64.dmg"]).as_deref(),
+            Some("https://github.com/kanfu-panda/aitm/releases/tag/v9.9.9")
+        );
+    }
+
+    #[test]
+    fn 有本平台资产时优先直链而非_release_页() {
+        let payload = GitHubRelease {
+            tag_name: "v9.9.9".to_string(),
+            body: None,
+            html_url: Some("https://github.com/kanfu-panda/aitm/releases/tag/v9.9.9".to_string()),
+            assets: 全平台资产(),
+        };
+        assert_eq!(
+            resolve_download_url(&payload, &["_aarch64.dmg"]).as_deref(),
+            Some("https://x/y/aitm_1.3.0_aarch64.dmg")
+        );
+    }
+
+    #[test]
+    fn github_release_缺_html_url_不炸() {
+        let body = r#"{"tag_name": "v1.0.0", "assets": []}"#;
+        let p: GitHubRelease = serde_json::from_str(body).unwrap();
+        assert!(p.html_url.is_none());
+        assert!(resolve_download_url(&p, &["_aarch64.dmg"]).is_none());
     }
 }

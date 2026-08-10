@@ -123,7 +123,8 @@
       "keybindings": "Keybindings",
       "language": "Language",
       "privacy": "Privacy",
-      "notifications": "Notifications"
+      "notifications": "Notifications",
+      "about": "About"
     },
     "languageHelp": "Restart not required; UI updates instantly."
   },
@@ -452,5 +453,20 @@
     "aiSidebarWidth": "Resize AI sidebar",
     "terminalEditorHeight": "Resize terminal / editor split",
     "terminalBrowserRatio": "Resize terminal / browser ratio"
+  },
+  "about": {
+    "version": "Version {{version}}",
+    "checkUpdate": "Check for Updates",
+    "checking": "Checking…",
+    "upToDate": "You're on the latest version",
+    "newVersion": "New version v{{version}} available",
+    "download": "Download",
+    "releaseNotes": "Release notes",
+    "checkFailed": "Check failed: {{error}}",
+    "repo": "Project homepage",
+    "installNow": "Download and install",
+    "installHint": "The app restarts automatically once installed",
+    "downloading": "Downloading…",
+    "downloadingPercent": "Downloading… {{percent}}%"
   }
 }

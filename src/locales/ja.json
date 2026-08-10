@@ -123,7 +123,8 @@
       "keybindings": "ショートカット",
       "language": "言語",
       "privacy": "プライバシー",
-      "notifications": "通知"
+      "notifications": "通知",
+      "about": "情報"
     },
     "languageHelp": "再起動不要、UI は即座に更新されます。"
   },
@@ -452,5 +453,20 @@
     "aiSidebarWidth": "AI サイドバーの幅を調整",
     "terminalEditorHeight": "ターミナル / エディタ分割の高さを調整",
     "terminalBrowserRatio": "ターミナル / ブラウザの比率を調整"
+  },
+  "about": {
+    "version": "バージョン {{version}}",
+    "checkUpdate": "アップデートを確認",
+    "checking": "確認中…",
+    "upToDate": "最新バージョンです",
+    "newVersion": "新しいバージョン v{{version}} が利用できます",
+    "download": "ダウンロード",
+    "releaseNotes": "リリースノート",
+    "checkFailed": "確認に失敗しました：{{error}}",
+    "repo": "プロジェクトページ",
+    "installNow": "ダウンロードしてインストール",
+    "installHint": "インストール後、アプリは自動的に再起動します",
+    "downloading": "ダウンロード中…",
+    "downloadingPercent": "ダウンロード中… {{percent}}%"
   }
 }

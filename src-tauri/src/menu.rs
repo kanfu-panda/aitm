@@ -43,8 +43,13 @@ pub fn build_menu<R: Runtime>(app: &AppHandle<R>, lang: &str) -> tauri::Result<M
         .accelerator("Cmd+Q")
         .build(app)?;
 
+    // 自定义"关于"项而非 PredefinedMenuItem::about：系统面板只能显示静态
+    // metadata，装不下"检查更新"按钮。这里改为打开应用内设置的"关于"页。
+    let about_item = MenuItemBuilder::with_id("open-about", i18n::t(lang, "menu.app.about"))
+        .build(app)?;
+
     let app_submenu = SubmenuBuilder::new(app, i18n::t(lang, "menu.app.title"))
-        .about(None) // 系统自动加 "About aitm"；这里 about 项含 Tauri 默认 metadata
+        .item(&about_item)
         .separator()
         .services()
         .separator()
@@ -130,6 +135,11 @@ pub fn build_menu<R: Runtime>(app: &AppHandle<R>, lang: &str) -> tauri::Result<M
 /// id 与事件的对照见模块文档表格。
 pub fn install_menu_event_handler<R: Runtime>(app: &AppHandle<R>) {
     app.on_menu_event(|app_handle, event| match event.id().as_ref() {
+        "open-about" => {
+            if let Some(win) = app_handle.get_webview_window("main") {
+                let _ = win.emit("menu:open-about", ());
+            }
+        }
         "quit-confirm" => {
             if let Some(win) = app_handle.get_webview_window("main") {
                 let _ = win.emit("app:confirm-quit-requested", ());
@@ -175,6 +185,7 @@ mod tests {
         // build_menu 用到的 i18n key 列表
         let keys = [
             "menu.app.title",
+            "menu.app.about",
             "menu.app.quit",
             "menu.file.title",
             "menu.file.closeTab",

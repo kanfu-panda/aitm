@@ -2,6 +2,19 @@
 
 All notable changes to aitm will be documented in this file. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.1] — 2026-08-10
+
+### Added
+
+- **In-app updates on macOS.** A new **About** page in Settings shows the current version and checks for updates on demand. When a newer version exists, aitm downloads it, verifies its signature, installs it and restarts — no more downloading a `.dmg` and dragging it over the old app. The macOS **About aitm** menu item and the status-bar update badge both open this page.
+  - Windows is not covered yet and keeps the existing behaviour: you get a notice and a link to the installer.
+  - The update itself only becomes available from the *next* release onward — 1.3.0 and earlier ship without the updater, so those need one manual install first.
+
+### Fixed
+
+- **The update notice offered the wrong installer.** It always linked the macOS `.dmg`, so Windows users were handed a package they could not install. The download link now matches the platform you are running, and falls back to the release page when no build exists for it.
+- **Links in Settings did nothing when clicked.** External links now open in the system browser as intended.
+
 ## [1.3.0] — 2026-08-05
 
 This release turns the built-in AI from a read-only assistant into one that can actually do the work — edit files, run commands it can verify, and drive the embedded browser — and adds Claude Code skills support.

@@ -56,3 +56,6 @@ releases/
 .aitm/
 .agents/
 AGENTS.md
+
+# 发版时脚本生成的更新器清单（每次发布重新生成，不入库）
+/latest.json

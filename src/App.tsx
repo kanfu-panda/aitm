@@ -9,6 +9,7 @@ import {
 import SettingsModal from "./components/SettingsModal";
 import AiSidebar from "./components/AiSidebar";
 import StatusBar from "./components/StatusBar";
+import { OPEN_ABOUT_EVENT } from "./components/UpdateBadge";
 import FileTree from "./components/FileTree";
 import FilePreviewWorkspace from "./components/FilePreviewWorkspace";
 import QuitConfirmDialog from "./components/QuitConfirmDialog";
@@ -25,6 +26,7 @@ import {
   onBrowserOpenRequested,
   onBrowserUrlChanged,
   onMenuFontAction,
+  onMenuOpenAbout,
   onNotificationReceived,
   onPtyCwdChanged,
   sessionClose,
@@ -67,6 +69,8 @@ import { handleBrowserOpenRequested } from "./lib/browserOpenRequest";
 export default function App() {
   const { t } = useTranslation();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // 从菜单「关于 aitm」进入时强制切到"关于"页；其他入口不指定（保留上次 tab）
+  const [settingsTab, setSettingsTab] = useState<"about" | undefined>(undefined);
   const addTab = useTabsStore((s) => s.addTab);
   const fileTreeOpen = useSidebarStore((s) => s.fileTreeOpen);
   const browserPanelOpen = useBrowserStore((s) => s.panelOpen);
@@ -214,6 +218,29 @@ export default function App() {
       .catch(() => {});
     return () => {
       alive = false;
+      unlisten?.();
+    };
+  }, []);
+
+  // 订阅 NSMenu「关于 aitm」/ 状态栏升级徽标 → 打开设置面板并直达"关于"页。
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let alive = true;
+    const openAbout = () => {
+      if (!alive) return;
+      setSettingsTab("about");
+      setSettingsOpen(true);
+    };
+    window.addEventListener(OPEN_ABOUT_EVENT, openAbout);
+    onMenuOpenAbout(openAbout)
+      .then((fn) => {
+        if (alive) unlisten = fn;
+        else fn();
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+      window.removeEventListener(OPEN_ABOUT_EVENT, openAbout);
       unlisten?.();
     };
   }, []);
@@ -366,7 +393,10 @@ export default function App() {
         usePaneLayoutStore.getState();
       if (active_group_id) setActiveTabInGroup(active_group_id, prev.id);
     },
-    openSettings: () => setSettingsOpen(true),
+    openSettings: () => {
+      setSettingsTab(undefined);
+      setSettingsOpen(true);
+    },
     toggleSidebar: () => useSidebarStore.getState().toggle(),
     // v0.10.0 HR9-6：Cmd+Shift+E → 切文件预览面板。
     // 跟浏览器面板 toggle 行为一致；没打开文件时也允许 toggle store 状态
@@ -824,6 +854,7 @@ export default function App() {
       if (key === "b") {
         useSidebarStore.getState().toggleFileTree();
       } else if (key === ",") {
+        setSettingsTab(undefined);
         setSettingsOpen(true);
       } else if (key === "t") {
         useTabsStore.getState().addTab();
@@ -994,7 +1025,10 @@ export default function App() {
   const activityBar = (
     <ActivityBar
       position={activityBarPosition}
-      onSettingsOpen={() => setSettingsOpen(true)}
+      onSettingsOpen={() => {
+        setSettingsTab(undefined);
+        setSettingsOpen(true);
+      }}
     />
   );
 
@@ -1008,7 +1042,11 @@ export default function App() {
       {barFirst && activityBar}
       {mainContent}
       {!barFirst && activityBar}
-      <SettingsModal open={settingsOpen} onOpenChange={setSettingsOpen} />
+      <SettingsModal
+        open={settingsOpen}
+        onOpenChange={setSettingsOpen}
+        initialTab={settingsTab}
+      />
       {/* v0.9.0 H5：FilePreviewDialog 不再挂载（被 FilePreviewWorkspace tab 取代）
           组件文件保留待后续清理；移除挂载是为修真机"点文件同时弹旧 dialog + 新 tab"bug */}
       <SessionRestoreDialog
