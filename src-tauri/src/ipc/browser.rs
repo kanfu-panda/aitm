@@ -282,7 +282,11 @@ const MAC_SAFARI_USER_AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_1
 /// 做 UA 嗅探的站点（新闻、门户、大部分登录页）看到它才会发移动版页面。
 /// 窄面板下移动版比"PC 版缩小"好读得多——但代价是**必须重建 webview**：
 /// UA 只能在创建时定，wry / WKWebView 都不支持运行时改。
-#[cfg(target_os = "macos")]
+///
+/// **不加平台门控**：桌面版 UA 只有 macOS 需要覆盖（Windows 的 WebView2 默认 UA
+/// 已完整），但"移动版"在哪个平台都得靠覆盖 UA 才能拿到。之前把这个常量圈在
+/// macOS 里，Windows 上点开关会重新加载页面、图标也变成移动版、状态还存进快照，
+/// 唯独页面仍是桌面版——假装成功比没反应更糟。
 const IPHONE_SAFARI_USER_AGENT: &str = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) \
      AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Mobile/15E148 Safari/604.1";
 
@@ -358,16 +362,22 @@ pub async fn browser_open_tab(
     // 的 adjustZoom（见 App.tsx）。留着这一行是为了 Windows 能用原生热键。
     let builder = builder.zoom_hotkeys_enabled(true);
 
-    // macOS：补一个完整的 Safari UA（见 MAC_SAFARI_USER_AGENT 的原因说明）。
-    // Windows 走 WebView2（Chromium），默认 UA 已完整，不动。
-    #[cfg(target_os = "macos")]
-    let builder = builder.user_agent(if mobile.unwrap_or(false) {
-        IPHONE_SAFARI_USER_AGENT
+    // UA 覆盖分两种情况：
+    // - **移动版**：所有平台都要覆盖，否则站点发的还是桌面版页面。
+    // - **桌面版**：只有 macOS 需要补（见 MAC_SAFARI_USER_AGENT 的原因说明）；
+    //   Windows 的 WebView2（Chromium）默认 UA 已完整，不动它。
+    let builder = if mobile.unwrap_or(false) {
+        builder.user_agent(IPHONE_SAFARI_USER_AGENT)
     } else {
-        MAC_SAFARI_USER_AGENT
-    });
-    #[cfg(not(target_os = "macos"))]
-    let _ = mobile; // Windows 走 WebView2，默认 UA 已完整，暂不做移动版切换
+        #[cfg(target_os = "macos")]
+        {
+            builder.user_agent(MAC_SAFARI_USER_AGENT)
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            builder
+        }
+    };
 
     let child = parent_window
         .add_child(builder, LogicalPosition::new(x, y), LogicalSize::new(w, h))
@@ -1283,6 +1293,31 @@ mod tests {
         // 换行续写的字符串字面量不该把缩进空格带进 UA
         assert!(
             !MAC_SAFARI_USER_AGENT.contains("  "),
+            "UA 不应含连续空格（\\ 续行缩进泄漏）"
+        );
+    }
+
+    /// 移动版 UA 必须**所有平台**都能用。
+    ///
+    /// 这条测试本身不加 `#[cfg]` 就是锁：常量若再被圈回某个平台，别的平台编译
+    /// 直接失败。之前它被圈在 macOS，Windows 上点"请求移动版站点"会重新加载页面、
+    /// 图标变成移动版、状态也存进快照，唯独页面还是桌面版。
+    #[test]
+    fn 移动版_user_agent_全平台可用且含移动标识() {
+        assert!(
+            IPHONE_SAFARI_USER_AGENT.contains("iPhone"),
+            "UA 要声明成 iPhone，站点才发移动版"
+        );
+        assert!(
+            IPHONE_SAFARI_USER_AGENT.contains("Mobile/"),
+            "必须含 Mobile/ 段——UA 嗅探常靠它判移动端"
+        );
+        assert!(
+            IPHONE_SAFARI_USER_AGENT.contains("Safari/"),
+            "同桌面版：缺 Safari/ 标识会被部分站点判成非标准客户端"
+        );
+        assert!(
+            !IPHONE_SAFARI_USER_AGENT.contains("  "),
             "UA 不应含连续空格（\\ 续行缩进泄漏）"
         );
     }
