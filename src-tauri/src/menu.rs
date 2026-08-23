@@ -27,7 +27,7 @@
 #![cfg(target_os = "macos")]
 
 use tauri::menu::{Menu, MenuBuilder, MenuItemBuilder, SubmenuBuilder};
-use tauri::{AppHandle, Emitter, Manager, Runtime};
+use tauri::{AppHandle, Emitter, Runtime};
 
 use crate::i18n;
 
@@ -134,40 +134,33 @@ pub fn build_menu<R: Runtime>(app: &AppHandle<R>, lang: &str) -> tauri::Result<M
 ///
 /// id 与事件的对照见模块文档表格。
 pub fn install_menu_event_handler<R: Runtime>(app: &AppHandle<R>) {
-    app.on_menu_event(|app_handle, event| match event.id().as_ref() {
-        "open-about" => {
-            if let Some(win) = app_handle.get_webview_window("main") {
-                let _ = win.emit("menu:open-about", ());
-            }
-        }
-        "quit-confirm" => {
-            if let Some(win) = app_handle.get_webview_window("main") {
-                let _ = win.emit("app:confirm-quit-requested", ());
-            }
-        }
-        "close-tab" => {
-            if let Some(win) = app_handle.get_webview_window("main") {
-                let _ = win.emit("app:close-active-tab", ());
-            }
-        }
-        // v0.10.6 T4：字号缩放（T1 占位 emit，T4 接前端 adjustFontSize handler）
-        "font-increase" => {
-            if let Some(win) = app_handle.get_webview_window("main") {
-                let _ = win.emit("menu:font-action", "increase");
-            }
-        }
-        "font-decrease" => {
-            if let Some(win) = app_handle.get_webview_window("main") {
-                let _ = win.emit("menu:font-action", "decrease");
-            }
-        }
-        "font-reset" => {
-            if let Some(win) = app_handle.get_webview_window("main") {
-                let _ = win.emit("menu:font-action", "reset");
-            }
-        }
-        _ => {}
-    });
+    app.on_menu_event(|app_handle, event| emit_to_main(app_handle, event.id().as_ref()));
+}
+
+/// 把菜单事件送给**主 webview**。
+///
+/// **必须用 `emit_to(EventTarget::webview("main"))`，不能用裸 `emit`**：浏览器面板
+/// 一打开就存在子 webview，此时裸 `emit` 送不到主 webview——菜单里的字号缩放、
+/// 「关于」、关标签页于是全部静默失效（实测：按 Cmd+- 完全没反应，
+/// 前端探针证明事件根本没到）。
+///
+/// 同一个坑 v1.1.0 R1 已经踩过一次（`window:focus-changed` 当时也是多 webview 下
+/// 不触发，被迫改成 emit_to），这里是同一类问题的第二次出现。
+fn emit_to_main<R: Runtime>(app_handle: &AppHandle<R>, id: &str) {
+    let event = match id {
+        "open-about" => "menu:open-about",
+        "quit-confirm" => "app:confirm-quit-requested",
+        "close-tab" => "app:close-active-tab",
+        "font-increase" | "font-decrease" | "font-reset" => "menu:font-action",
+        _ => return,
+    };
+    let target = tauri::EventTarget::webview("main");
+    let _ = match id {
+        "font-increase" => app_handle.emit_to(target, event, "increase"),
+        "font-decrease" => app_handle.emit_to(target, event, "decrease"),
+        "font-reset" => app_handle.emit_to(target, event, "reset"),
+        _ => app_handle.emit_to(target, event, ()),
+    };
 }
 
 #[cfg(test)]

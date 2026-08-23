@@ -29,6 +29,8 @@ const DEFAULT_SETTINGS: AppSettings = {
     file_preview_dialog: null,
     // v0.9.0 T4：默认开启关闭二次确认（与后端 UiSettings::default() 同步）
     confirm_quit: true,
+    // 默认静默恢复上次会话（与后端 UiSettings::default() 同步）
+    restore_session: true,
     // v0.10.0 HR6-3e：null = 首次启动，前端用 makeDefaultRoot 单 leaf 兜底
     pane_layout: null,
     // v0.10.0 HR7-7：用户自定义快捷键覆盖；默认空，行为等同走 DEFAULT_KEYBINDINGS

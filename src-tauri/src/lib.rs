@@ -246,6 +246,8 @@ pub fn run_gui() {
             // v0.9.1 HR3-6：FileTree 按 git status 染色（modified / untracked / ...）
             ipc::git::git_status,
             ipc::shell::shell_open,
+            // 文件树右键"在文件管理器中显示"
+            ipc::shell::shell_reveal,
             ipc::settings::settings_get,
             ipc::settings::settings_update,
             ipc::settings::settings_reset,
@@ -280,6 +282,7 @@ pub fn run_gui() {
             ipc::browser::browser_set_active,
             ipc::browser::browser_clear_active,
             ipc::browser::browser_set_bounds,
+            ipc::browser::browser_set_zoom,
             ipc::browser::browser_suspend_tab,
             ipc::browser::browser_set_scroll_y,
             ipc::browser::browser_panel_close_all,
@@ -298,6 +301,8 @@ pub fn run_gui() {
             ipc::app::set_dock_badge,
             // 设置面板"关于"页显示的版本号
             ipc::app::app_version,
+            ipc::app::diagnostics_info,
+            ipc::app::diagnostics_log_tail,
             // v0.10.6 T1：切语言时重建 NSMenu（macOS only；其他平台 no-op）
             ipc::menu::menu_rebuild,
         ])

@@ -43,7 +43,10 @@
       "newFolder": "New Folder",
       "rename": "Rename",
       "delete": "Delete",
-      "refresh": "Refresh"
+      "refresh": "Refresh",
+      "revealMac": "Reveal in Finder",
+      "revealWindows": "Show in File Explorer",
+      "revealGeneric": "Show in file manager"
     }
   },
   "inputDialog": {
@@ -157,6 +160,8 @@
     "confirmQuitLabel": "Confirm before quitting",
     "confirmQuitHelp": "Show a confirmation dialog before closing the app; with this off, the red close button / Cmd+Q quits immediately",
     "confirmQuitAria": "Confirm before quitting",
+    "restoreSessionLabel": "Restore last session on startup",
+    "restoreSessionHelp": "Reopen the tabs, split layout and files from your last session when aitm starts; with this off you always start with a single empty tab",
     "notifications": "Notifications",
     "notificationSoundLabel": "System notification sound",
     "notificationSoundHelp": "Fires system notifications when an AI waits for approval / completes / errors; turning this off keeps notifications silent",
@@ -323,14 +328,6 @@
     "retryLabel": "Retry",
     "retryAria": "Retry"
   },
-  "sessionRestore": {
-    "dialogAria": "Restore previous session",
-    "title": "Restore previous session?",
-    "description": "Detected {{count}} tab(s) open last time. Restore them?",
-    "restoreBtn": "Restore previous session ({{count}} tabs)",
-    "freshBtn": "Start fresh (clear snapshot)",
-    "skipBtn": "Skip once (ask again next time)"
-  },
   "closeTabDialog": {
     "dialogAria": "Confirm close tab",
     "title": "Close tab \"{{title}}\"?",
@@ -467,6 +464,25 @@
     "installNow": "Download and install",
     "installHint": "The app restarts automatically once installed",
     "downloading": "Downloading…",
-    "downloadingPercent": "Downloading… {{percent}}%"
+    "downloadingPercent": "Downloading… {{percent}}%",
+    "troubleshooting": "Troubleshooting",
+    "openLogDir": "Open log folder",
+    "copyDiagnostics": "Copy diagnostics",
+    "reportIssue": "Report an issue",
+    "copied": "Copied to clipboard",
+    "copyFailed": "Copy failed — select the text below manually",
+    "openLogDirFailed": "Could not open the log folder: {{error}}",
+    "diagnostics": "Diagnostics",
+    "reportIssueHint": "Reporting an issue opens GitHub with your version, platform and the last 50 log lines pre-filled. Logs may contain file paths and commands — review before submitting."
+  },
+  "browserZoom": {
+    "in": "Zoom in",
+    "out": "Zoom out",
+    "reset": "Reset to 100%"
+  },
+  "browserMobile": {
+    "toMobile": "Request mobile site",
+    "toDesktop": "Request desktop site",
+    "reloadHint": "Reloads the page (you may be signed out)"
   }
 }

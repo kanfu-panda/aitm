@@ -332,6 +332,7 @@ describe("BrowserUrlBar", () => {
     expect(mockOpenTab).toHaveBeenCalledWith(
       "https://github.com",
       expect.objectContaining({ x: 0, y: 0, w: 800, h: 600 }),
+      false,
     );
     mockOpenTab.mockReset();
   });

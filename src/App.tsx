@@ -13,7 +13,6 @@ import { OPEN_ABOUT_EVENT } from "./components/UpdateBadge";
 import FileTree from "./components/FileTree";
 import FilePreviewWorkspace from "./components/FilePreviewWorkspace";
 import QuitConfirmDialog from "./components/QuitConfirmDialog";
-import SessionRestoreDialog from "./components/SessionRestoreDialog";
 import BrowserPanel from "./components/browser/BrowserPanel";
 import SplitDivider from "./components/SplitDivider";
 import SidebarWrapper from "./components/SidebarWrapper";
@@ -24,6 +23,7 @@ import {
   onAppCloseActiveTab,
   onBrowserHotkey,
   onBrowserOpenRequested,
+  onBrowserTitleChanged,
   onBrowserUrlChanged,
   onMenuFontAction,
   onMenuOpenAbout,
@@ -31,7 +31,6 @@ import {
   onPtyCwdChanged,
   sessionClose,
   onWindowFocusChanged,
-  sessionSnapshotClear,
   sessionSnapshotLoad,
   sessionSnapshotSave,
   setAppBadgeCount,
@@ -58,13 +57,13 @@ import {
   INITIAL_GROUP_ID,
   sanitizeLayout,
   collectAllGroups,
-  makeDefaultRoot,
 } from "./stores/pane-layout";
 import {
   startBrowserSuspendTimer,
   stopBrowserSuspendTimer,
 } from "./lib/browserSuspend";
 import { handleBrowserOpenRequested } from "./lib/browserOpenRequest";
+import { restoreSnapshotTabs } from "./lib/sessionRestore";
 
 export default function App() {
   const { t } = useTranslation();
@@ -177,22 +176,30 @@ export default function App() {
       // preventDefault 抢浏览器原生 zoom（webview 默认 Cmd+= / Cmd+- / Cmd+0
       // 是 zoom in/out/reset，不抢的话页面整体缩放，而不是改字号）。
       if ((e.metaKey || e.ctrlKey) && !e.altKey) {
-        if (e.code === "Equal") {
+        // 焦点在浏览器面板上时，这三个键的含义是"缩放网页"而不是"改终端字号"。
+        //
+        // **这段在 macOS 上是死代码**：menu.rs 把这三个键注册成了 NSMenu 加速键，
+        // 菜单在任何 webview 之前吃掉按键，keydown 压根不会走到这里。macOS 的实际
+        // 路径是上面的 `menu:font-action` handler（那里做同样的 lastSurface 路由）。
+        // 保留这段是为了没有这套菜单加速键的平台。
+        const inBrowser =
+          useFocusSurfaceStore.getState().lastSurface === "browser";
+        const applyZoom = (d: 1 | -1 | "reset") => {
           e.preventDefault();
           e.stopPropagation();
-          void adjustFontSize(+1);
+          if (inBrowser) void useBrowserStore.getState().adjustZoom(d);
+          else void adjustFontSize(d === "reset" ? "reset" : d);
+        };
+        if (e.code === "Equal") {
+          applyZoom(1);
           return;
         }
         if (e.code === "Minus") {
-          e.preventDefault();
-          e.stopPropagation();
-          void adjustFontSize(-1);
+          applyZoom(-1);
           return;
         }
         if (e.code === "Digit0" && !e.shiftKey) {
-          e.preventDefault();
-          e.stopPropagation();
-          void adjustFontSize("reset");
+          applyZoom("reset");
           return;
         }
       }
@@ -209,7 +216,19 @@ export default function App() {
     onMenuFontAction((action) => {
       if (!alive) return;
       const delta = action === "increase" ? +1 : action === "decrease" ? -1 : "reset";
-      void adjustFontSize(delta);
+      // **macOS 上这里才是 Cmd+= / Cmd+- / Cmd+0 的唯一活路径**。
+      //
+      // menu.rs 把这三个键注册成了 NSMenu 加速键，而 macOS 的菜单在任何 webview
+      // 之前吃掉按键——所以下面那个 window.keydown 分支在 macOS 上根本不会触发，
+      // 子 webview 也收不到（wry 的 zoom_hotkeys 在 macOS 明确 Unsupported）。
+      // 结果就是不管焦点在哪，按下去永远只改终端字号（多 webview 场景实测）。
+      //
+      // 所以路由必须放在这里，跟 keydown 分支用同一个 lastSurface 判据。
+      if (useFocusSurfaceStore.getState().lastSurface === "browser") {
+        void useBrowserStore.getState().adjustZoom(delta);
+      } else {
+        void adjustFontSize(delta);
+      }
     })
       .then((fn) => {
         if (alive) unlisten = fn;
@@ -444,14 +463,33 @@ export default function App() {
     },
   });
 
-  // 启动时拉一次后端 settings
+  // 启动流程：并行拉 settings + snapshot，再按 ui.restore_session 串行决策。
+  //
+  // 以前 settings 和 snapshot 分在两个 effect 里各自 setState，谁先落地要看
+  // React 调度；恢复 tab 依赖 layout 已经 restore 好（tab 要按 group_id 放回
+  // 对应分屏），这个顺序不能靠运气。合成一个 async effect 后顺序是确定的：
+  //   1. 两份数据并行拉到手
+  //   2. restore_session 开着 → editor tabs → pane_layout → 终端 tab
+  //   3. restore_session 关掉 → 三份持久化全部跳过，得到一个干净空窗口
+  //      （只跳过"读"，snapshot 照常写盘，重新打开开关就能恢复最近一次）
+  const [startupResolved, setStartupResolved] = useState(false);
+
   useEffect(() => {
     void (async () => {
-      await useSettingsStore.getState().init();
+      const [snapshot] = await Promise.all([
+        sessionSnapshotLoad().catch(() => null),
+        useSettingsStore.getState().init(),
+      ]);
+      const { ui, editor } = useSettingsStore.getState().settings;
+
+      if (!ui.restore_session) {
+        setStartupResolved(true);
+        return;
+      }
+
       // v0.9.0 T5b：settings 拉到后按 settings.editor 恢复编辑器 tabs。
       // restoreFromSettings 内部对单个文件 read 失败静默跳过；
       // 不阻塞 App 启动，所以这里 fire-and-forget。
-      const { editor } = useSettingsStore.getState().settings;
       if (editor.open_files.length > 0) {
         void useFileEditorStore
           .getState()
@@ -467,7 +505,7 @@ export default function App() {
       // 到对应 group。terminal / browser 启动时还没有任何 tab，restore 出来
       // 的 terminal group tab_ids 自然全是空 — 等下面 syncToInitialGroup
       // 把全局 tabs 灌进 INITIAL_GROUP。
-      const persisted = useSettingsStore.getState().settings.ui.pane_layout;
+      const persisted = ui.pane_layout;
       if (persisted) {
         try {
           const parsed: unknown = JSON.parse(persisted);
@@ -482,6 +520,13 @@ export default function App() {
           );
         }
       }
+
+      // 静默恢复上次的终端 tab。必须排在 pane_layout restore 之后：
+      // restoreSnapshotTabs 要按 snapshot 记的 group_id 把 tab 放回对应 group，
+      // 那些 group 得先存在。
+      if (snapshot) restoreSnapshotTabs(snapshot);
+
+      setStartupResolved(true);
     })();
   }, []);
 
@@ -529,138 +574,33 @@ export default function App() {
     return useTabsStore.subscribe(syncToInitialGroup);
   }, []);
 
-  // v0.5.0-D：启动 snapshot 流程
-  // - 第一阶段：拉 snapshot；snapshot 存在 → 弹 SessionRestoreDialog；不存在 → 直接开 1 空 tab
-  // - 用户点"恢复" → 按 snapshot 加 tabs
-  // - 用户点"全新" → 清 snapshot + 开 1 空 tab
-  // - 用户点"跳过" / 关 dialog → 不清 snapshot + 开 1 空 tab（保留下次再决定）
-  const [snapshot, setSnapshot] = useState<SessionSnapshot | null>(null);
-  const [snapshotResolved, setSnapshotResolved] = useState(false);
-
+  // 恢复流程跑完才开默认 tab（避免恢复还没落地就先开了一个空的）；
+  // 恢复关掉、snapshot 为空、或恢复失败都会走到这里开 1 个空 tab。
   useEffect(() => {
-    let alive = true;
-    sessionSnapshotLoad()
-      .then((s) => {
-        if (!alive) return;
-        if (s && s.tabs.length > 0) {
-          setSnapshot(s);
-        } else {
-          setSnapshotResolved(true); // 无 snapshot → 直接走默认路径
-        }
-      })
-      .catch(() => {
-        if (alive) setSnapshotResolved(true);
-      });
-    return () => {
-      alive = false;
-    };
-  }, []);
-
-  // snapshotResolved 后才开默认 tab（避免还没决定就先开了）
-  useEffect(() => {
-    if (!snapshotResolved) return;
+    if (!startupResolved) return;
     if (useTabsStore.getState().tabs.length === 0) {
       addTab();
     }
-  }, [snapshotResolved, addTab]);
-
-  const handleRestore = () => {
-    if (!snapshot) return;
-    const { tabs: storeTabs, addTab: addOne, setTitle, setActive, setLastCwd } =
-      useTabsStore.getState();
-    if (storeTabs.length === 0) {
-      // 按 snapshot 顺序逐个加；每个 addTab 内部生成新 uuid（snapshot 里的旧
-      // tab_id 不复用——unread / notification cache 已按新 id 重建）。
-      const newIds: string[] = [];
-      snapshot.tabs.forEach((t) => {
-        const newId = addOne();
-        newIds.push(newId);
-        setTitle(newId, t.title);
-        // v0.9.1 HR3-1：回填 last_cwd，TerminalView 起 PTY 时把它传给后端 cfg.cwd
-        if (t.cwd) setLastCwd(newId, t.cwd);
-      });
-      // 恢复 active tab：按 snapshot.active_tab_id 在 snapshot.tabs 内的索引找
-      if (snapshot.active_tab_id) {
-        const idx = snapshot.tabs.findIndex(
-          (t) => t.tab_id === snapshot.active_tab_id,
-        );
-        if (idx >= 0 && newIds[idx]) setActive(newIds[idx]);
-      }
-
-      // v0.10.0 HR9-5：按 snapshot.tabs[].group_id 把新 tab id 加进对应 group。
-      //
-      // 为什么这里要重建：
-      //   - snapshot（last.json）和 settings.ui.pane_layout 是两份独立持久化，
-      //     重启时 layout 已先 restore（resetLayout 灌 root + group 结构），但
-      //     group.tab_ids 全部 sanitize 清空了（旧 uuid 全失效）。
-      //   - 现在按 snapshot 记录的 group_id 把新 tab id 加进对应 group，
-      //     恢复"用户当时的分屏视图"。
-      //
-      // fallback 链：
-      //   group_id 缺省（老 snapshot）→ INITIAL_GROUP_ID
-      //   group_id 在 layout 里找不到（用户已通过设置改过 layout / layout
-      //     restore 失败 fallback 默认了）→ INITIAL_GROUP_ID
-      //   连 INITIAL_GROUP_ID 也没有 → 第一个可用 group
-      //
-      // 触发副作用：每次 addTabToGroup 都会 schedulePersistLayout，会有 N 次
-      // debounce → 1 次 settings.update（合并），可接受。
-      const layoutStore = usePaneLayoutStore.getState();
-      const allGroups = collectAllGroups(layoutStore.root);
-      const groupIdSet = new Set(allGroups.map((g) => g.id));
-      const fallbackGroupId =
-        (groupIdSet.has(INITIAL_GROUP_ID)
-          ? INITIAL_GROUP_ID
-          : allGroups[0]?.id) ?? null;
-
-      snapshot.tabs.forEach((t, i) => {
-        const newId = newIds[i];
-        if (!newId) return;
-        const targetId =
-          t.group_id && groupIdSet.has(t.group_id)
-            ? t.group_id
-            : fallbackGroupId;
-        if (!targetId) return;
-        layoutStore.addTabToGroup(targetId, newId);
-      });
-    }
-    setSnapshot(null);
-    setSnapshotResolved(true);
-  };
-
-  const handleFresh = () => {
-    // v0.10.0 HR9-7：真的"从零开始" —— 之前只清 sessionSnapshot，layout 和
-    // file-editor 持久化在 settings.toml 里都没动 → 用户重启后看到的是上次
-    // 5 group 空骨架 + 上次的文件预览 tab（真机 维护者 反馈过）。
-    // Fresh 路径应该同时清三份持久化：sessionSnapshot + pane_layout + editor.
-    void sessionSnapshotClear();
-    usePaneLayoutStore.getState().resetLayout(makeDefaultRoot());
-    useFileEditorStore.setState({
-      openFiles: [],
-      activeId: null,
-      maximized: false,
-    });
-    // 同步 settings.editor 持久化（store setState 不会自动持久化）
-    void useSettingsStore.getState().update({
-      editor: { open_files: [], active_file: null },
-    });
-    setSnapshot(null);
-    setSnapshotResolved(true);
-  };
-
-  const handleSkip = () => {
-    // 不清 snapshot，下次启动还会弹（plan §0.4）
-    setSnapshot(null);
-    setSnapshotResolved(true);
-  };
+  }, [startupResolved, addTab]);
 
   // v0.5.0-D T4：tab 变化 → debounced 1s 写 snapshot
-  // snapshot 还没决定（用户未点 Dialog）时不写，避免把空 / 默认状态盖掉记录
+  // 启动恢复还没跑完时不写，避免把空 / 默认状态盖掉上次的记录
   useEffect(() => {
-    if (!snapshotResolved) return;
+    if (!startupResolved) return;
     let timer: ReturnType<typeof setTimeout> | null = null;
     const writeSnapshot = async () => {
       const state = useTabsStore.getState();
       const unread = state.unreadByTab;
+      // v1.4.0：浏览器 tab 一起存。about:blank / 空 URL 这类空白页跨重启带着走
+      // 没有意义（恢复出来还是空白页），写入端就过滤掉。
+      const browserState = useBrowserStore.getState();
+      const browserTabs = browserState.tabs.filter(
+        (t) => t.url && t.url !== "about:blank" && t.url !== "about:newtab",
+      );
+      const activeIdx = browserTabs.findIndex(
+        (t) => t.key === browserState.activeKey,
+      );
+      const activeBrowserIndex = activeIdx >= 0 ? activeIdx : null;
       // v0.10.0 HR9-5：建 tab.id → group.id 反查表。
       // 每个 tab 知道自己属于哪个 group 后存进 snapshot.group_id，重启时
       // handleRestore 按 group_id 把新 tab id 加进对应 group，恢复分屏视图。
@@ -681,6 +621,14 @@ export default function App() {
           group_id: groupByTab.get(t.id) ?? null,
         })),
         active_tab_id: state.activeId,
+        // v1.4.0：浏览器 tab 一起存。空白页不值得跨重启带着走，过滤掉。
+        browser_tabs: browserTabs.map((t) => ({
+          url: t.url,
+          title: t.title,
+          zoom: t.zoom ?? null,
+          mobile: t.mobile ?? false,
+        })),
+        active_browser_index: activeBrowserIndex,
       };
       try {
         await sessionSnapshotSave(snap);
@@ -692,8 +640,10 @@ export default function App() {
       if (timer) clearTimeout(timer);
       timer = setTimeout(writeSnapshot, 1000);
     };
-    // store 任意变化都 schedule
+    // store 任意变化都 schedule。浏览器 store 也要订阅——只订终端的话，
+    // 用户开完网页就退出，浏览器 tab 一个都存不下来。
     const unsub = useTabsStore.subscribe(schedule);
+    const unsubBrowser = useBrowserStore.subscribe(schedule);
     // 5 min 兜底（防 app 强 kill 没收到 store 变化）
     const interval = setInterval(writeSnapshot, 5 * 60 * 1000);
     // window close 同步写一次
@@ -703,11 +653,12 @@ export default function App() {
     window.addEventListener("beforeunload", onBeforeUnload);
     return () => {
       unsub();
+      unsubBrowser();
       if (timer) clearTimeout(timer);
       clearInterval(interval);
       window.removeEventListener("beforeunload", onBeforeUnload);
     };
-  }, [snapshotResolved]);
+  }, [startupResolved]);
 
   // 关 tab 时关 session（订阅 store 变化）
   useEffect(() => {
@@ -791,6 +742,28 @@ export default function App() {
       })
       .catch(() => {
         // 监听注册失败：fail-soft，AI 工具 navigate 后 URL 栏仍跟旧 URL（不致命）
+      });
+    return () => {
+      alive = false;
+      unlisten?.();
+    };
+  }, []);
+
+  // 订阅 browser:title_changed 同步 zustand tabs[].title。
+  // 不订的话标签页永远显示原始 URL —— 又长又占地方，两三个 tab 就把标签栏挤爆。
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let alive = true;
+    onBrowserTitleChanged((e) => {
+      if (!alive) return;
+      useBrowserStore.getState().applyTitleChanged(e.tab_id, e.title);
+    })
+      .then((u) => {
+        if (alive) unlisten = u;
+        else u();
+      })
+      .catch(() => {
+        // fail-soft：拿不到标题就继续显示 URL，不影响浏览
       });
     return () => {
       alive = false;
@@ -1049,12 +1022,6 @@ export default function App() {
       />
       {/* v0.9.0 H5：FilePreviewDialog 不再挂载（被 FilePreviewWorkspace tab 取代）
           组件文件保留待后续清理；移除挂载是为修真机"点文件同时弹旧 dialog + 新 tab"bug */}
-      <SessionRestoreDialog
-        snapshot={snapshot}
-        onRestore={handleRestore}
-        onFresh={handleFresh}
-        onSkip={handleSkip}
-      />
       {/* v0.9.0 T4：监听后端 app:confirm-quit-requested 事件，弹关闭确认 dialog */}
       <QuitConfirmDialog />
     </div>

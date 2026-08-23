@@ -75,6 +75,7 @@ function resetSettings(opts?: {
         ai_sidebar_width: opts?.aiSidebarWidth ?? 360,
         file_preview_dialog: null,
         confirm_quit: true,
+    restore_session: true,
         pane_layout: null,
         keybindings: {},
         language: "en",

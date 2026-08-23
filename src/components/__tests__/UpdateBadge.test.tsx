@@ -29,11 +29,16 @@ vi.mock("../../lib/tauri", async (orig) => {
   };
 });
 
-import UpdateBadge, { OPEN_ABOUT_EVENT } from "../UpdateBadge";
+import { updateCheck } from "../../lib/tauri";
+import UpdateBadge, {
+  OPEN_ABOUT_EVENT,
+  UPDATE_CHECK_INTERVAL_MS,
+} from "../UpdateBadge";
 
 describe("UpdateBadge", () => {
   beforeEach(() => {
     openSpy.mockReset();
+    vi.mocked(updateCheck).mockClear();
     // 替换 window.open 用 spy
     vi.stubGlobal("open", openSpy);
     mockResult = {
@@ -109,6 +114,56 @@ describe("UpdateBadge", () => {
 
     expect(onOpenAbout).toHaveBeenCalledTimes(1);
     expect(openSpy).not.toHaveBeenCalled();
+  });
+
+  it("每 6 小时自动再查一次（不再是只在启动查一次）", async () => {
+    // 开着不关是常态：一台机器连开一周，只在启动查一次等于一周不知道有新版
+    vi.useFakeTimers();
+    try {
+      render(<UpdateBadge />);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(vi.mocked(updateCheck)).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(UPDATE_CHECK_INTERVAL_MS);
+      expect(vi.mocked(updateCheck)).toHaveBeenCalledTimes(2);
+
+      await vi.advanceTimersByTimeAsync(UPDATE_CHECK_INTERVAL_MS);
+      expect(vi.mocked(updateCheck)).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("间隔至少 1 小时（防手滑写成毫秒把 GitHub API 打爆）", () => {
+    expect(UPDATE_CHECK_INTERVAL_MS).toBeGreaterThanOrEqual(60 * 60 * 1000);
+  });
+
+  it("卸载后不再查，不留 interval", async () => {
+    vi.useFakeTimers();
+    try {
+      const { unmount } = render(<UpdateBadge />);
+      await vi.advanceTimersByTimeAsync(0);
+      unmount();
+      await vi.advanceTimersByTimeAsync(UPDATE_CHECK_INTERVAL_MS * 3);
+      expect(vi.mocked(updateCheck)).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("某次查询失败不打断后续轮询", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.mocked(updateCheck).mockRejectedValueOnce(new Error("网络断了"));
+      render(<UpdateBadge />);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(vi.mocked(updateCheck)).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(UPDATE_CHECK_INTERVAL_MS);
+      expect(vi.mocked(updateCheck)).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("release_url 缺失也照常提示（关于页里还能再查一次）", async () => {

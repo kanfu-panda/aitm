@@ -17,6 +17,7 @@ import {
   fsWatchStop,
   onFsChanged,
   sessionCurrentCwd,
+  shellReveal,
   type TreeNode,
 } from "../lib/tauri";
 import { useTabsStore } from "../stores/tabs";
@@ -78,6 +79,24 @@ function isUnder(child: string, ancestor: string): boolean {
  * 错误处理：fs_tree 失败（路径不存在 / 权限不足）→ 显示一行错误占位文字，
  * 不弹 dialog（避免每次切 tab 都打断用户）。
  */
+
+/**
+ * "在文件管理器中显示"的 i18n key —— 按平台给用户熟悉的叫法。
+ *
+ * macOS 用户认"访达"、Windows 用户认"资源管理器"，统一说"文件管理器"两边都别扭。
+ * 判定走 webview 的 userAgent，不额外引 @tauri-apps/plugin-os（军规 §12）。
+ */
+function revealLabelKey(): string {
+  const ua = typeof navigator === "undefined" ? "" : navigator.userAgent;
+  if (ua.includes("Macintosh") || ua.includes("Mac OS X")) {
+    return "fileTree.menu.revealMac";
+  }
+  if (ua.includes("Windows")) {
+    return "fileTree.menu.revealWindows";
+  }
+  return "fileTree.menu.revealGeneric";
+}
+
 export default function FileTree() {
   const { t } = useTranslation();
   // v0.10.0 HR8-1：跟随**active 分屏 group** 的 active terminal tab 的 cwd，
@@ -538,12 +557,20 @@ export default function FileTree() {
     node.kind === "dir" ? node.path : parentOf(node.path);
 
   const handleMenuAction = (
-    kind: "newFile" | "newDir" | "rename" | "delete" | "reload",
+    kind: "newFile" | "newDir" | "rename" | "delete" | "reload" | "reveal",
     node: TreeNode,
   ) => {
     setContextMenu(null);
     if (kind === "reload") {
       void reloadTree();
+      return;
+    }
+    if (kind === "reveal") {
+      // 后端只接受真实存在的绝对路径；文件刚被外部删掉时会 reject，
+      // 这里静默（右键菜单不值得为此弹错误框，下一次刷新树就没这项了）
+      void shellReveal(node.path).catch((e) => {
+        console.warn("[fileTree] 在文件管理器中显示失败", e);
+      });
       return;
     }
     if (kind === "delete") {
@@ -725,6 +752,15 @@ export default function FileTree() {
             {t("fileTree.menu.delete")}
           </button>
           <div className="my-1 border-t border-[var(--c-border)]" />
+          <button
+            type="button"
+            role="menuitem"
+            data-testid="file-tree-menu-reveal"
+            onClick={() => handleMenuAction("reveal", contextMenu.node)}
+            className="block w-full text-left px-3 py-1.5 hover:bg-[var(--c-bg-elev-2)]"
+          >
+            {t(revealLabelKey())}
+          </button>
           <button
             type="button"
             role="menuitem"

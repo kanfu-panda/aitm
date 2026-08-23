@@ -1,6 +1,16 @@
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { appVersion, shellOpen, updateCheck, type UpdateCheckResult } from "../../lib/tauri";
+import {
+  appVersion,
+  diagnosticsInfo,
+  diagnosticsLogTail,
+  shellOpen,
+  shellReveal,
+  updateCheck,
+  type DiagnosticsInfo,
+  type UpdateCheckResult,
+} from "../../lib/tauri";
+import { buildDiagnosticsText, buildIssueUrl } from "../../lib/diagnostics";
 import { checkForUpdate, type PendingUpdate } from "../../lib/updater";
 
 /** 项目主页（开源仓）。 */
@@ -208,6 +218,8 @@ export default function AboutSection() {
         )}
       </section>
 
+      <TroubleshootingSection />
+
       <section>
         <button
           type="button"
@@ -218,6 +230,154 @@ export default function AboutSection() {
         </button>
       </section>
     </div>
+  );
+}
+
+/**
+ * 故障排查：出问题时用户能自己做的三件事。
+ *
+ * 之前用户遇到崩溃 / 异常，能做的只有截图描述——日志在哪没人知道，版本号
+ * 要翻设置，报 issue 还得手打环境信息。这三个按钮把这条路铺平：
+ *
+ * 1. **打开日志目录** —— 直接进 Finder / 资源管理器，捞文件不用查路径
+ * 2. **复制诊断信息** —— 版本 / 平台 / 目录一次性到剪贴板
+ * 3. **报告问题** —— 开 GitHub issue 且诊断信息已预填进正文
+ *
+ * 诊断文本同时明文展示在下面：剪贴板在 webview 里权限时灵时不灵，复制失败
+ * 时用户至少还能自己选中复制。
+ */
+function TroubleshootingSection() {
+  const { t } = useTranslation();
+  const [info, setInfo] = useState<DiagnosticsInfo | null>(null);
+  /** 复制结果提示；null = 还没点过 */
+  const [copied, setCopied] = useState<"ok" | "failed" | null>(null);
+  const [openFailure, setOpenFailure] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    diagnosticsInfo()
+      .then((d) => {
+        if (alive) setInfo(d);
+      })
+      .catch((e) => {
+        // 拿不到诊断信息不该让整页报错；按钮会保持 disabled
+        console.warn("诊断信息获取失败", e);
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const text = info ? buildDiagnosticsText(info, navigator.userAgent) : "";
+
+  const handleOpenLogDir = useCallback(async () => {
+    const target = info?.log_file ?? info?.log_dir;
+    if (!target) return;
+    setOpenFailure(null);
+    try {
+      // 必须 reveal（`open -R`）不能 open：日志目录叫 `com.aitm.app`，目录名
+      // 以 `.app` 结尾，macOS `open` 会当成应用程序包去启动然后失败——而
+      // shell_open 不等退出码，失败会被整个吞掉（点了没反应也没报错）。
+      await shellReveal(target);
+    } catch (e) {
+      setOpenFailure(String(e));
+    }
+  }, [info]);
+
+  const handleReportIssue = useCallback(async () => {
+    // 日志按需读：只有环境信息的 issue 对排查几乎没用，真正有用的是报错现场。
+    // 读不到日志也照常开 issue，不因为捞不到日志就把这条路堵死。
+    let tail: string | null = null;
+    try {
+      tail = await diagnosticsLogTail();
+    } catch (e) {
+      console.warn("读日志尾部失败，issue 正文只带环境信息", e);
+    }
+    await shellOpen(buildIssueUrl(text, tail));
+  }, [text]);
+
+  const handleCopy = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied("ok");
+    } catch {
+      setCopied("failed");
+    }
+  }, [text]);
+
+  const btn =
+    "rounded border border-[var(--c-border)] bg-[var(--c-bg-elev-2)] px-3 py-1.5 text-[13px] text-[var(--c-text-base)] hover:border-[var(--c-success)] hover:text-[var(--c-success-fg)] disabled:cursor-not-allowed disabled:opacity-60";
+
+  return (
+    <section className="space-y-2" data-testid="about-troubleshooting">
+      <h4 className="text-[13px] font-medium text-[var(--c-text-base)]">
+        {t("about.troubleshooting")}
+      </h4>
+
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={() => void handleOpenLogDir()}
+          disabled={!info?.log_file && !info?.log_dir}
+          data-testid="about-open-log-dir"
+          className={btn}
+        >
+          {t("about.openLogDir")}
+        </button>
+        <button
+          type="button"
+          onClick={() => void handleCopy()}
+          disabled={!info}
+          data-testid="about-copy-diagnostics"
+          className={btn}
+        >
+          {t("about.copyDiagnostics")}
+        </button>
+        <button
+          type="button"
+          onClick={() => void handleReportIssue()}
+          disabled={!info}
+          data-testid="about-report-issue"
+          className={btn}
+        >
+          {t("about.reportIssue")}
+        </button>
+      </div>
+
+      <p className="text-[11px] text-[var(--c-text-dim)]">
+        {t("about.reportIssueHint")}
+      </p>
+
+      {copied === "ok" && (
+        <p className="text-[12px] text-[var(--c-success-fg)]" data-testid="about-copied">
+          {t("about.copied")}
+        </p>
+      )}
+      {copied === "failed" && (
+        <p className="text-[12px] text-[var(--c-warn)]" data-testid="about-copy-failed">
+          {t("about.copyFailed")}
+        </p>
+      )}
+      {openFailure && (
+        <p className="text-[12px] text-[var(--c-error)]" data-testid="about-open-log-dir-failed">
+          {t("about.openLogDirFailed", { error: openFailure })}
+        </p>
+      )}
+
+      {info && (
+        <details className="rounded border border-[var(--c-border)] bg-[var(--c-bg-base)] p-3">
+          <summary className="cursor-pointer text-[12px] text-[var(--c-text-muted)]">
+            {t("about.diagnostics")}
+          </summary>
+          <pre
+            className="mt-2 select-text whitespace-pre-wrap break-words text-[11px] leading-relaxed text-[var(--c-text-muted)]"
+            data-testid="about-diagnostics-text"
+          >
+            {text}
+          </pre>
+        </details>
+      )}
+    </section>
   );
 }
 

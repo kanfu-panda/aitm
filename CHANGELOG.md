@@ -2,6 +2,27 @@
 
 All notable changes to aitm will be documented in this file. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] — 2026-08-23
+
+### Added
+
+- **Your session comes back on its own.** aitm no longer greets you with a "restore previous session?" dialog on every launch — it just reopens the terminal tabs, split layout and files you had open, in the directories they were in. A new **Restore last session on startup** switch in Settings → General turns this off; with it off you always start from a single empty tab, and nothing from the previous session is read back.
+- **Browser tabs survive a restart.** The built-in browser panel now remembers its tabs — URL, title, zoom level and the mobile/desktop toggle. Restored tabs start suspended, so they cost nothing until you open the panel; sign-in state lives in the system web view's own cookie store and is unaffected.
+- **Page zoom in the browser panel.** `Cmd +` / `Cmd -` / `Cmd 0` zoom the page when the browser panel has focus (and still change the terminal font size otherwise), plus an on-screen `− 100% +` control for when you would rather click. The zoom level is remembered per tab.
+- **Request the mobile version of a site.** A toggle in the browser toolbar reopens the current tab with a mobile user agent, which is often far more readable in a narrow panel than a desktop layout squeezed down. The tooltip notes that switching reloads the page, since the user agent can only be set when the view is created.
+- **Reveal in file manager.** The file tree's context menu can now show any file or folder in Finder / Explorer / your desktop file manager.
+- **Troubleshooting section in About.** Three buttons: open the log folder, copy diagnostics (version, platform, log and config directory), and report an issue — which opens GitHub with the diagnostics and the last 50 log lines already filled in. Logs may contain file paths and commands, so the page says so before you submit.
+- **Update checks now run in the background.** aitm checks for a new version every six hours instead of only at launch, which matters for an app that tends to stay open for days.
+
+### Fixed
+
+- **Menu shortcuts stopped working while the browser panel was open.** Font zoom, *About aitm* and close-tab are dispatched to the main web view explicitly now; previously they were broadcast in a way that silently failed to arrive once the panel had created its own web views.
+- **Terminals restored into the home directory** instead of the directory they were in. The working directory is now attached when the tab is created rather than a moment later, closing a window where the terminal could start before it arrived.
+- **Open log folder did nothing, silently.** The log directory ends in `.app`, which macOS `open` treats as an application bundle and refuses to launch; aitm now reveals the log file instead, and surfaces the error if that fails.
+- **Tab titles in the browser panel** showed the raw URL instead of the page title.
+- **The tab strip's scrollbar** could cover the tab labels on macOS, and the `+` button could scroll out of reach.
+- **Clicking a link in the terminal** could leave a misplaced black rectangle over the window.
+
 ## [1.3.1] — 2026-08-10
 
 ### Added

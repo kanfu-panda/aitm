@@ -194,6 +194,11 @@ export interface UiSettings {
   /** v0.9.0 T4：关闭应用时是否弹"确认退出"对话框；默认 true。
    *  关掉之后红叉 / Cmd+Q 直接退出，跟 v0.8.x 之前行为一致。 */
   confirm_quit: boolean;
+  /** 启动时是否自动恢复上次会话（终端 tab / 分屏布局 / 打开的文件）；默认 true。
+   *
+   *  关掉后启动只开 1 个空 tab，三份持久化都不读；snapshot 仍照常写盘，
+   *  重新打开开关就能恢复最近一次的 tab。 */
+  restore_session: boolean;
   /** v0.10.0 HR6-3e：分屏 layout tree 跨重启持久化的 JSON 字符串。
    *
    *  - `null` / 缺省 → 首次启动，前端用 `makeDefaultRoot()` 单 leaf 兜底。
@@ -589,6 +594,21 @@ export interface SessionSnapshot {
   saved_at_ms: number;
   tabs: TabSnapshot[];
   active_tab_id: string | null;
+  /** v1.4.0：浏览器面板的 tab 列表。老 snapshot 没这个字段，后端 serde default
+   *  兜空数组，所以这里是必填但可能为空。 */
+  browser_tabs: BrowserTabSnapshot[];
+  /** 上次 active 的浏览器 tab 下标；越界 / null 时恢复端兜底第一个。 */
+  active_browser_index: number | null;
+}
+
+/** v1.4.0：单个浏览器 tab 的可恢复状态（只存声明式状态，登录态归 WKWebView 管）。 */
+export interface BrowserTabSnapshot {
+  url: string;
+  title: string;
+  /** 缩放比例；null 表示没调过，恢复时用默认 100%。 */
+  zoom: number | null;
+  /** 是否以移动版 UA 打开——UA 只能建 webview 时定，不存就回不去移动版。 */
+  mobile: boolean;
 }
 
 /** 启动时调；无 / 坏 snapshot → null，前端走默认路径。 */
@@ -829,6 +849,35 @@ export async function appVersion(): Promise<string> {
   return await invoke<string>("app_version");
 }
 
+/** 「关于」页自助诊断用的环境信息（后端 `ipc::app::DiagnosticsInfo`）。 */
+export interface DiagnosticsInfo {
+  /** 应用版本 */
+  version: string;
+  /** 目标平台：`"macos"` / `"windows"` / `"linux"` */
+  os: string;
+  /** 目标架构：`"aarch64"` / `"x86_64"` */
+  arch: string;
+  /** 应用日志目录；取不到为 null */
+  log_dir: string | null;
+  /** 日志文件全路径，**文件存在时**才有值。
+   *
+   *  「打开日志目录」reveal 的是它而不是目录：identifier 是 `com.aitm.app`，
+   *  日志目录名以 `.app` 结尾，macOS `open` 会当成应用程序包去启动并失败。 */
+  log_file: string | null;
+  /** 配置目录 `~/.aitm/`；**只有目录**，config.toml 里有 API key 不外传 */
+  config_dir: string | null;
+}
+
+/** 拉「关于」页要显示的诊断信息（版本 / 平台 / 日志与配置目录）。 */
+export async function diagnosticsInfo(): Promise<DiagnosticsInfo> {
+  return await invoke<DiagnosticsInfo>("diagnostics_info");
+}
+
+/** 读日志文件最后 50 行，供「报告问题」预填进 issue 正文；读不到返回 null。 */
+export async function diagnosticsLogTail(): Promise<string | null> {
+  return await invoke<string | null>("diagnostics_log_tail");
+}
+
 /** 订阅 NSMenu「关于 aitm」触发的 `menu:open-about` 事件。
  *  App.tsx 收到后打开设置面板并切到"关于"页。 */
 export async function onMenuOpenAbout(cb: () => void): Promise<UnlistenFn> {
@@ -965,6 +1014,23 @@ export async function shellOpen(url: string): Promise<void> {
   await invoke("shell_open", { url });
 }
 
+/** 设置某个浏览器 tab 的页面缩放比例（0.25~3.0）。
+ *  焦点在页面内时 webview 自带的 Cmd+= / Cmd+- 会直接生效，不经过这里；
+ *  这个 IPC 给面板上的缩放按钮、以及焦点在面板边框时的快捷键用。 */
+export async function browserSetZoom(
+  tabId: string,
+  factor: number,
+): Promise<void> {
+  await invoke("browser_set_zoom", { tabId, factor });
+}
+
+/** 在系统文件管理器里定位并选中该路径（macOS 访达 / Windows 资源管理器）。
+ *  跟 [`shellOpen`] 的区别：那个用默认应用**打开**文件，这个只是把它**指出来**。
+ *  只接受真实存在的绝对路径，否则后端 reject。 */
+export async function shellReveal(path: string): Promise<void> {
+  await invoke("shell_reveal", { path });
+}
+
 // === Phase 3A T5：关闭 tab 二次确认 ===
 
 /** 检测 PTY 子进程是否有运行中的子命令（fork 出的进程数 > 0）。
@@ -1080,6 +1146,9 @@ export interface BrowserBounds {
 export async function browserOpenTab(
   url: string,
   bounds: BrowserBounds,
+  /** true = 用 iPhone UA 创建（请求移动版站点）。UA 只能在创建时定，
+   *  切换必然要重建 webview —— 调用方自己负责先关掉旧的。 */
+  mobile = false,
 ): Promise<BrowserOpenResult> {
   return await invoke<BrowserOpenResult>("browser_open_tab", {
     url,
@@ -1087,6 +1156,7 @@ export async function browserOpenTab(
     y: bounds.y,
     w: bounds.w,
     h: bounds.h,
+    mobile,
   });
 }
 
@@ -1184,6 +1254,21 @@ export async function onBrowserUrlChanged(
   cb: (e: BrowserUrlChangedEvent) => void,
 ): Promise<UnlistenFn> {
   return await listen<BrowserUrlChangedEvent>("browser:url_changed", (e) =>
+    cb(e.payload),
+  );
+}
+
+/** `browser:title_changed` 事件：页面标题变了。 */
+export interface BrowserTitleChangedEvent {
+  tab_id: string;
+  title: string;
+}
+
+/** 订阅页面标题变化 —— 标签页据此把文字从原始 URL 换成真实标题。 */
+export async function onBrowserTitleChanged(
+  cb: (e: BrowserTitleChangedEvent) => void,
+): Promise<UnlistenFn> {
+  return await listen<BrowserTitleChangedEvent>("browser:title_changed", (e) =>
     cb(e.payload),
   );
 }

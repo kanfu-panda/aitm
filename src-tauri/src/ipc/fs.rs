@@ -1418,28 +1418,42 @@ mod tests {
         })
         .expect("start_watcher 应成功");
 
-        // 给 watcher 后台线程一点启动时间再触发文件事件，避免真机上第一批
-        // 事件在 watcher 完全就绪前发生而丢失（FSEvents 注册有微小延迟）。
-        std::thread::sleep(Duration::from_millis(200));
-
         let target = root.join("a.txt");
-        fs::write(&target, "hello").unwrap();
-        // 顺手在 node_modules 里也写一个文件：应被过滤，不产生独立触发文件的批次
-        fs::write(root.join("node_modules/noise.js"), "// noise").unwrap();
-
-        // debounce 窗口 400ms，留够余量等待第一批事件（最多等 3s，避免真机偶发慢导致挂死）
-        let batch = rx
-            .recv_timeout(Duration::from_secs(3))
-            .expect("应在 debounce 窗口后收到至少一批事件");
-
         let target_str = target.to_string_lossy().into_owned();
+
+        // 这条测试原来是"sleep 200ms 等 watcher 就绪 → 写一次 → 只断言第一批"，
+        // 实测 3 次挂 2 次。两个独立的 flaky 源：
+        //
+        // 1. **只看第一批**：写 a.txt 同时会改父目录 mtime，FSEvents 因此额外报
+        //    一条目录自身的事件。哪条先落进 debounce 窗口取决于内核调度，先收到
+        //    目录事件那次就假失败 → 改成跨批次累积。
+        // 2. **固定 sleep 猜注册时机**：FSEvents 流注册是异步的，注册完成前发生
+        //    的写会被整个丢掉，机器忙时 200ms 不够 → 改成循环里反复写，直到事件
+        //    真的到达；不再靠猜。
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let mut seen: Vec<String> = Vec::new();
+        let mut nudge = 0;
+        while std::time::Instant::now() < deadline {
+            nudge += 1;
+            fs::write(&target, format!("hello {nudge}")).unwrap();
+            // node_modules 内的改动应被过滤，不产生触发批次
+            fs::write(root.join("node_modules/noise.js"), "// noise").unwrap();
+
+            let Ok(batch) = rx.recv_timeout(Duration::from_millis(600)) else {
+                continue;
+            };
+            assert!(
+                !batch.iter().any(|p| p.contains("node_modules")),
+                "node_modules 内的路径应被过滤，实际：{batch:?}"
+            );
+            seen.extend(batch);
+            if seen.iter().any(|p| p == &target_str) {
+                break;
+            }
+        }
         assert!(
-            batch.iter().any(|p| p == &target_str),
-            "批次应包含新建的 a.txt，实际：{batch:?}"
-        );
-        assert!(
-            !batch.iter().any(|p| p.contains("node_modules")),
-            "node_modules 内的路径应被过滤，实际：{batch:?}"
+            seen.iter().any(|p| p == &target_str),
+            "应收到 a.txt 的变更事件，实际累积到：{seen:?}"
         );
     }
 

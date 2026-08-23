@@ -64,4 +64,7 @@ export {
   // v1.2.0 A1/A2：AI 停止生成 / 重试按钮
   Square, // 停止生成（实心方块，terminal/播放器通用语义）
   RotateCcw, // 重试 / regenerate
+  // 浏览器"请求移动版 / 桌面版站点"切换
+  Smartphone,
+  Monitor,
 } from "lucide-react";

@@ -3,11 +3,14 @@ import { AnimatePresence, useReducedMotion } from "framer-motion";
 import { browserSetBounds } from "../../lib/tauri";
 import { createBoundsReporter } from "../../lib/browserBounds";
 import { useBrowserStore } from "../../stores/browser";
+import { useFocusSurfaceStore } from "../../stores/focus-surface";
 import { ChevronDown } from "../icons";
 import { m } from "../../lib/motion";
 import BrowserNavButtons from "./BrowserNavButtons";
 import BrowserTabBar from "./BrowserTabBar";
 import BrowserUrlBar from "./BrowserUrlBar";
+import BrowserMobileToggle from "./BrowserMobileToggle";
+import BrowserZoomControl from "./BrowserZoomControl";
 
 /**
  * Phase 4A T2 + v0.4.1 T3：内嵌浏览器面板主组件。
@@ -147,7 +150,15 @@ function BrowserPanelInner() {
     // z-index，bounds 算偏哪怕一两像素都会让 webview 盖住 URL 栏。
     // header 顶部 absolute（自动撑高度）；container 用 inline style
     // top: headerHeight 精确避开 header 区域。
-    <div className="relative h-full bg-[var(--c-bg-elev-1)] text-[var(--c-text-base)]">
+    <div
+      className="relative h-full bg-[var(--c-bg-elev-1)] text-[var(--c-text-base)]"
+      // Cmd+= / Cmd+- / Cmd+0 按 lastSurface 路由到"缩放网页"而不是"改终端字号"。
+      // 之前 Surface 类型里有 "browser" 这一档，却没有任何地方 setSurface("browser")
+      // ——路由分支从来没被走到过（多 webview 场景实测）。
+      onMouseDownCapture={() => {
+        useFocusSurfaceStore.getState().setSurface("browser");
+      }}
+    >
       <header
         className="absolute inset-x-0 top-0 z-10 flex flex-col border-b border-[var(--c-border)] bg-[var(--c-bg-elev-1)]"
         // inline style 强制 header 至少 96px (TabBar 56 + URL 栏 row 40)。
@@ -164,6 +175,8 @@ function BrowserPanelInner() {
         >
           <BrowserNavButtons />
           <BrowserUrlBar />
+          <BrowserZoomControl />
+          <BrowserMobileToggle />
           <button
             type="button"
             onClick={() => void minimizePanel()}

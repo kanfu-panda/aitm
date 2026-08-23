@@ -18,6 +18,8 @@ const fsWatchStartMock = vi.fn();
 const fsWatchStopMock = vi.fn();
 const onFsChangedMock = vi.fn();
 const fsChangedUnlistenMock = vi.fn();
+const shellRevealMock = vi.fn(async (_path: string) => {});
+
 vi.mock("../../lib/tauri", async (orig) => {
   const real = await orig<typeof import("../../lib/tauri")>();
   return {
@@ -34,6 +36,8 @@ vi.mock("../../lib/tauri", async (orig) => {
       fsWatchStopMock(...args),
     onFsChanged: (...args: Parameters<typeof real.onFsChanged>) =>
       onFsChangedMock(...args),
+    shellReveal: (...args: Parameters<typeof real.shellReveal>) =>
+      shellRevealMock(...args),
   };
 });
 
@@ -689,6 +693,39 @@ describe("FileTree", () => {
         { timeout: 1000 },
       );
       expect(screen.getByText("main.rs")).toBeTruthy();
+    });
+  });
+  it("右键菜单有\"在文件管理器中显示\"，点它按节点路径调 shellReveal", async () => {
+    const tabId = useTabsStore.getState().addTab();
+    useTabsStore.getState().setSessionId(tabId, "session-uuid-1");
+    sessionCurrentCwdMock.mockResolvedValue("/Users/me/myproj");
+    fsTreeMock.mockResolvedValue(fakeRootTree());
+
+    render(<FileTree />);
+    const row = await screen.findByText("README.md");
+    fireEvent.contextMenu(row);
+
+    const item = await screen.findByTestId("file-tree-menu-reveal");
+    fireEvent.click(item);
+
+    expect(shellRevealMock).toHaveBeenCalledWith("/Users/me/myproj/README.md");
+  });
+
+  it("reveal 失败不抛出、不影响后续操作（文件可能刚被外部删掉）", async () => {
+    shellRevealMock.mockRejectedValueOnce(new Error("路径不存在"));
+    const tabId = useTabsStore.getState().addTab();
+    useTabsStore.getState().setSessionId(tabId, "session-uuid-1");
+    sessionCurrentCwdMock.mockResolvedValue("/Users/me/myproj");
+    fsTreeMock.mockResolvedValue(fakeRootTree());
+
+    render(<FileTree />);
+    const row = await screen.findByText("README.md");
+    fireEvent.contextMenu(row);
+    fireEvent.click(await screen.findByTestId("file-tree-menu-reveal"));
+
+    // 菜单关掉即可，不该冒出未捕获异常
+    await waitFor(() => {
+      expect(screen.queryByTestId("file-tree-context-menu")).toBeNull();
     });
   });
 });

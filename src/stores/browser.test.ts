@@ -30,6 +30,7 @@ import {
   browserSuspendTab,
 } from "../lib/tauri";
 import { useBrowserStore } from "./browser";
+import { DEFAULT_ZOOM } from "../lib/browserZoom";
 
 const trackEventMock = trackEvent as unknown as ReturnType<typeof vi.fn>;
 
@@ -196,7 +197,7 @@ describe("useBrowserStore", () => {
       expect(s.activeKey).toBe("k2");
       // 仅 active tab 被 resume：调 1 次 open
       expect(mocks.open).toHaveBeenCalledTimes(1);
-      expect(mocks.open).toHaveBeenCalledWith("https://b", BOUNDS);
+      expect(mocks.open).toHaveBeenCalledWith("https://b", BOUNDS, false);
       // k2 现 active；k1 保持 suspended
       const t1 = s.tabs.find((t) => t.key === "k1");
       const t2 = s.tabs.find((t) => t.key === "k2");
@@ -217,7 +218,7 @@ describe("useBrowserStore", () => {
       const s = useBrowserStore.getState();
       expect(s.panelOpen).toBe(true);
       // 调 openTab 创建 blank
-      expect(mocks.open).toHaveBeenCalledWith("about:blank", BOUNDS);
+      expect(mocks.open).toHaveBeenCalledWith("about:blank", BOUNDS, false);
       expect(s.tabs).toHaveLength(1);
       expect(s.tabs[0].url).toBe("about:blank");
     });
@@ -247,7 +248,7 @@ describe("useBrowserStore", () => {
       const s = useBrowserStore.getState();
       expect(s.panelOpen).toBe(true);
       // 选第一个 tab resume
-      expect(mocks.open).toHaveBeenCalledWith("https://x", BOUNDS);
+      expect(mocks.open).toHaveBeenCalledWith("https://x", BOUNDS, false);
       expect(s.activeKey).toBe("kx");
     });
 
@@ -284,7 +285,7 @@ describe("useBrowserStore", () => {
   describe("openTab", () => {
     it("调后端 open + 加到 tabs 末尾 + 设为 active + panelOpen=true", async () => {
       await useBrowserStore.getState().openTab("https://example.com", BOUNDS);
-      expect(mocks.open).toHaveBeenCalledWith("https://example.com", BOUNDS);
+      expect(mocks.open).toHaveBeenCalledWith("https://example.com", BOUNDS, false);
       const s = useBrowserStore.getState();
       expect(s.tabs).toHaveLength(1);
       expect(s.tabs[0].id).toBe("mock-1");
@@ -648,5 +649,164 @@ describe("useBrowserStore", () => {
         trackEventMock.mock.calls.some((c) => c[0] === "browser_opened"),
       ).toBe(false);
     });
+  });
+});
+
+describe("applyTitleChanged", () => {
+  it("按后端 tab_id 把标签文字从 URL 换成真实标题", () => {
+    const s = useBrowserStore.getState();
+    useBrowserStore.setState({
+      tabs: [
+        { id: "browser-1", key: "k1", url: "https://example.com", title: "https://example.com", state: "active", scrollY: 0, pinned: false, lastActiveAt: 0 },
+        { id: "browser-2", key: "k2", url: "https://b.com", title: "https://b.com", state: "active", scrollY: 0, pinned: false, lastActiveAt: 0 },
+      ],
+    });
+    s.applyTitleChanged("browser-1", "Example Domain");
+
+    const tabs = useBrowserStore.getState().tabs;
+    expect(tabs[0].title).toBe("Example Domain");
+    expect(tabs[1].title).toBe("https://b.com");
+  });
+
+  it("空标题忽略 —— 宁可继续显示 URL，也不要一个没文字的标签", () => {
+    useBrowserStore.setState({
+      tabs: [
+        { id: "browser-1", key: "k1", url: "https://example.com", title: "https://example.com", state: "active", scrollY: 0, pinned: false, lastActiveAt: 0 },
+      ],
+    });
+    useBrowserStore.getState().applyTitleChanged("browser-1", "   ");
+    expect(useBrowserStore.getState().tabs[0].title).toBe("https://example.com");
+  });
+
+  it("tab_id 对不上时不动任何标签", () => {
+    useBrowserStore.setState({
+      tabs: [
+        { id: "browser-1", key: "k1", url: "https://example.com", title: "orig", state: "active", scrollY: 0, pinned: false, lastActiveAt: 0 },
+      ],
+    });
+    useBrowserStore.getState().applyTitleChanged("browser-ghost", "新标题");
+    expect(useBrowserStore.getState().tabs[0].title).toBe("orig");
+  });
+});
+
+describe("toggleMobile", () => {
+  beforeEach(() => {
+    mocks.open.mockClear();
+  });
+
+  it("切到移动版：写标志 → 销毁重建 webview（UA 只能创建时定）", async () => {
+    mocks.open.mockResolvedValue({ tab_id: "browser-new" });
+    useBrowserStore.setState({
+      tabs: [
+        { id: "browser-1", key: "k1", url: "https://news.163.com", title: "网易", state: "active", scrollY: 0, pinned: false, lastActiveAt: 0 },
+      ],
+      activeKey: "k1",
+    });
+
+    await useBrowserStore.getState().toggleMobile({ x: 0, y: 0, w: 800, h: 600 });
+
+    const tab = useBrowserStore.getState().tabs[0];
+    expect(tab.mobile).toBe(true);
+    // 重建时必须把 mobile=true 传下去，否则拿到的还是桌面 UA
+    expect(mocks.open).toHaveBeenCalledWith(
+      "https://news.163.com",
+      expect.anything(),
+      true,
+    );
+  });
+
+  it("再切一次回桌面版", async () => {
+    mocks.open.mockResolvedValue({ tab_id: "browser-new2" });
+    useBrowserStore.setState({
+      tabs: [
+        { id: "browser-1", key: "k1", url: "https://news.163.com", title: "网易", state: "active", scrollY: 0, pinned: false, mobile: true, lastActiveAt: 0 },
+      ],
+      activeKey: "k1",
+    });
+
+    await useBrowserStore.getState().toggleMobile({ x: 0, y: 0, w: 800, h: 600 });
+
+    expect(useBrowserStore.getState().tabs[0].mobile).toBe(false);
+    expect(mocks.open).toHaveBeenCalledWith(
+      "https://news.163.com",
+      expect.anything(),
+      false,
+    );
+  });
+
+  it("没有 active tab 时什么都不做", async () => {
+    useBrowserStore.setState({ tabs: [], activeKey: null });
+    await useBrowserStore.getState().toggleMobile({ x: 0, y: 0, w: 800, h: 600 });
+    expect(mocks.open).not.toHaveBeenCalled();
+  });
+});
+
+describe("restoreTabs（跨重启恢复浏览器标签）", () => {
+  beforeEach(() => {
+    useBrowserStore.setState({ tabs: [], activeKey: null, panelOpen: false });
+    mocks.open.mockClear();
+  });
+
+  const SNAP = [
+    { url: "https://example.com", title: "Example", zoom: 1.25, mobile: false },
+    { url: "https://news.163.com", title: "网易", zoom: null, mobile: true },
+  ];
+
+  it("恢复成 suspended，启动时**不建 webview**", async () => {
+    useBrowserStore.getState().restoreTabs(SNAP, 0);
+
+    const { tabs } = useBrowserStore.getState();
+    expect(tabs).toHaveLength(2);
+    expect(tabs.every((t) => t.state === "suspended")).toBe(true);
+    expect(tabs.every((t) => t.id === null)).toBe(true);
+    // 启动就给每个 tab 建一个 native webview 会拖慢冷启动，也白占内存；
+    // 面板真被打开时 restorePanel 会 resume active 那个。
+    expect(mocks.open).not.toHaveBeenCalled();
+  });
+
+  it("URL / 标题 / 缩放 / 移动版开关都还原", () => {
+    useBrowserStore.getState().restoreTabs(SNAP, 0);
+
+    const [a, b] = useBrowserStore.getState().tabs;
+    expect(a.url).toBe("https://example.com");
+    expect(a.title).toBe("Example");
+    expect(a.zoom).toBe(1.25);
+    expect(a.mobile).toBe(false);
+    expect(b.mobile).toBe(true);
+    expect(b.zoom).toBe(DEFAULT_ZOOM); // null → 默认 100%
+  });
+
+  it("按下标定位 active tab", () => {
+    useBrowserStore.getState().restoreTabs(SNAP, 1);
+    const { tabs, activeKey } = useBrowserStore.getState();
+    expect(activeKey).toBe(tabs[1].key);
+  });
+
+  it("下标越界 / 缺省时兜底第一个，不留空 activeKey", () => {
+    useBrowserStore.getState().restoreTabs(SNAP, 99);
+    expect(useBrowserStore.getState().activeKey).toBe(
+      useBrowserStore.getState().tabs[0].key,
+    );
+    useBrowserStore.setState({ tabs: [], activeKey: null });
+    useBrowserStore.getState().restoreTabs(SNAP, null);
+    expect(useBrowserStore.getState().activeKey).toBe(
+      useBrowserStore.getState().tabs[0].key,
+    );
+  });
+
+  it("**不自动展开面板**：上次收着的面板不该因为恢复就弹出来", () => {
+    useBrowserStore.getState().restoreTabs(SNAP, 0);
+    expect(useBrowserStore.getState().panelOpen).toBe(false);
+  });
+
+  it("已经有 tab 时不重复恢复", () => {
+    useBrowserStore.getState().restoreTabs(SNAP, 0);
+    useBrowserStore.getState().restoreTabs(SNAP, 0);
+    expect(useBrowserStore.getState().tabs).toHaveLength(2);
+  });
+
+  it("空列表 no-op", () => {
+    useBrowserStore.getState().restoreTabs([], null);
+    expect(useBrowserStore.getState().tabs).toHaveLength(0);
   });
 });

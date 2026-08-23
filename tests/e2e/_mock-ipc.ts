@@ -172,6 +172,17 @@ export async function installTauriMock(
       activityBarPosition: DEFAULTS.ui.activity_bar_position,
       // v0.4.1 T5：主题模式三态；默认 dark。
       themeMode: DEFAULTS.ui.theme_mode,
+      // 启动是否静默恢复上次会话；spec 用 __setRestoreSession(false) 关掉。
+      restoreSession: DEFAULTS.ui.restore_session,
+    };
+
+    // spec 在 page.goto 前调，模拟用户在设置里关掉"启动时恢复上次会话"。
+    (
+      window as unknown as {
+        __setRestoreSession: (v: boolean) => void;
+      }
+    ).__setRestoreSession = (v) => {
+      settingsState.restoreSession = v;
     };
 
     // === scope + conversations 状态（每个 page 隔离）===
@@ -412,6 +423,7 @@ export async function installTauriMock(
               ...DEFAULTS.ui,
               activity_bar_position: settingsState.activityBarPosition,
               theme_mode: settingsState.themeMode,
+              restore_session: settingsState.restoreSession,
             },
           };
         }

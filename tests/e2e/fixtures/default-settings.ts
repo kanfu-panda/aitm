@@ -45,6 +45,8 @@ export const DEFAULT_E2E_SETTINGS: AppSettings = {
     ai_sidebar_width: 360,
     file_preview_dialog: null,
     confirm_quit: true,
+    // 静默恢复上次会话（默认开）
+    restore_session: true,
     // v0.10.0 HR6-3e：分屏 layout 持久化（首次启动 null）
     pane_layout: null,
     // v0.10.0 HR7-7：快捷键自定义覆盖（默认空 → 走 DEFAULT_KEYBINDINGS）
