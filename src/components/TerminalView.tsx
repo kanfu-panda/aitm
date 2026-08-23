@@ -58,13 +58,24 @@ function resolveXtermTheme(baseId: string, mode: ThemeMode) {
 /**
  * v0.9.1 HR3-4：终端 URL 单击回调（导出以便单测，逻辑不依赖 xterm 实例）。
  *
- * 行为：
- * 1. 阻止 addon 默认动作（默认会调 window.open 走系统浏览器）
- * 2. 浏览器面板未开 → 调 [`restorePanel`] 展开（同时若 tabs 为空会兜底 about:blank）
- * 3. 始终调 [`openTab`] 把目标 URL 加为新 tab（即使刚 restorePanel 弹了 about:blank）
+ * 行为：**只调 [`openTab`]**（它自己会把 `panelOpen` 置 true），外加阻止 addon
+ * 默认动作（默认会调 window.open 走系统浏览器）。
  *
- * bounds 用 placeholder 800x600：BrowserPanel 自己挂的 ResizeObserver 会在容器
- * 完成布局后立刻按真实尺寸调 [`browserSetBounds`] 纠正，单击路径不阻塞等真实尺寸。
+ * ## 为什么不再顺手调 restorePanel
+ *
+ * 旧实现是"面板没开就 `restorePanel()`，然后无论如何再 `openTab()`"，两句都不
+ * await。面板关着且没有 tab 时 `restorePanel` 会兜底建一个 `about:blank`，于是
+ * **两条链路并发各建一个 child webview**，又各自在结尾调 `set_active`。多 webview
+ * 同位置没有 z-index、全靠 show/hide 抢前台，谁的 set_active 后到谁赢：赢的若是
+ * 那个 about:blank，它就停在占位 (0,0,800,600) 上可见——而纠正 bounds 的
+ * ResizeObserver 只认前端记的 active tab（另一个），永远不会去挪它。屏幕左上角
+ * 于是挂着一块挪不走的黑块，真正要看的页面反被 hide 掉。
+ *
+ * 用户点一个链接，要的就是一个 tab。少一次并发创建，这个竞态就不存在。
+ *
+ * bounds 传 placeholder：webview 由后端**以隐藏状态创建**，拿到真实 bounds 前
+ * 不会被 show（见 `ipc/browser.rs` 的 bounds_applied / pending_show），所以占位
+ * 尺寸不会有机会以错误位置露脸。
  */
 export const TERMINAL_LINK_FALLBACK_BOUNDS: BrowserBounds = {
   x: 0,
@@ -75,11 +86,8 @@ export const TERMINAL_LINK_FALLBACK_BOUNDS: BrowserBounds = {
 
 export function handleTerminalLinkClick(event: MouseEvent, uri: string): void {
   event.preventDefault();
-  const store = useBrowserStore.getState();
-  if (!store.panelOpen) {
-    void store.restorePanel(TERMINAL_LINK_FALLBACK_BOUNDS);
-  }
-  void store.openTab(uri, TERMINAL_LINK_FALLBACK_BOUNDS);
+  // openTab 内部就会 set panelOpen=true，不需要（也不能）再叠一次 restorePanel
+  void useBrowserStore.getState().openTab(uri, TERMINAL_LINK_FALLBACK_BOUNDS);
 }
 
 interface Props {

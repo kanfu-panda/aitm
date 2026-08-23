@@ -69,6 +69,65 @@ pub fn shell_open(url: String) -> Result<(), String> {
     Ok(())
 }
 
+/// 校验"在文件管理器中显示"的入参。
+///
+/// 比 [`validate_url`] 严得多：这里只接受**本机绝对路径**，且路径必须真实存在。
+/// 不做 scheme / URL 那一套 —— 传进来的应该是 FileTree 里某个真实节点的 path。
+///
+/// 抽出独立函数是为了能单测（不真去 spawn 文件管理器）。
+fn validate_reveal_path(path: &str) -> Result<std::path::PathBuf, String> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Err("路径为空".to_string());
+    }
+    let p = std::path::Path::new(trimmed);
+    if !p.is_absolute() {
+        return Err(format!("只接受绝对路径：{trimmed}"));
+    }
+    if !p.exists() {
+        return Err(format!("路径不存在：{trimmed}"));
+    }
+    Ok(p.to_path_buf())
+}
+
+/// 在系统文件管理器里定位并选中给定路径。
+///
+/// - macOS：`open -R <path>`（访达里选中该项，而不是打开它）
+/// - Windows：`explorer /select,<path>`
+/// - Linux：没有通用的"选中"协议，退而求其次用 `xdg-open` 打开**所在目录**
+///
+/// 与 [`shell_open`] 的区别：那个是"用默认应用打开这个文件"，这个是"在文件
+/// 管理器里把它指给我看"。
+#[tauri::command]
+pub fn shell_reveal(path: String) -> Result<(), String> {
+    let target = validate_reveal_path(&path)?;
+
+    let spawned = if cfg!(target_os = "macos") {
+        Command::new("open").arg("-R").arg(&target).spawn().is_ok()
+    } else if cfg!(target_os = "windows") {
+        // 注意：/select 与路径之间是逗号且**不能有空格**，所以拼成单个参数
+        Command::new("explorer")
+            .arg(format!("/select,{}", target.display()))
+            .spawn()
+            .is_ok()
+    } else if cfg!(target_os = "linux") {
+        // 文件本身交给 xdg-open 会用默认应用**打开**它，不是我们要的；开父目录
+        let dir = if target.is_dir() {
+            target.clone()
+        } else {
+            target.parent().map(|p| p.to_path_buf()).unwrap_or(target.clone())
+        };
+        Command::new("xdg-open").arg(dir).spawn().is_ok()
+    } else {
+        return Err(format!("不支持的平台：{}", std::env::consts::OS));
+    };
+
+    if !spawned {
+        return Err("文件管理器 spawn 失败".to_string());
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -146,5 +205,49 @@ mod tests {
         // 只支持绝对路径，相对路径不行（避免歧义）
         assert!(validate_url("./relative.txt").is_err());
         assert!(validate_url("relative.txt").is_err());
+    }
+
+    // === shell_reveal 的入参校验 ===
+
+    #[test]
+    fn reveal_真实存在的文件_通过() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join("a.txt");
+        std::fs::write(&f, b"x").unwrap();
+        assert!(validate_reveal_path(f.to_str().unwrap()).is_ok());
+    }
+
+    #[test]
+    fn reveal_真实存在的目录_通过() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(validate_reveal_path(dir.path().to_str().unwrap()).is_ok());
+    }
+
+    #[test]
+    fn reveal_不存在的路径_拒绝() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("没有这个文件.txt");
+        let err = validate_reveal_path(missing.to_str().unwrap()).unwrap_err();
+        assert!(err.contains("不存在"), "实际：{err}");
+    }
+
+    #[test]
+    fn reveal_相对路径_拒绝() {
+        // 相对路径的基准目录是应用的 cwd，跟用户看到的文件树无关，必须拒绝
+        let err = validate_reveal_path("./foo.txt").unwrap_err();
+        assert!(err.contains("绝对路径"), "实际：{err}");
+    }
+
+    #[test]
+    fn reveal_空串_拒绝() {
+        assert!(validate_reveal_path("").is_err());
+        assert!(validate_reveal_path("   ").is_err());
+    }
+
+    #[test]
+    fn reveal_两端空白_trim_后仍能命中() {
+        let dir = tempfile::tempdir().unwrap();
+        let padded = format!("  {}  ", dir.path().to_str().unwrap());
+        assert!(validate_reveal_path(&padded).is_ok());
     }
 }

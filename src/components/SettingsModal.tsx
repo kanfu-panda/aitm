@@ -310,14 +310,15 @@ function AppearanceTab() {
 }
 
 /**
- * v0.9.0 T4：通用设置（关闭应用二次确认 toggle）。
+ * v0.9.0 T4：通用设置（关闭应用二次确认 + 启动恢复上次会话）。
  *
- * 默认开启；关掉之后红叉 / Cmd+Q 直接退出（跟 v0.8.x 之前行为一致）。
- * 跟 NotificationSection 一致的 checkbox 风格，立即生效 + 持久化到 settings.toml。
+ * 两个开关默认都开；跟 NotificationSection 一致的 checkbox 风格，立即生效 +
+ * 持久化到 settings.toml。
  */
 function GeneralSection() {
   const { t } = useTranslation();
   const confirmQuit = useSettingsStore((s) => s.settings.ui.confirm_quit);
+  const restoreSession = useSettingsStore((s) => s.settings.ui.restore_session);
   const update = useSettingsStore((s) => s.update);
 
   return (
@@ -340,6 +341,23 @@ function GeneralSection() {
       </label>
       <p className="mt-2 text-[10px] text-[var(--c-text-dim)]">
         {t("appearance.confirmQuitHelp")}
+      </p>
+
+      <label className="mt-4 flex cursor-pointer items-center gap-2 text-xs text-[var(--c-text-muted)]">
+        <input
+          type="checkbox"
+          checked={restoreSession}
+          onChange={(e) =>
+            update({ ui: { restore_session: e.target.checked } })
+          }
+          className="accent-[var(--c-success)]"
+          aria-label={t("appearance.restoreSessionLabel")}
+          data-testid="restore-session-toggle"
+        />
+        <span>{t("appearance.restoreSessionLabel")}</span>
+      </label>
+      <p className="mt-2 text-[10px] text-[var(--c-text-dim)]">
+        {t("appearance.restoreSessionHelp")}
       </p>
     </section>
   );

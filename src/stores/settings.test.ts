@@ -44,6 +44,7 @@ describe("useSettingsStore", () => {
           ai_sidebar_width: 360,
           file_preview_dialog: null,
           confirm_quit: true,
+    restore_session: true,
           pane_layout: null,
           keybindings: {},
         language: "en",

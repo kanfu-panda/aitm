@@ -33,7 +33,7 @@
 //! - resume 一个 suspended tab = 调 [`browser_open_tab`] 创建新 webview，再调
 //!   [`browser_set_scroll_y`] 恢复（不需单独 resume 命令）。
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
@@ -98,6 +98,70 @@ pub struct BrowserState {
     /// 上报，值往往跟上次**完全一样**。不去重的话 dev log 每秒几十行同样的
     /// set_bounds，真要排"网页不随面板自适应"时根本读不出有用信息。
     pub last_logged_bounds: Mutex<HashMap<String, (f64, f64, f64, f64)>>,
+    /// 已经收到过**真实** bounds 的 tab（2026-08-13 错位黑块 bug）。
+    ///
+    /// child webview 创建时只能给一个占位矩形（后端算不出前端布局），真值要等
+    /// `BrowserPanel` 量完再 IPC 上报。旧实现创建即可见，于是"占位位置 + 已可见"
+    /// 同时成立，只要纠正上报没跟上（或纠正的是另一个 tab），屏幕上就留下一块
+    /// 挪不走的错位方块。
+    ///
+    /// 现在改成硬不变量：**没进这个集合的 tab 一律不 show**。位置未知就先别露脸，
+    /// 这样"错位可见"从依赖时序运气变成结构上不可能。
+    pub bounds_applied: Mutex<HashSet<String>>,
+    /// 想 show、但还没拿到真实 bounds，因而被推迟的那个 tab。
+    ///
+    /// 只可能有一个：同一时刻用户只看得见一个 tab。真实 bounds 一到就放行
+    /// （见 [`note_bounds_applied`]）。
+    pub pending_show: Mutex<Option<String>>,
+}
+
+/// [`apply_set_active`] 的判定结果。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ActivateOutcome {
+    /// 位置已知，可以立刻 show
+    Show,
+    /// tab 存在但还没有真实 bounds → 先别 show，等 bounds 到了再放行
+    Defer,
+    /// 后端根本没有这个 tab（前端拿着旧 id）
+    Missing,
+}
+
+/// 纯判定：该不该现在把这个 tab show 出来。
+///
+/// 抽成无副作用函数是为了能单测——`apply_set_active` 需要真的 `Webview` handle，
+/// 单测环境构造不出来。
+pub(crate) fn decide_activate(tab_known: bool, bounds_ready: bool) -> ActivateOutcome {
+    match (tab_known, bounds_ready) {
+        (false, _) => ActivateOutcome::Missing,
+        (true, false) => ActivateOutcome::Defer,
+        (true, true) => ActivateOutcome::Show,
+    }
+}
+
+/// 记下"这个 tab 已经有真实 bounds 了"，并回答：它是不是正等着被 show？
+///
+/// 返回 `true` 时调用方应立刻 `show()` 它 —— 这是被推迟的那次激活的兑现点。
+pub(crate) async fn note_bounds_applied(state: &Arc<BrowserState>, tab_id: &str) -> bool {
+    state.bounds_applied.lock().await.insert(tab_id.to_string());
+    let mut pending = state.pending_show.lock().await;
+    if pending.as_deref() == Some(tab_id) {
+        *pending = None;
+        true
+    } else {
+        false
+    }
+}
+
+/// tab 关闭 / suspend 时清掉它的可见性记录。
+///
+/// `pending_show` 必须一起清：留着一个已销毁的 tab_id 在那儿，后面新 tab 的
+/// bounds 上报就永远匹配不上，被推迟的 show 再也兑现不了。
+pub(crate) async fn forget_tab_visibility(state: &Arc<BrowserState>, tab_id: &str) {
+    state.bounds_applied.lock().await.remove(tab_id);
+    let mut pending = state.pending_show.lock().await;
+    if pending.as_deref() == Some(tab_id) {
+        *pending = None;
+    }
 }
 
 /// 单个 tab 的加载状态快照（[`BrowserState::load_state`] 的 value 类型）。
@@ -161,6 +225,10 @@ const HOTKEY_FORWARD_SCRIPT: &str = r#"
 /// 生成新 tab 的唯一 webview label。
 ///
 /// uuid v4 即可，不需要时间可排序属性。
+/// 页面缩放允许区间。下限再小就没法读了，上限再大一屏放不下几个字。
+const MIN_ZOOM: f64 = 0.25;
+const MAX_ZOOM: f64 = 3.0;
+
 fn make_tab_id() -> String {
     format!("browser-{}", uuid::Uuid::new_v4())
 }
@@ -209,9 +277,21 @@ fn pick_main_window<R: tauri::Runtime>(
 const MAC_SAFARI_USER_AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) \
      AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15";
 
+/// 请求"移动版站点"时用的 UA（iPhone Safari）。
+///
+/// 做 UA 嗅探的站点（新闻、门户、大部分登录页）看到它才会发移动版页面。
+/// 窄面板下移动版比"PC 版缩小"好读得多——但代价是**必须重建 webview**：
+/// UA 只能在创建时定，wry / WKWebView 都不支持运行时改。
+#[cfg(target_os = "macos")]
+const IPHONE_SAFARI_USER_AGENT: &str = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) \
+     AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Mobile/15E148 Safari/604.1";
+
 /// 在主 window 内创建一个子 webview 加载给定 URL。
 ///
 /// 返回 `tab_id`（即 webview label），前端用它作为后续 IPC 的 key。
+// Tauri command 的入参就是扁平的 IPC payload，把 x/y/w/h 收进结构体会让前端
+// 多一层嵌套、也让既有调用点全部要改；这里保持扁平，单独放行这条 lint。
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn browser_open_tab(
     app: AppHandle,
@@ -221,6 +301,8 @@ pub async fn browser_open_tab(
     y: f64,
     w: f64,
     h: f64,
+    // 请求移动版站点：用 iPhone UA 创建。缺省 / None = 桌面版
+    mobile: Option<bool>,
 ) -> Result<OpenTabResult, String> {
     let parent_window = pick_main_window(&app)?;
     let parsed: Url = url.parse().map_err(|e| format!("URL 解析失败: {e}"))?;
@@ -233,6 +315,8 @@ pub async fn browser_open_tab(
     let (load_tx, _load_rx) = watch::channel(PageLoadState::default());
     let load_tx_for_page = load_tx.clone();
     let load_tx_for_title = load_tx.clone();
+    let app_for_title = app.clone();
+    let label_for_title = label.clone();
 
     let builder = tauri::webview::WebviewBuilder::new(label.clone(), WebviewUrl::External(parsed))
         .initialization_script(HOTKEY_FORWARD_SCRIPT)
@@ -247,18 +331,54 @@ pub async fn browser_open_tab(
         })
         .on_document_title_changed(move |_wv, title| {
             load_tx_for_title.send_modify(|s| {
-                s.title = title;
+                s.title = title.clone();
             });
+            // 送给主 webview，前端据此把标签页文字从 URL 换成真实标题。
+            // 用 emit_to 显式指 "main"：裸 emit 广播到 child webview 时主 webview
+            // 会漏收（实测结论，同 url_changed）。
+            let payload = TitleChangedEvent {
+                tab_id: label_for_title.clone(),
+                title,
+            };
+            if let Err(e) = app_for_title.emit_to(
+                tauri::EventTarget::webview("main"),
+                "browser:title_changed",
+                &payload,
+            ) {
+                tracing::warn!("emit browser:title_changed 失败: {e}");
+            }
         });
+
+    // 打开原生缩放热键。**注意：这个开关在 macOS 上是空操作**——wry 的
+    // `with_hotkeys_zoom` 文档写明 "macOS / Linux / Android / iOS: Unsupported"，
+    // 实现里 `zoom_hotkeys_enabled` 只被 webview2（Windows）读取。
+    //
+    // 所以 macOS 下页面内按 Cmd+= / Cmd+- 不会有任何反应，缩放全靠前端那条路：
+    // NSMenu 加速键 → `menu:font-action` → 按 lastSurface 路由到 browser store
+    // 的 adjustZoom（见 App.tsx）。留着这一行是为了 Windows 能用原生热键。
+    let builder = builder.zoom_hotkeys_enabled(true);
 
     // macOS：补一个完整的 Safari UA（见 MAC_SAFARI_USER_AGENT 的原因说明）。
     // Windows 走 WebView2（Chromium），默认 UA 已完整，不动。
     #[cfg(target_os = "macos")]
-    let builder = builder.user_agent(MAC_SAFARI_USER_AGENT);
+    let builder = builder.user_agent(if mobile.unwrap_or(false) {
+        IPHONE_SAFARI_USER_AGENT
+    } else {
+        MAC_SAFARI_USER_AGENT
+    });
+    #[cfg(not(target_os = "macos"))]
+    let _ = mobile; // Windows 走 WebView2，默认 UA 已完整，暂不做移动版切换
 
     let child = parent_window
         .add_child(builder, LogicalPosition::new(x, y), LogicalSize::new(w, h))
         .map_err(|e| format!("创建 child webview 失败: {e}"))?;
+
+    // 立刻藏起来：入参 x/y/w/h 只是前端给的**占位**矩形（后端算不出前端布局），
+    // 创建即可见的话，在真实 bounds 上报之前它就以错误位置露脸了——2026-08-13
+    // 那块挪不走的黑块正是这么来的。由 `browser_set_bounds` 拿到真值后放行。
+    child
+        .hide()
+        .map_err(|e| format!("新建 webview 隐藏失败: {e}"))?;
 
     state.active.lock().await.insert(label.clone(), child);
     state.load_state.lock().await.insert(label.clone(), load_tx);
@@ -285,6 +405,8 @@ pub async fn browser_close_tab(
     state.load_state.lock().await.remove(&tab_id);
     // v1.3.0 R3b：日志去重表同步清理，别让已销毁的 tab_id 长期占着
     state.last_logged_bounds.lock().await.remove(&tab_id);
+    // 可见性记录一并清（尤其 pending_show：挂着死 tab_id 会让后续的 show 永远兑现不了）
+    forget_tab_visibility(state.inner(), &tab_id).await;
     if let Some(wv) = removed {
         wv.close().map_err(|e| format!("close 失败: {e}"))?;
     }
@@ -329,6 +451,17 @@ pub async fn browser_navigate(
 pub struct UrlChangedEvent {
     pub tab_id: String,
     pub url: String,
+}
+
+/// 页面标题变化事件，emit 给前端更新 zustand `tabs[].title`。
+///
+/// 之前 `on_document_title_changed` 只把标题写进 `load_state` 这个内部 watch
+/// channel，**从没送到前端**，于是标签页永远显示原始 URL——又长又占地方，两三个
+/// tab 就把标签栏挤到要横向滚动。
+#[derive(Debug, Clone, Serialize)]
+pub struct TitleChangedEvent {
+    pub tab_id: String,
+    pub title: String,
 }
 
 // =========================================================================
@@ -504,23 +637,42 @@ pub(crate) async fn apply_set_active(
     state: &Arc<BrowserState>,
     tab_id: &str,
 ) -> Result<(), String> {
+    let bounds_ready = state.bounds_applied.lock().await.contains(tab_id);
+
     let shown = {
         let map = state.active.lock().await;
-        if !map.contains_key(tab_id) {
-            None
-        } else {
-            let mut ok = false;
-            for (id, wv) in map.iter() {
-                if id == tab_id {
-                    ok = wv.show().is_ok();
-                } else {
-                    // 其它 tab hide 失败不致命（可能已被关闭），继续处理剩下的
+        match decide_activate(map.contains_key(tab_id), bounds_ready) {
+            ActivateOutcome::Missing => None,
+            // 位置还不知道：其余照常 hide，目标也**保持隐藏**，只记下"它在等"。
+            // 真实 bounds 一到，`browser_set_bounds` 会把它 show 出来。
+            ActivateOutcome::Defer => {
+                for wv in map.values() {
                     let _ = wv.hide();
                 }
+                Some(false)
             }
-            Some(ok)
+            ActivateOutcome::Show => {
+                let mut ok = false;
+                for (id, wv) in map.iter() {
+                    if id == tab_id {
+                        ok = wv.show().is_ok();
+                    } else {
+                        // 其它 tab hide 失败不致命（可能已被关闭），继续处理剩下的
+                        let _ = wv.hide();
+                    }
+                }
+                Some(ok)
+            }
         }
     };
+
+    // Defer：还没 show 成，先登记等待。current_active_id 保持空——它的语义是
+    // "用户此刻真的看得见谁"，没人可见就不该指向任何 tab。
+    if !bounds_ready && shown == Some(false) {
+        *state.pending_show.lock().await = Some(tab_id.to_string());
+        clear_current_active(state).await;
+        return Ok(());
+    }
 
     match shown {
         Some(true) => {
@@ -631,7 +783,42 @@ pub async fn browser_set_bounds(
         .map_err(|e| format!("set_position 失败: {e}"))?;
     wv.set_size(LogicalSize::new(w, h))
         .map_err(|e| format!("set_size 失败: {e}"))?;
+    // 位置已经是真的了 —— 若这个 tab 正等着被 show（创建后 set_active 时还没
+    // bounds 而被推迟），现在兑现。持 active 锁期间只做 show，不再取别的锁。
+    let should_show = wv.clone();
+    drop(map);
+    if note_bounds_applied(state.inner(), &tab_id).await {
+        should_show
+            .show()
+            .map_err(|e| format!("延后的 show 失败: {e}"))?;
+        *state.current_active_id.lock().await = Some(tab_id);
+    }
     Ok(())
+}
+
+/// 设置某个 tab 的页面缩放比例。
+///
+/// 面板 UI 的缩放按钮、以及焦点在面板边框（不在页面内）时的 Cmd+= / Cmd+- 走这里；
+/// 焦点在页面内时由 webview 的原生缩放热键处理，不经过 IPC。
+///
+/// 比例范围由前端约束（走固定档位），这里只挡明显离谱的值，避免把页面缩成不可用。
+#[tauri::command]
+pub async fn browser_set_zoom(
+    state: tauri::State<'_, Arc<BrowserState>>,
+    tab_id: String,
+    factor: f64,
+) -> Result<(), String> {
+    if !(MIN_ZOOM..=MAX_ZOOM).contains(&factor) {
+        return Err(format!(
+            "缩放比例 {factor} 超出允许范围 {MIN_ZOOM}..={MAX_ZOOM}"
+        ));
+    }
+    let map = state.active.lock().await;
+    let wv = map
+        .get(&tab_id)
+        .ok_or_else(|| format!("tab {tab_id} 不存在或已 suspend"))?;
+    wv.set_zoom(factor)
+        .map_err(|e| format!("set_zoom 失败: {e}"))
 }
 
 /// suspend 一个 tab——后端实现等价 [`browser_close_tab`]。
@@ -685,6 +872,9 @@ pub async fn browser_panel_close_all(
     state.load_state.lock().await.clear();
     // v1.3.0 R3b：日志去重表一并清空
     state.last_logged_bounds.lock().await.clear();
+    // 可见性记录一并清空（webview 都没了，"谁有 bounds / 谁在等 show"全部失效）
+    state.bounds_applied.lock().await.clear();
+    *state.pending_show.lock().await = None;
     Ok(())
 }
 
@@ -1645,6 +1835,103 @@ mod tests {
         assert!(
             state.current_active_id.lock().await.is_none(),
             "失败后绝不能残留任何 active id（宁可不知道，也不要指错）"
+        );
+    }
+
+    // === 错位黑块 webview ===
+    //
+    // 根因是"webview 创建时只有占位 bounds，却已经可见"。这里锁住新的硬不变量：
+    // **一个 webview 在拿到真实 bounds 之前，绝不允许被 show。**
+
+    #[test]
+    fn 没拿到真实_bounds_的_tab_只能延后_show_不能立刻露脸() {
+        assert!(matches!(
+            decide_activate(true, false),
+            ActivateOutcome::Defer
+        ));
+    }
+
+    #[test]
+    fn 拿到过真实_bounds_才允许_show() {
+        assert!(matches!(decide_activate(true, true), ActivateOutcome::Show));
+    }
+
+    #[test]
+    fn 后端压根没有这个_tab_仍然是_missing() {
+        // 不能因为新增了 Defer 分支，就把"幽灵 tab_id"也吞成 Defer
+        assert!(matches!(
+            decide_activate(false, false),
+            ActivateOutcome::Missing
+        ));
+        assert!(matches!(
+            decide_activate(false, true),
+            ActivateOutcome::Missing
+        ));
+    }
+
+    #[tokio::test]
+    async fn 真实_bounds_到达时_把等待中的_tab_放行() {
+        let state = Arc::new(BrowserState::default());
+        *state.pending_show.lock().await = Some("browser-a".to_string());
+
+        let 该放行 = note_bounds_applied(&state, "browser-a").await;
+
+        assert!(该放行, "正等着的 tab 拿到 bounds 后必须立刻被 show");
+        assert!(
+            state.bounds_applied.lock().await.contains("browser-a"),
+            "应记下这个 tab 已有真实 bounds"
+        );
+        assert!(
+            state.pending_show.lock().await.is_none(),
+            "放行后不该再残留 pending"
+        );
+    }
+
+    #[tokio::test]
+    async fn 非等待中的_tab_拿到_bounds_不会被顺手_show() {
+        // 后台 tab 的 bounds 上报不该把它抢到前台来
+        let state = Arc::new(BrowserState::default());
+        *state.pending_show.lock().await = Some("browser-a".to_string());
+
+        let 该放行 = note_bounds_applied(&state, "browser-b").await;
+
+        assert!(!该放行, "b 不是等待中的那个，不该被 show");
+        assert_eq!(
+            state.pending_show.lock().await.as_deref(),
+            Some("browser-a"),
+            "a 仍在等待，不能被 b 的上报清掉"
+        );
+    }
+
+    #[tokio::test]
+    async fn 关掉_tab_时清掉它的_bounds_与_pending_记录() {
+        let state = Arc::new(BrowserState::default());
+        state
+            .bounds_applied
+            .lock()
+            .await
+            .insert("browser-a".to_string());
+        *state.pending_show.lock().await = Some("browser-a".to_string());
+
+        forget_tab_visibility(&state, "browser-a").await;
+
+        assert!(state.bounds_applied.lock().await.is_empty());
+        assert!(
+            state.pending_show.lock().await.is_none(),
+            "已关闭的 tab 不能继续挂在 pending 上——否则新 tab 的 bounds 到了也放行不了它"
+        );
+    }
+
+    #[tokio::test]
+    async fn 关掉别的_tab_不影响正在等待的那个() {
+        let state = Arc::new(BrowserState::default());
+        *state.pending_show.lock().await = Some("browser-a".to_string());
+
+        forget_tab_visibility(&state, "browser-b").await;
+
+        assert_eq!(
+            state.pending_show.lock().await.as_deref(),
+            Some("browser-a")
         );
     }
 

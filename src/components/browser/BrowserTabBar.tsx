@@ -36,8 +36,14 @@ export default function BrowserTabBar() {
   const openTab = useBrowserStore((s) => s.openTab);
 
   return (
-    <div className="flex items-center gap-1 overflow-x-auto px-2 pt-1">
-      {tabs.map((tab) => {
+    <div className="flex items-center px-2 pt-1">
+      {/* 标签区单独滚动，并**隐藏滚动条**：macOS 的 overlay 滚动条画在容器内，
+          会直接压住标签文字。用触控板/滚轮照样能横向滚。 */}
+      <div
+        className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        data-testid="browser-tab-strip"
+      >
+        {tabs.map((tab) => {
         const isActive = tab.key === activeKey;
         const StatusIcon = tab.pinned
           ? Pin
@@ -73,7 +79,7 @@ export default function BrowserTabBar() {
               }
             }}
             className={[
-              "group flex max-w-[180px] cursor-pointer items-center gap-1 rounded-t border-b-2 px-2 py-1 text-xs",
+              "group flex min-w-[84px] max-w-[160px] shrink-0 cursor-pointer items-center gap-1 rounded-t border-b-2 px-2 py-1 text-xs",
               isActive
                 ? "border-[var(--c-info)] bg-[var(--c-bg-elev-2)] text-[var(--c-text-base)]"
                 : "border-transparent text-[var(--c-text-muted)] hover:bg-[var(--c-bg-elev-2)] hover:text-[var(--c-text-base)]",
@@ -102,11 +108,13 @@ export default function BrowserTabBar() {
             </button>
           </div>
         );
-      })}
+        })}
+      </div>
+      {/* + 留在滚动容器**外面**：标签多到要滚时，它必须一直够得着 */}
       <button
         type="button"
         onClick={() => void openTab(DEFAULT_NEW_TAB_URL, PLACEHOLDER_BOUNDS)}
-        className="ml-1 flex items-center justify-center rounded p-1 text-[var(--c-success-fg)] hover:bg-[var(--c-bg-elev-2)] hover:text-[var(--c-success)]"
+        className="ml-1 flex shrink-0 items-center justify-center rounded p-1 text-[var(--c-success-fg)] hover:bg-[var(--c-bg-elev-2)] hover:text-[var(--c-success)]"
         aria-label={t("browserTabBar.newTabAria")}
         title={t("browserTabBar.newTabTitle")}
       >

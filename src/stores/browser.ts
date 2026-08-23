@@ -1,10 +1,12 @@
 import { create } from "zustand";
 import { trackEvent } from "../lib/analytics";
+import { DEFAULT_ZOOM, stepZoom } from "../lib/browserZoom";
 import {
   browserClearActive,
   browserCloseTab,
   browserNavigate,
   browserOpenTab,
+  browserSetZoom,
   browserPanelCloseAll,
   browserSetActive,
   browserSetScrollY,
@@ -41,6 +43,11 @@ export interface BrowserTab {
   id: string | null;
   url: string;
   title: string;
+  /** 页面缩放比例（档位见 lib/browserZoom）。
+   *  可选：持久化里的老数据没有这个字段，读的时候一律兜底 DEFAULT_ZOOM。 */
+  zoom?: number;
+  /** 是否以移动版 UA 打开。可选：老的持久化数据没这个字段，缺省当桌面版。 */
+  mobile?: boolean;
   /**
    * - `active`：真在前台跑（后端有 webview）
    * - `suspended`：webview 已 destroy 只剩前端 state
@@ -127,11 +134,37 @@ interface BrowserState {
    * 后 emit，前端按 tab_id 找到 tab 同步更新 url + title。
    */
   applyUrlChanged: (tabId: string, url: string) => void;
+  /** 后端 `browser:title_changed` 回调：把标签文字从 URL 换成真实标题。 */
+  applyTitleChanged: (tabId: string, title: string) => void;
+  /** 调整当前 tab 的页面缩放：+1 放大 / -1 缩小 / "reset" 回 100%。 */
+  adjustZoom: (direction: 1 | -1 | "reset") => Promise<void>;
+  /** 在"移动版 / 桌面版"之间切换当前 tab。UA 只能创建时定，所以会重建 webview
+   *  并重新加载页面（登录态和滚动位置会丢，UI 上要提示）。 */
+  toggleMobile: (bounds: BrowserBounds) => Promise<void>;
 
   // ===== Suspend / Resume =====
 
   /** 主动 suspend 一个 tab：destroy webview，保留 url/title/scrollY/pinned。 */
   suspendTab: (key: string) => Promise<void>;
+  /**
+   * v1.4.0：跨重启恢复浏览器 tab（由 snapshot 喂进来）。
+   *
+   * 恢复成 **suspended** 而不是真去建 webview：启动就给每个 tab 建一个 native
+   * webview 会拖慢冷启动、白占内存，而且用户这次未必会打开浏览器面板。面板真被
+   * 打开时 `restorePanel` 会 resume active 那个，其余按需 resume——跟自动 suspend
+   * 之后的状态完全一样，走的是同一套机器。
+   *
+   * **不动 panelOpen**：上次收着面板的人，不该因为恢复就被弹一个面板出来。
+   */
+  restoreTabs: (
+    tabs: {
+      url: string;
+      title: string;
+      zoom?: number | null;
+      mobile?: boolean;
+    }[],
+    activeIndex: number | null,
+  ) => void;
   /** 主动 resume 一个 suspended tab：重建 webview + 恢复滚动。 */
   resumeTab: (key: string, bounds: BrowserBounds) => Promise<void>;
 
@@ -334,6 +367,33 @@ export const useBrowserStore = create<BrowserState>((set, get) => ({
     }
   },
 
+  restoreTabs: (snapshotTabs, activeIndex) => {
+    if (snapshotTabs.length === 0) return;
+    // 已经有 tab 说明这轮启动已经恢复过（或用户已经开了 tab），不重复灌
+    if (get().tabs.length > 0) return;
+
+    const restored: BrowserTab[] = snapshotTabs.map((t) => ({
+      id: null,
+      url: t.url,
+      title: t.title || t.url,
+      state: "suspended",
+      scrollY: 0,
+      pinned: false,
+      zoom: t.zoom ?? DEFAULT_ZOOM,
+      mobile: t.mobile ?? false,
+      lastActiveAt: Date.now(),
+      key: nextKey(),
+    }));
+
+    // 下标越界或缺省都兜底到第一个：留着 activeKey=null 会让面板打开后没东西可 resume
+    const idx =
+      activeIndex !== null && activeIndex >= 0 && activeIndex < restored.length
+        ? activeIndex
+        : 0;
+
+    set({ tabs: restored, activeKey: restored[idx].key });
+  },
+
   openTab: async (url, bounds) => {
     // 占位 tab：先标 loading 防快速重复点；后端返回后回填 id
     const key = nextKey();
@@ -344,6 +404,7 @@ export const useBrowserStore = create<BrowserState>((set, get) => ({
       state: "loading",
       scrollY: 0,
       pinned: false,
+      zoom: DEFAULT_ZOOM,
       lastActiveAt: Date.now(),
       key,
     };
@@ -354,7 +415,7 @@ export const useBrowserStore = create<BrowserState>((set, get) => ({
     }));
 
     try {
-      const result = await browserOpenTab(url, bounds);
+      const result = await browserOpenTab(url, bounds, false);
       set((s) => ({
         tabs: s.tabs.map((t) =>
           t.key === key ? { ...t, id: result.tab_id, state: "active" } : t,
@@ -488,6 +549,56 @@ export const useBrowserStore = create<BrowserState>((set, get) => ({
     }
   },
 
+  adjustZoom: async (direction) => {
+    const { tabs, activeKey } = get();
+    const tab = tabs.find((t) => t.key === activeKey);
+    if (!tab?.id) return;
+    const next =
+      direction === "reset"
+        ? DEFAULT_ZOOM
+        : stepZoom(tab.zoom ?? DEFAULT_ZOOM, direction);
+    // 先落 store 再发 IPC：IPC 失败也不该让 UI 上的百分比跟页面不一致——
+    // 失败时回滚回原值，宁可什么都没变，也不要显示一个假的比例
+    set((s) => ({
+      tabs: s.tabs.map((t) => (t.key === tab.key ? { ...t, zoom: next } : t)),
+    }));
+    try {
+      await browserSetZoom(tab.id, next);
+    } catch (e) {
+      console.warn("[browser] 设置缩放失败，回滚", e);
+      set((s) => ({
+        tabs: s.tabs.map((t) =>
+          t.key === tab.key ? { ...t, zoom: tab.zoom ?? DEFAULT_ZOOM } : t,
+        ),
+      }));
+    }
+  },
+
+  toggleMobile: async (bounds) => {
+    const { tabs, activeKey } = get();
+    const tab = tabs.find((t) => t.key === activeKey);
+    if (!tab) return;
+    const next = !(tab.mobile ?? false);
+    // 先写标志再走 suspend → resume：resumeTab 会读 tab.mobile 决定用哪个 UA。
+    // 复用这两条已有路径，而不是自己拼一套销毁重建 —— 它们已经处理好了
+    // active 同步、失败回滚、滚动恢复这些边界。
+    set((s) => ({
+      tabs: s.tabs.map((t) => (t.key === tab.key ? { ...t, mobile: next } : t)),
+    }));
+    await get().suspendTab(tab.key);
+    await get().resumeTab(tab.key, bounds);
+  },
+
+  applyTitleChanged: (tabId, title) => {
+    // 按后端 tab_id 找（不是 key）。空标题忽略：宁可继续显示 URL，
+    // 也不要给用户一个没有文字的标签页
+    const trimmed = title.trim();
+    if (!trimmed) return;
+    set((s) => ({
+      tabs: s.tabs.map((t) => (t.id === tabId ? { ...t, title: trimmed } : t)),
+    }));
+  },
+
   applyUrlChanged: (tabId, url) => {
     // v0.5.8：按后端 tab_id（不是 key）找 tab；AI 工具调 wv.navigate 后 emit
     set((s) => ({
@@ -521,7 +632,7 @@ export const useBrowserStore = create<BrowserState>((set, get) => ({
     }));
 
     try {
-      const result = await browserOpenTab(tab.url, bounds);
+      const result = await browserOpenTab(tab.url, bounds, tab.mobile ?? false);
       const newId = result.tab_id;
       set((s) => ({
         tabs: s.tabs.map((t) =>
@@ -538,6 +649,14 @@ export const useBrowserStore = create<BrowserState>((set, get) => ({
       } else {
         await clearBackendActive();
         set({ activeSyncError: `恢复 tab 后无法把 active 同步给后端（${sync}）` });
+      }
+      // 恢复缩放：webview 是**新建的**，缩放比例不会跟着 tab 状态自动回来，
+      // 不重新下发的话用户会发现"收起再展开，页面又变回 100%"
+      const savedZoom = tab.zoom ?? DEFAULT_ZOOM;
+      if (savedZoom !== DEFAULT_ZOOM) {
+        browserSetZoom(newId, savedZoom).catch((e) => {
+          console.warn("[browser] 恢复缩放失败", e);
+        });
       }
       // 恢复滚动：等 webview 加载完成再 eval。500ms 是经验值；
       // 真机上慢页面可能不够，但 T2 阶段保守即可——失败也只是回到顶部。

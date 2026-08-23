@@ -51,7 +51,16 @@ interface TabsState {
    * 仅 in-memory，不持久化（v0.2.0 决议）。
    */
   unreadByTab: Record<TabId, number>;
-  addTab: () => TabId;
+  /**
+   * 新建 terminal tab。
+   *
+   * `init` 让调用方在**创建的同一次 setState 里**就把 title / last_cwd 带上，
+   * 而不是建完再补两刀。跨重启恢复必须走这条路：zustand 走
+   * `useSyncExternalStore`，React 事件之外的更新会同步触发重渲染，
+   * TerminalView 会在第一帧把 `initialCwd` 锁进 ref——晚一步写的 cwd 再也
+   * 追不上，PTY 就起在了默认目录（实测发现）。
+   */
+  addTab: (init?: { title?: string; lastCwd?: string }) => TabId;
   closeTab: (id: TabId) => void;
   setActive: (id: TabId) => void;
   setSessionId: (tabId: TabId, sessionId: string) => void;
@@ -125,7 +134,7 @@ export const useTabsStore = create<TabsState>((set, get) => ({
   unreadByTab: {},
   windowFocused: true,
 
-  addTab: () => {
+  addTab: (init) => {
     const id = nextTabId();
     set((s) => ({
       tabs: [
@@ -135,7 +144,15 @@ export const useTabsStore = create<TabsState>((set, get) => ({
         // 不触发 react 上下文，可以直接调 i18n.t。
         // 首条 OSC 7 cwd 到达后 applyCwdChange 会把 auto_title=true 的 tab
         // 改为 basename(cwd)，所以这个默认 title 通常 < 1s 就被替换。
-        { id, title: i18n.t("tabs.newTab"), sessionId: null, auto_title: true },
+        {
+          id,
+          title: init?.title ?? i18n.t("tabs.newTab"),
+          sessionId: null,
+          // 显式给了 title 就等同于"手动命名"，跟走 setTitle 的老路径语义一致
+          // （auto_title=false，后续 OSC 7 不覆写）。不给才跟随 cwd 自动改名。
+          auto_title: init?.title === undefined,
+          ...(init?.lastCwd ? { last_cwd: init.lastCwd } : {}),
+        },
       ],
       activeId: id,
     }));

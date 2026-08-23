@@ -70,5 +70,14 @@ export default [
     files: ["playwright.config.ts"],
     languageOptions: { globals: { process: "readonly" } },
   },
+  {
+    // scripts/ 下是发版用的一次性 node 脚本（不进包），console / process 合法。
+    // 上面的主 config 只覆盖 **/*.{ts,tsx}，.mjs 落到 eslint 默认配置里没有
+    // 任何 globals，于是 console / process 全被判 no-undef。
+    files: ["scripts/**/*.mjs"],
+    languageOptions: {
+      globals: { console: "readonly", process: "readonly" },
+    },
+  },
   { ignores: ["dist/", "src-tauri/target/", "node_modules/", "playwright-report/"] },
 ];

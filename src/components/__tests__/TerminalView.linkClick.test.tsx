@@ -69,21 +69,32 @@ describe("HR3-4 handleTerminalLinkClick", () => {
     expect(e.preventDefault).toHaveBeenCalledTimes(1);
   });
 
-  it("panelOpen=false 时调 restorePanel + openTab（双调）", () => {
+  it("panelOpen=false 时**只**调 openTab —— 绝不再叠一次 restorePanel", () => {
+    // 回归：旧实现两句都发且都不 await，restorePanel 在无 tab 时会兜底建一个
+    // about:blank。两条链路各建一个 webview 又各自 set_active，谁后到谁赢；
+    // 输的那个停在占位 (0,0,800,600) 且没人纠正 → 屏幕上一块错位黑块。
     panelOpenStub = false;
     const e = makeEvent();
     handleTerminalLinkClick(e, "https://example.com/foo");
 
-    expect(restorePanelMock).toHaveBeenCalledTimes(1);
-    expect(restorePanelMock).toHaveBeenCalledWith(
-      TERMINAL_LINK_FALLBACK_BOUNDS,
-    );
-
+    expect(restorePanelMock).not.toHaveBeenCalled();
     expect(openTabMock).toHaveBeenCalledTimes(1);
     expect(openTabMock).toHaveBeenCalledWith(
       "https://example.com/foo",
       TERMINAL_LINK_FALLBACK_BOUNDS,
     );
+  });
+
+  it("面板开着还是关着，行为完全一致（都只建一个 tab）", () => {
+    panelOpenStub = false;
+    handleTerminalLinkClick(makeEvent(), "https://example.com/a");
+    const 关着时的调用 = openTabMock.mock.calls.length;
+    openTabMock.mockClear();
+
+    panelOpenStub = true;
+    handleTerminalLinkClick(makeEvent(), "https://example.com/a");
+    expect(openTabMock.mock.calls.length).toBe(关着时的调用);
+    expect(restorePanelMock).not.toHaveBeenCalled();
   });
 
   it("panelOpen=true 时只调 openTab，不调 restorePanel", () => {

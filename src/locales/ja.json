@@ -43,7 +43,10 @@
       "newFolder": "新規フォルダ",
       "rename": "名前変更",
       "delete": "削除",
-      "refresh": "更新"
+      "refresh": "更新",
+      "revealMac": "Finder で表示",
+      "revealWindows": "エクスプローラーで表示",
+      "revealGeneric": "ファイルマネージャーで表示"
     }
   },
   "inputDialog": {
@@ -157,6 +160,8 @@
     "confirmQuitLabel": "終了時に確認する",
     "confirmQuitHelp": "アプリを閉じる前に「終了確認」ダイアログを表示します。オフの場合は赤い × ボタン／Cmd+Q で即座に終了します",
     "confirmQuitAria": "終了時に確認する",
+    "restoreSessionLabel": "起動時に前回のセッションを復元",
+    "restoreSessionHelp": "aitm の起動時に前回のタブ・分割レイアウト・ファイルを開き直します。オフにすると毎回空のタブ 1 つで始まります",
     "notifications": "通知",
     "notificationSoundLabel": "システム通知音",
     "notificationSoundHelp": "AI の承認待ち／完了／エラー時にシステム通知を鳴らします。オフにすると通知は無音のままです",
@@ -323,14 +328,6 @@
     "retryLabel": "再試行",
     "retryAria": "再試行"
   },
-  "sessionRestore": {
-    "dialogAria": "前回のセッションを復元",
-    "title": "前回のセッションを復元しますか？",
-    "description": "前回 {{count}} 個のタブが開かれていました。復元しますか？",
-    "restoreBtn": "前回のセッションを復元（{{count}} 個のタブ）",
-    "freshBtn": "新しく開始（スナップショットを消去）",
-    "skipBtn": "一度スキップ（次回また確認）"
-  },
   "closeTabDialog": {
     "dialogAria": "タブを閉じる確認",
     "title": "タブ \"{{title}}\" を閉じますか？",
@@ -467,6 +464,25 @@
     "installNow": "ダウンロードしてインストール",
     "installHint": "インストール後、アプリは自動的に再起動します",
     "downloading": "ダウンロード中…",
-    "downloadingPercent": "ダウンロード中… {{percent}}%"
+    "downloadingPercent": "ダウンロード中… {{percent}}%",
+    "troubleshooting": "トラブルシューティング",
+    "openLogDir": "ログフォルダを開く",
+    "copyDiagnostics": "診断情報をコピー",
+    "reportIssue": "問題を報告",
+    "copied": "クリップボードにコピーしました",
+    "copyFailed": "コピーに失敗しました。下のテキストを手動で選択してください",
+    "openLogDirFailed": "ログフォルダを開けませんでした：{{error}}",
+    "diagnostics": "診断情報",
+    "reportIssueHint": "「問題を報告」は GitHub を開き、バージョン・プラットフォーム・直近 50 行のログを事前入力します。ログにはパスやコマンドが含まれることがあるため、送信前にご確認ください。"
+  },
+  "browserZoom": {
+    "in": "拡大",
+    "out": "縮小",
+    "reset": "100% に戻す"
+  },
+  "browserMobile": {
+    "toMobile": "モバイル版を表示",
+    "toDesktop": "デスクトップ版を表示",
+    "reloadHint": "ページを再読み込みします（ログイン状態が失われる場合があります）"
   }
 }

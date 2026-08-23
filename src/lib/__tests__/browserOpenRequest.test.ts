@@ -68,6 +68,7 @@ describe("handleBrowserOpenRequested（AI 请求打开内嵌浏览器）", () =>
     expect(openTabMock).toHaveBeenCalledWith(
       "https://example.com",
       PLACEHOLDER_BROWSER_BOUNDS,
+      false,
     );
     // 面板打开 + tab 变 active
     expect(useBrowserStore.getState().panelOpen).toBe(true);
@@ -79,6 +80,7 @@ describe("handleBrowserOpenRequested（AI 请求打开内嵌浏览器）", () =>
     expect(openTabMock).toHaveBeenCalledWith(
       "about:blank",
       PLACEHOLDER_BROWSER_BOUNDS,
+      false,
     );
     expect(openResultMock).toHaveBeenCalledWith("open-2", true, "mock-tab-1", null);
   });

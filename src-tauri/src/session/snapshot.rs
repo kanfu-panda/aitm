@@ -6,8 +6,12 @@
 //!
 //! 不持久化的对象（plan §0.2）：
 //! - PTY scrollback（重启 PTY 是新 shell，scrollback 无意义）
-//! - 浏览器 tab（v0.4.x 决议每次启动新 webview）
 //! - 通知历史（推迟到 v0.6.x）
+//!
+//! v1.4.0：浏览器 tab 改为持久化（原 v0.4.x "每次启动新 webview" 的决议作废）。
+//! 启动改成静默恢复之后，"恢复上次会话"却把浏览器整个丢掉，跟用户预期对不上。
+//! 只存 URL / 标题 / 缩放 / 移动版开关这些**声明式**状态，webview 本身照旧
+//! 是新建的——登录态由 WKWebView 自己的 cookie 存储管，不归 snapshot 管。
 //!
 //! 数据结构详见 plan §1.1。
 
@@ -20,7 +24,8 @@ pub const SCHEMA_VERSION: u32 = 1;
 /// snapshot JSON 最大大小（防意外膨胀）。256 KB 可支持 ~5000 tab，远超实用。
 pub const MAX_SNAPSHOT_BYTES: usize = 256 * 1024;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+// 注意：不能 derive Eq —— BrowserTabSnapshot.zoom 是 Option<f64>，浮点没有 Eq。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SessionSnapshot {
     /// schema 版本号，未来字段变化兼容用
     pub schema_version: u32,
@@ -30,6 +35,33 @@ pub struct SessionSnapshot {
     pub tabs: Vec<TabSnapshot>,
     /// 上次 active tab 的 id（恢复后定位）；可空（首次启动 / 无 tab）
     pub active_tab_id: Option<String>,
+    /// v1.4.0：浏览器面板的 tab 列表。
+    ///
+    /// **不bump SCHEMA_VERSION**：这是纯增字段，配 `#[serde(default)]` 后
+    /// 老 snapshot（没这个字段）照样能读出来，只是浏览器列表为空。bump 版本号
+    /// 会让加载端整个丢弃老文件，等于所有人升级后白丢一次会话。
+    #[serde(default)]
+    pub browser_tabs: Vec<BrowserTabSnapshot>,
+    /// 上次 active 的浏览器 tab 在 `browser_tabs` 里的下标；越界 / 缺省时不定位。
+    #[serde(default)]
+    pub active_browser_index: Option<u32>,
+}
+
+/// v1.4.0：单个浏览器 tab 的可恢复状态。
+///
+/// 只存**声明式**状态：恢复时按 URL 新建 webview，登录态 / 滚动位置不在这里
+/// （cookie 归 WKWebView 自己的存储管；滚动位置是 suspend/resume 的运行时概念）。
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct BrowserTabSnapshot {
+    /// 页面地址。空串 / `about:blank` 这类空页在写入端就被过滤掉了。
+    pub url: String,
+    /// 上次拿到的页面标题；恢复后新页面加载完会被 `browser:title_changed` 覆盖。
+    pub title: String,
+    /// 页面缩放比例；`None` 表示没调过，恢复时用默认 100%。
+    pub zoom: Option<f64>,
+    /// 是否以移动版 UA 打开（UA 只能在建 webview 时定，所以必须存）。
+    pub mobile: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -152,7 +184,61 @@ mod tests {
                 },
             ],
             active_tab_id: Some("tab-1".into()),
+            browser_tabs: vec![],
+            active_browser_index: None,
         }
+    }
+
+    // ===== v1.4.0：浏览器 tab 持久化 =====
+
+    #[test]
+    fn 老_snapshot_无_browser_tabs_字段_照常读出来() {
+        // 这条是这次改动的兼容性底线：升级用户磁盘上的 last.json 没有新字段，
+        // 读不出来就等于所有人升级后白丢一次会话。所以只加 serde default，
+        // **不** bump SCHEMA_VERSION。
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("old.json");
+        let old_json = r#"{
+            "schema_version": 1,
+            "saved_at_ms": 1700000000000,
+            "tabs": [{"tab_id":"tab-1","title":"main","cwd":"/proj","unread":0,"group_id":"g-initial"}],
+            "active_tab_id": "tab-1"
+        }"#;
+        std::fs::write(&path, old_json).unwrap();
+
+        let loaded = load_from(&path).unwrap().expect("老 snapshot 应该能读出来");
+        assert_eq!(loaded.tabs.len(), 1, "终端 tab 不该丢");
+        assert!(loaded.browser_tabs.is_empty(), "缺字段应默认空列表");
+        assert!(loaded.active_browser_index.is_none());
+    }
+
+    #[test]
+    fn 浏览器_tab_往返序列化保真() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("snap.json");
+        let mut snap = sample_snapshot();
+        snap.browser_tabs = vec![
+            BrowserTabSnapshot {
+                url: "https://example.com".into(),
+                title: "Example".into(),
+                zoom: Some(1.25),
+                mobile: false,
+            },
+            BrowserTabSnapshot {
+                url: "https://news.163.com".into(),
+                title: "网易".into(),
+                zoom: None,
+                mobile: true,
+            },
+        ];
+        snap.active_browser_index = Some(1);
+
+        save_to(&path, &snap).unwrap();
+        let loaded = load_from(&path).unwrap().unwrap();
+        assert_eq!(loaded, snap);
+        // 移动版开关必须保真：UA 只能在建 webview 时定，丢了就回不去移动版
+        assert!(loaded.browser_tabs[1].mobile);
+        assert_eq!(loaded.browser_tabs[0].zoom, Some(1.25));
     }
 
     #[test]
@@ -243,6 +329,8 @@ mod tests {
             saved_at_ms: 0,
             tabs,
             active_tab_id: None,
+            browser_tabs: vec![],
+            active_browser_index: None,
         };
         let r = save_to(&path, &big);
         assert!(r.is_err());
@@ -334,6 +422,8 @@ mod tests {
                 },
             ],
             active_tab_id: Some("t1".into()),
+            browser_tabs: vec![],
+            active_browser_index: None,
         };
         save_to(&path, &snap).unwrap();
         let loaded = load_from(&path).unwrap().unwrap();
@@ -352,6 +442,8 @@ mod tests {
             saved_at_ms: 0,
             tabs: vec![],
             active_tab_id: None,
+            browser_tabs: vec![],
+            active_browser_index: None,
         };
         save_to(&path, &empty).unwrap();
         let loaded = load_from(&path).unwrap().unwrap();

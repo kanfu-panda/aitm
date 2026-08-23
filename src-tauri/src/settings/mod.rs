@@ -214,6 +214,20 @@ pub struct UiSettings {
     /// 兜底回 true（升级用户默认开启二次确认，避免误关丢工作）。
     #[serde(default = "default_true_confirm_quit")]
     pub confirm_quit: bool,
+    /// 启动时是否自动恢复上次会话的 tab；默认 `true`。
+    ///
+    /// 之前的行为是启动弹 SessionRestoreDialog 让用户三选一（恢复 / 全新 /
+    /// 跳过）。每次开应用都要先答一道题，而 99% 的答案都是"恢复"——弹窗
+    /// 只是把默认选项伪装成了选择。现在默认静默恢复，这个开关是给少数
+    /// 想每次都从空白开始的人留的逃生口。
+    ///
+    /// 关掉后启动只开 1 个空 tab；snapshot 仍然照常写盘，所以随时打开开关
+    /// 就能恢复最近一次的 tab。
+    ///
+    /// 老 toml 缺该字段时走 `default_true_restore_session` 回 true，
+    /// 升级用户保持"tab 会回来"的体验。
+    #[serde(default = "default_true_restore_session")]
+    pub restore_session: bool,
     /// v0.10.0 HR6-3e：分屏 layout tree 跨重启持久化（整棵 LayoutNode 树的
     /// JSON 字符串）。
     ///
@@ -268,6 +282,12 @@ fn default_true_confirm_quit() -> bool {
     true
 }
 
+/// `UiSettings.restore_session` 的字段级 serde default（理由同上：bool 的
+/// `#[serde(default)]` 是 false，表达不了"老 toml 缺字段时回 true"）。
+fn default_true_restore_session() -> bool {
+    true
+}
+
 impl Default for UiSettings {
     fn default() -> Self {
         Self {
@@ -279,6 +299,7 @@ impl Default for UiSettings {
             ai_sidebar_width: 360,
             file_preview_dialog: None,
             confirm_quit: true,
+            restore_session: true,
             pane_layout: None,
             keybindings: HashMap::new(),
             language: default_language(),
@@ -1243,6 +1264,48 @@ font_size = 14
         let back: AppSettings = toml::from_str(&toml_str).unwrap();
         assert_eq!(s, back);
         assert!(back.ui.confirm_quit);
+    }
+
+    // ===== UiSettings.restore_session（静默恢复会话）=====
+
+    #[test]
+    fn ui_settings_默认_restore_session_为_true() {
+        // 静默恢复是新的默认行为：启动直接把上次的 tab 开回来，不再弹窗问。
+        let s = UiSettings::default();
+        assert!(s.restore_session, "默认应静默恢复上次会话");
+    }
+
+    #[test]
+    fn 老_toml_无_restore_session_字段_默认_true_兼容() {
+        // 之前版本的 [ui] 段没有 restore_session；升级用户读老 toml 时
+        // 必须回到 true，否则他们会突然发现 tab 不恢复了。
+        let toml_str = r#"
+[ui]
+activity_bar_position = "right"
+theme_mode = "dark"
+confirm_quit = false
+"#;
+        let s: AppSettings = toml::from_str(toml_str).unwrap();
+        assert!(s.ui.restore_session, "缺 restore_session 字段应默认 true");
+        // 同段其他字段不受影响
+        assert!(!s.ui.confirm_quit);
+    }
+
+    #[test]
+    fn restore_session_关掉后往返序列化保留_false() {
+        // 用户关 toggle → toml 落 restore_session = false，重启后仍是关的。
+        let mut s = AppSettings::default();
+        s.ui.restore_session = false;
+
+        let toml_str = toml::to_string(&s).unwrap();
+        assert!(
+            toml_str.contains("restore_session = false"),
+            "实际 toml:\n{}",
+            toml_str
+        );
+
+        let back: AppSettings = toml::from_str(&toml_str).unwrap();
+        assert!(!back.ui.restore_session);
     }
 
     #[test]
