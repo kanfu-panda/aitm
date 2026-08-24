@@ -1,6 +1,6 @@
 [package]
 name = "aitm"
-version = "1.4.0"
+version = "1.4.1"
 description = "AI Terminal — Rust + Tauri"
 authors = ["kanfu-panda"]
 license = "Apache-2.0"

@@ -70,10 +70,10 @@ describe("KeybindingsSection", () => {
     vi.clearAllMocks();
   });
 
-  it("渲染 11 个 action 行（与 DEFAULT_KEYBINDINGS 数量一致）", () => {
+  it("渲染 12 个 action 行（与 DEFAULT_KEYBINDINGS 数量一致）", () => {
     render(<KeybindingsSection />);
     const expectedCount = Object.keys(DEFAULT_KEYBINDINGS).length;
-    expect(expectedCount).toBe(11);
+    expect(expectedCount).toBe(12);
     for (const action of Object.keys(DEFAULT_KEYBINDINGS)) {
       expect(screen.getByTestId(`keybinding-row-${action}`)).toBeInTheDocument();
     }

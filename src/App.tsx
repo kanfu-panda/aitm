@@ -13,6 +13,7 @@ import { OPEN_ABOUT_EVENT } from "./components/UpdateBadge";
 import FileTree from "./components/FileTree";
 import FilePreviewWorkspace from "./components/FilePreviewWorkspace";
 import QuitConfirmDialog from "./components/QuitConfirmDialog";
+import CommandPalette from "./components/CommandPalette";
 import BrowserPanel from "./components/browser/BrowserPanel";
 import SplitDivider from "./components/SplitDivider";
 import SidebarWrapper from "./components/SidebarWrapper";
@@ -64,10 +65,12 @@ import {
 } from "./lib/browserSuspend";
 import { handleBrowserOpenRequested } from "./lib/browserOpenRequest";
 import { restoreSnapshotTabs } from "./lib/sessionRestore";
+import { digitFromCode, resolveDigitTarget } from "./lib/tabDigitSwitch";
 
 export default function App() {
   const { t } = useTranslation();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
   // 从菜单「关于 aitm」进入时强制切到"关于"页；其他入口不指定（保留上次 tab）
   const [settingsTab, setSettingsTab] = useState<"about" | undefined>(undefined);
   const addTab = useTabsStore((s) => s.addTab);
@@ -166,6 +169,31 @@ export default function App() {
           useSidebarStore.getState().setOpen(true);
         }
         return;
+      }
+      // Cmd+1..9 → 切当前**焦点分屏**内的第 N 个标签（Cmd+9 = 最后一个）。
+      //
+      // 作用域取 focused group 而不是全局标签列表：分屏后每个 group 有自己的标签栏，
+      // 编号只受该 group 自己的增删影响，别的 group 开标签不会让编号整体错位。
+      //
+      // 必须排在下面 Cmd+0 那段**之前**判断吗？不必——digitFromCode 只认 1..9，
+      // Digit0 落不进来，两段不会互相吞键。
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey) {
+        const digit = digitFromCode(e.code);
+        if (digit !== null) {
+          e.preventDefault();
+          e.stopPropagation();
+          const layout = usePaneLayoutStore.getState();
+          const gid = layout.active_group_id;
+          const group = collectAllGroups(layout.root).find((g) => g.id === gid);
+          const target = resolveDigitTarget(group?.tab_ids ?? [], digit);
+          if (group && target) {
+            // 跟点击标签走同一条路径（TerminalPaneGroup.handleTabClick）：
+            // group 内 active + 全局 activeId 都要同步，否则 xterm 那条链路对不上
+            layout.setActiveTabInGroup(group.id, target);
+            useTabsStore.getState().setActive(target);
+          }
+          return;
+        }
       }
       // v0.10.6 T4：Cmd++ / Cmd+- / Cmd+0 字号缩放（按 lastSurface 路由到
       // terminal / editor）。用 e.code 判物理键，对 layout 不敏感：
@@ -381,7 +409,9 @@ export default function App() {
     return () => unlisten?.();
   }, []);
 
-  useShortcuts({
+  // 提成变量而不是内联：命令面板要执行**同一份** handlers，
+  // 否则"面板里点"和"按快捷键"会变成两套逻辑，迟早漂移。
+  const actionHandlers = {
     // v0.10.0 HR7-1：Cmd+T 新 tab 走 pane-layout 路径 —— 新 tab 加进 active
     // group，而不是直接 useTabsStore.addTab()（后者只灌 useTabsStore 不更
     // group.tab_ids，分屏后会导致新 tab 不归属任何 group）。
@@ -461,7 +491,10 @@ export default function App() {
         console.warn("[HR6-3d] 无法关 active group：唯一 group 不可关");
       }
     },
-  });
+  openCommandPalette: () => setPaletteOpen(true),
+  };
+
+  useShortcuts(actionHandlers);
 
   // 启动流程：并行拉 settings + snapshot，再按 ui.restore_session 串行决策。
   //
@@ -1022,6 +1055,11 @@ export default function App() {
       />
       {/* v0.9.0 H5：FilePreviewDialog 不再挂载（被 FilePreviewWorkspace tab 取代）
           组件文件保留待后续清理；移除挂载是为修真机"点文件同时弹旧 dialog + 新 tab"bug */}
+      <CommandPalette
+        open={paletteOpen}
+        onOpenChange={setPaletteOpen}
+        handlers={actionHandlers}
+      />
       {/* v0.9.0 T4：监听后端 app:confirm-quit-requested 事件，弹关闭确认 dialog */}
       <QuitConfirmDialog />
     </div>

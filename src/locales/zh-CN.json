@@ -482,5 +482,23 @@
     "toMobile": "请求移动版站点",
     "toDesktop": "请求桌面版站点",
     "reloadHint": "会重新加载页面（登录状态可能丢失）"
+  },
+  "commandPalette": {
+    "dialogAria": "命令面板",
+    "placeholder": "输入命令…",
+    "empty": "没有匹配的命令"
+  },
+  "commands": {
+    "newTab": "新建标签",
+    "closeTab": "关闭标签",
+    "nextTab": "下一个标签",
+    "prevTab": "上一个标签",
+    "openSettings": "设置",
+    "toggleSidebar": "切换 AI 侧栏",
+    "toggleBrowser": "切换浏览器面板",
+    "toggleFilePreview": "切换文件面板",
+    "splitVertical": "向右分屏",
+    "splitHorizontal": "向下分屏",
+    "closePane": "关闭分屏"
   }
 }

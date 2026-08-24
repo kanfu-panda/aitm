@@ -34,7 +34,8 @@ export type ActionName =
   | "toggleFilePreview"
   | "splitVertical"
   | "splitHorizontal"
-  | "closePane";
+  | "closePane"
+  | "openCommandPalette";
 
 /** v0.10.0 HR7-7：默认快捷键表（cross-platform 描述字符串）。
  *
@@ -57,6 +58,9 @@ export const DEFAULT_KEYBINDINGS: Record<ActionName, string> = {
   splitVertical: "Cmd+\\",
   splitHorizontal: "Cmd+Shift+\\",
   closePane: "Cmd+Shift+W",
+  // 命令面板。终端里 Cmd+K 传统上是"清屏"，但 aitm 目前没有清屏命令，这个键位
+  // 空着；用户若更习惯清屏语义，可在 设置 → 快捷键 里改绑（如 Cmd+Shift+P）。
+  openCommandPalette: "Cmd+K",
 };
 
 /** 解析后的 binding 结构。`key` 已小写化便于 case-insensitive 比对。 */

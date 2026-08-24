@@ -1,7 +1,7 @@
 {
   "name": "aitm",
   "private": true,
-  "version": "1.4.0",
+  "version": "1.4.1",
   "description": "AI Terminal — Tauri 2 + React 19 + Rust 的 AI-native 一站式开发工作平台",
   "author": "kanfu-panda",
   "license": "Apache-2.0",
