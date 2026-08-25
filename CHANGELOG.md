@@ -2,6 +2,14 @@
 
 All notable changes to aitm will be documented in this file. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.3] — 2026-08-25
+
+### Fixed
+
+- **The resource panel in the status bar would not open, and the summary it replaced was less useful than before.** Both were regressions introduced in 1.4.2.
+  - The panel did open, but it was drawn underneath the browser panel's web view: that view sits above the compositing layer, where CSS stacking has no effect. It now steps the web view aside while the panel is open, the same way every dialog in the app already does.
+  - The always-visible summary had been reduced to an unlabelled dot and a number. Memory, CPU and session count are shown in full again, and the summary now doubles as the button that opens the detailed panel — nothing was traded away for it.
+
 ## [1.4.2] — 2026-08-25
 
 ### Fixed
