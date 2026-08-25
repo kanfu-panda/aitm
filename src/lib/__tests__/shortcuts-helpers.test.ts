@@ -17,7 +17,7 @@ import {
  */
 
 describe("DEFAULT_KEYBINDINGS", () => {
-  it("含全部 11 个 action（newTab / closeTab / nextTab / prevTab / openSettings / toggleSidebar / toggleBrowser / toggleFilePreview / splitVertical / splitHorizontal / closePane）", () => {
+  it("含全部 12 个 action（上述 11 个 + openCommandPalette）", () => {
     const expected: ActionName[] = [
       "newTab",
       "closeTab",
@@ -30,6 +30,7 @@ describe("DEFAULT_KEYBINDINGS", () => {
       "splitVertical",
       "splitHorizontal",
       "closePane",
+      "openCommandPalette",
     ];
     for (const action of expected) {
       expect(DEFAULT_KEYBINDINGS[action]).toBeTruthy();

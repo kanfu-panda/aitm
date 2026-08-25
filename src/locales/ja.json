@@ -484,5 +484,23 @@
     "toMobile": "モバイル版を表示",
     "toDesktop": "デスクトップ版を表示",
     "reloadHint": "ページを再読み込みします（ログイン状態が失われる場合があります）"
+  },
+  "commandPalette": {
+    "dialogAria": "コマンドパレット",
+    "placeholder": "コマンドを入力…",
+    "empty": "一致するコマンドがありません"
+  },
+  "commands": {
+    "newTab": "新しいタブ",
+    "closeTab": "タブを閉じる",
+    "nextTab": "次のタブ",
+    "prevTab": "前のタブ",
+    "openSettings": "設定",
+    "toggleSidebar": "AI サイドバーを切り替え",
+    "toggleBrowser": "ブラウザパネルを切り替え",
+    "toggleFilePreview": "ファイルパネルを切り替え",
+    "splitVertical": "右に分割",
+    "splitHorizontal": "下に分割",
+    "closePane": "分割を閉じる"
   }
 }

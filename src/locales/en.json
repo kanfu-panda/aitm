@@ -484,5 +484,23 @@
     "toMobile": "Request mobile site",
     "toDesktop": "Request desktop site",
     "reloadHint": "Reloads the page (you may be signed out)"
+  },
+  "commandPalette": {
+    "dialogAria": "Command palette",
+    "placeholder": "Type a command…",
+    "empty": "No matching command"
+  },
+  "commands": {
+    "newTab": "New tab",
+    "closeTab": "Close tab",
+    "nextTab": "Next tab",
+    "prevTab": "Previous tab",
+    "openSettings": "Settings",
+    "toggleSidebar": "Toggle AI sidebar",
+    "toggleBrowser": "Toggle browser panel",
+    "toggleFilePreview": "Toggle file panel",
+    "splitVertical": "Split right",
+    "splitHorizontal": "Split down",
+    "closePane": "Close pane"
   }
 }

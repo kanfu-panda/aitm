@@ -2,6 +2,15 @@
 
 All notable changes to aitm will be documented in this file. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.1] — 2026-08-25
+
+### Added
+
+- **Command palette (`Cmd K`).** Search and run any keyboard-shortcut action — new tab, split, toggle the AI sidebar or browser panel, open settings — without remembering the key. Each entry shows its current shortcut, including any you have customised, so the palette doubles as a way to learn them.
+  - The list is derived from the shortcut registry rather than kept as a second hand-maintained list, so a new action can never go missing from it, and running a command from the palette goes through exactly the same code path as pressing its shortcut.
+  - Terminals traditionally use `Cmd K` to clear the screen. aitm has no clear command yet, so the key was free; if you would rather keep it for clearing, rebind the palette under Settings → Keyboard shortcuts.
+- **`Cmd 1`–`Cmd 9` switch tabs within the focused split.** Numbering follows the tab strip of the pane you last clicked, so it stays stable no matter what other panes do. `Cmd 9` jumps to the last tab, matching the convention in Chrome, Safari, iTerm2 and Terminal.app. Pressing a number with no tab behind it does nothing rather than jumping somewhere unexpected.
+
 ## [1.4.0] — 2026-08-23
 
 ### Added
