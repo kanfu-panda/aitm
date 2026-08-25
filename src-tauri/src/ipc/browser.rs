@@ -235,7 +235,7 @@ fn make_tab_id() -> String {
 
 /// 拿主 OS Window 用于 add_child 创建 child webview。
 ///
-/// **v0.4.1 真机 smoke #3 修复**：原用 `app.webview_windows()` 拿 WebviewWindow
+/// **v0.4.1 实测 #3 修复**：原用 `app.webview_windows()` 拿 WebviewWindow
 /// 集合在 dev mode 下第一次 `add_child` 后变成空——Tauri 2 unstable
 /// child webview API 把 main window 转为 multi-webview window 后，
 /// `webview_windows()` 只返回 1:1 standalone window 集合（变空），
@@ -256,7 +256,7 @@ fn pick_main_window<R: tauri::Runtime>(
         .ok_or_else(|| "未找到任何 window".to_string())
 }
 
-/// macOS child webview 用的 User-Agent（真机诊断后加，v1.2.0）。
+/// macOS child webview 用的 User-Agent（实测诊断后加，v1.2.0）。
 ///
 /// **为什么必须显式设**：wry 在 macOS 上不设 UA 时，WKWebView 用的是"裸 UA"——
 /// 形如 `Mozilla/5.0 (Macintosh; ...) AppleWebKit/605.1.15 (KHTML, like Gecko)`，
@@ -339,7 +339,7 @@ pub async fn browser_open_tab(
             });
             // 送给主 webview，前端据此把标签页文字从 URL 换成真实标题。
             // 用 emit_to 显式指 "main"：裸 emit 广播到 child webview 时主 webview
-            // 会漏收（实测结论，同 url_changed）。
+            // 会漏收（v0.5.8 实测结论，同 url_changed）。
             let payload = TitleChangedEvent {
                 tab_id: label_for_title.clone(),
                 title,
@@ -831,6 +831,56 @@ pub async fn browser_set_zoom(
         .map_err(|e| format!("set_zoom 失败: {e}"))
 }
 
+/// 浏览器历史导航：后退 / 前进 / 刷新。
+///
+/// **为什么 back/forward 走 eval 而 reload 不用**：Tauri 2.10 的 `Webview` 暴露了
+/// 原生 `reload()`，但没有 `go_back` / `go_forward`——WKWebView 的 `goBack:` 没有
+/// 透到 Tauri 这一层。所以历史导航只能注入 `history.back()` / `history.forward()`，
+/// 刷新则用原生方法（更可靠：不受页面脚本覆盖 `location.reload` 影响）。
+///
+/// 三个按钮从 Phase 4A 起一直是硬编码 disabled 的占位符（当时 Tauri 连 `reload()`
+/// 都还没有），到 1.4.x 仍然点不动——这里补上真实实现。
+#[tauri::command]
+pub async fn browser_go_back(
+    state: tauri::State<'_, Arc<BrowserState>>,
+    tab_id: String,
+) -> Result<(), String> {
+    let map = state.active.lock().await;
+    let wv = map
+        .get(&tab_id)
+        .ok_or_else(|| format!("tab {tab_id} 不存在或已 suspend"))?;
+    wv.eval("history.back()")
+        .map_err(|e| format!("后退失败: {e}"))
+}
+
+/// 前进一步。语义同 [`browser_go_back`]。
+#[tauri::command]
+pub async fn browser_go_forward(
+    state: tauri::State<'_, Arc<BrowserState>>,
+    tab_id: String,
+) -> Result<(), String> {
+    let map = state.active.lock().await;
+    let wv = map
+        .get(&tab_id)
+        .ok_or_else(|| format!("tab {tab_id} 不存在或已 suspend"))?;
+    wv.eval("history.forward()")
+        .map_err(|e| format!("前进失败: {e}"))
+}
+
+/// 重新加载当前页。走 Tauri 原生 `reload()`，不注入 `location.reload()`——
+/// 后者会被页面脚本覆写 `location` 的站点搞坏。
+#[tauri::command]
+pub async fn browser_reload(
+    state: tauri::State<'_, Arc<BrowserState>>,
+    tab_id: String,
+) -> Result<(), String> {
+    let map = state.active.lock().await;
+    let wv = map
+        .get(&tab_id)
+        .ok_or_else(|| format!("tab {tab_id} 不存在或已 suspend"))?;
+    wv.reload().map_err(|e| format!("刷新失败: {e}"))
+}
+
 /// suspend 一个 tab——后端实现等价 [`browser_close_tab`]。
 ///
 /// 设计决策：Tauri 没有"hibernate webview 保 state"原语，suspend 实际上就是
@@ -1273,7 +1323,7 @@ pub async fn browser_open_result(
 mod tests {
     use super::*;
 
-    /// v1.2.0 真机诊断：UA 尾部缺 `Safari/` 标识会被百度等站点判成非标准客户端，
+    /// v1.2.0 实测诊断：UA 尾部缺 `Safari/` 标识会被百度等站点判成非标准客户端，
     /// 返回 https→http 降级脚本 → 被 ATS 拦 → 白屏。这里锁住关键特征防回退。
     #[cfg(target_os = "macos")]
     #[test]
@@ -1873,7 +1923,7 @@ mod tests {
         );
     }
 
-    // === 错位黑块 webview ===
+    // === 2026-08-13 实测发现的 bug：错位黑块 webview ===
     //
     // 根因是"webview 创建时只有占位 bounds，却已经可见"。这里锁住新的硬不变量：
     // **一个 webview 在拿到真实 bounds 之前，绝不允许被 show。**

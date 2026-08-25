@@ -47,7 +47,8 @@
       "revealMac": "在访达中显示",
       "revealWindows": "在资源管理器中显示",
       "revealGeneric": "在文件管理器中显示"
-    }
+    },
+    "dirtyDirAria": "目录内含未提交变更"
   },
   "inputDialog": {
     "newFileTitle": "新建文件",
@@ -500,5 +501,39 @@
     "splitVertical": "向右分屏",
     "splitHorizontal": "向下分屏",
     "closePane": "关闭分屏"
+  },
+  "browserNav": {
+    "back": "后退",
+    "forward": "前进",
+    "reload": "刷新"
+  },
+  "metricsPopover": {
+    "title": "资源占用",
+    "triggerAria": "资源占用",
+    "sessions": "会话数",
+    "cpu": "CPU",
+    "memory": "内存",
+    "rssNote": "内存为 RSS 口径，macOS 上会把共享内存计入，数值偏高。"
+  },
+  "confirmDialog": {
+    "unlockWord": "确认",
+    "destructiveHintPrefix": "此操作不可逆。如需继续，请在下方输入 ",
+    "destructiveHintSuffix": " 二字。",
+    "unlockPlaceholder": "输入 {{word}} 解锁批准",
+    "unlockAria": "危险操作确认输入",
+    "riskReasonAria": "风险评分原因",
+    "reject": "拒绝",
+    "approve": "批准",
+    "alwaysAllow": "本会话都允许",
+    "alwaysAllowTitle": "本会话内自动批准 {{name}}，无需再确认（重启应用即失效）"
+  },
+  "browserPanel": {
+    "collapse": "收起浏览器",
+    "collapseTitle": "收起到侧边栏（释放所有 webview 内存，标签状态保留）",
+    "contentAria": "浏览器内容"
+  },
+  "paneGroup": {
+    "newTab": "新建标签",
+    "newTabTitle": "新建标签 (⌘T)"
   }
 }

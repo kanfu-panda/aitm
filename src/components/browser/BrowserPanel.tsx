@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { AnimatePresence, useReducedMotion } from "framer-motion";
 import { browserSetBounds } from "../../lib/tauri";
 import { createBoundsReporter } from "../../lib/browserBounds";
@@ -39,6 +40,7 @@ const ANIM_EXIT_MS = 0.2;
  * 由 [`BrowserPanel`] 通过 AnimatePresence 控制 mount/unmount。
  */
 function BrowserPanelInner() {
+  const { t } = useTranslation();
   const tabs = useBrowserStore((s) => s.tabs);
   const activeKey = useBrowserStore((s) => s.activeKey);
   const minimizePanel = useBrowserStore((s) => s.minimizePanel);
@@ -181,8 +183,8 @@ function BrowserPanelInner() {
             type="button"
             onClick={() => void minimizePanel()}
             className="rounded p-1 text-[var(--c-text-dim)] hover:bg-[var(--c-bg-elev-2)] hover:text-[var(--c-text-base)]"
-            aria-label="收起浏览器"
-            title="收起到侧边栏（释放所有 webview 内存，标签状态保留）"
+            aria-label={t("browserPanel.collapse")}
+            title={t("browserPanel.collapseTitle")}
           >
             <ChevronDown size={16} aria-hidden />
           </button>
@@ -195,7 +197,7 @@ function BrowserPanelInner() {
         // 引起的 ~22px 白条）；bottom: 0 让 webview 严丝合缝填到 PanelGroup
         // 底部（status bar 是 main 外的兄弟元素 PanelGroup 下方，不会被盖）。
         style={{ top: webviewTop, bottom: 0 }}
-        aria-label="浏览器内容"
+        aria-label={t("browserPanel.contentAria")}
       />
     </div>
   );
@@ -211,7 +213,7 @@ function BrowserPanelInner() {
  * **包含 CSS transform 偏移**——initial 状态 y=+20 时 rect.top 也偏 +20，
  * 上报给 webview 错位；动画结束后 ResizeObserver 不会重触发（容器 size 没变），
  * webview 永远停在 mount 第一帧 transform 后的错位上。真机看到 webview 底部
- * 留空白（v0.4.1 真机 smoke #2）。
+ * 留空白（v0.4.1 实测 #2）。
  *
  * 用纯 opacity 渐变：opacity 不影响 rect，bounds 始终准确；视觉上有 enter/exit
  * 过渡感（slide 退化为 fade，可接受）。同时加 onAnimationComplete 触发

@@ -2,6 +2,20 @@
 
 All notable changes to aitm will be documented in this file. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.2] — 2026-08-25
+
+### Fixed
+
+- **The browser panel's back, forward and reload buttons now work.** They had been disabled placeholders since the panel was first built — reload now uses the web view's native reload, and back/forward step through history. They stay clickable rather than greying out, because the underlying view does not report whether history exists and a guessed disabled state would be wrong as often as it was right.
+- **Destructive actions could not be approved outside the Chinese UI.** Unlocking the Approve button required typing a confirmation word that was hard-coded in Chinese, which a reader of the English or Japanese interface could neither read nor easily type. The word now follows the interface language (`confirm` / `确认` / `確認`) and is matched case-insensitively.
+- **Twelve labels and tooltips were hard-coded in Chinese**, so they stayed Chinese in the English and Japanese interfaces — including several that only screen readers surface.
+
+### Changed
+
+- **The command palette moved to `Cmd Shift P`**, leaving `Cmd K` free for the clear-screen meaning it has in most terminals.
+- **Resource figures in the status bar now live behind a click.** The right-hand side already carried editor, network and disk information; memory, CPU and session count are folded into a small indicator that opens on click. The indicator turns amber above 50% CPU, so a busy machine is still visible without opening it. The panel labels memory as RSS, which overstates usage on macOS.
+- **`perf_assert` now describes what it actually measures.** It was labelled as enforcing the startup and memory targets from the design spec, but it runs in a plain process with no window and no web view: its "cold start" figure timed `aitm --version`, and its memory figure measured the test harness itself. Both checks are renamed accordingly, the memory budget is recalibrated against a measured baseline, and macOS now reads `phys_footprint` instead of RSS.
+
 ## [1.4.1] — 2026-08-25
 
 ### Added

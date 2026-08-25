@@ -98,7 +98,7 @@ pub fn run_gui() {
         // 分级：全局默认 Info（Error/Warn/Info 都留着，不关掉有用的错误日志，
         // release 下同样适用）；已知噪音源（aptabase 心跳、tao/wry 的窗口 /
         // 输入事件）单独降到 Warn；aitm 自己的代码保持 Debug 不降级，方便
-        // 真机诊断。crate 名用 `aitm_lib`（`[lib] name`）——本 crate 内的
+        // 实测诊断。crate 名用 `aitm_lib`（`[lib] name`）——本 crate 内的
         // `log`/`tracing::debug!` 等宏 target 前缀就是这个，不是包名 `aitm`。
         .plugin(
             tauri_plugin_log::Builder::new()
@@ -283,6 +283,9 @@ pub fn run_gui() {
             ipc::browser::browser_clear_active,
             ipc::browser::browser_set_bounds,
             ipc::browser::browser_set_zoom,
+            ipc::browser::browser_go_back,
+            ipc::browser::browser_go_forward,
+            ipc::browser::browser_reload,
             ipc::browser::browser_suspend_tab,
             ipc::browser::browser_set_scroll_y,
             ipc::browser::browser_panel_close_all,

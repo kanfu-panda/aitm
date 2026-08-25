@@ -284,8 +284,8 @@ export function TerminalPaneGroup({ group }: Props) {
         <button
           onClick={handleAddTab}
           className="ml-1 flex h-6 w-6 items-center justify-center rounded text-base text-[var(--c-text-muted)] hover:bg-[var(--c-bg-elev-2)] hover:text-[var(--c-text-base)]"
-          aria-label="新建标签"
-          title="新建标签 (⌘T)"
+          aria-label={t("paneGroup.newTab")}
+          title={t("paneGroup.newTabTitle")}
         >
           +
         </button>
@@ -319,7 +319,7 @@ export function TerminalPaneGroup({ group }: Props) {
           <button
             onClick={handleAddTab}
             className="flex h-full w-full flex-col items-center justify-center gap-3 text-[var(--c-text-dim)] hover:text-[var(--c-text-muted)] transition-colors"
-            aria-label="新建标签"
+            aria-label={t("paneGroup.newTab")}
           >
             <span className="text-5xl font-thin">+</span>
             <span className="text-sm">
