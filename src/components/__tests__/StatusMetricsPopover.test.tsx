@@ -6,9 +6,14 @@ import StatusMetricsPopover from "../StatusMetricsPopover";
 const M = { rss_mb: 84, cpu_pct: 12.4, active_sessions: 3 };
 
 describe("状态栏资源弹窗", () => {
-  it("平时折叠：只显示会话数，不摊开三段数据占满状态栏", () => {
+  it("摘要常驻显示 RSS / CPU / sessions —— 不把已有信息藏进弹窗", () => {
+    // 第一版折叠成一个光秃秃的「● 3」，谁也看不懂，比改版前差。
     render(<StatusMetricsPopover metrics={M} />);
-    expect(screen.getByTestId("status-metrics-trigger").textContent).toContain("3");
+    const trigger = screen.getByTestId("status-metrics-trigger");
+    expect(trigger.textContent).toContain("RSS");
+    expect(trigger.textContent).toContain("84");
+    expect(trigger.textContent).toContain("CPU");
+    expect(trigger.textContent).toContain("sessions");
     expect(screen.queryByTestId("status-metrics-panel")).toBeNull();
   });
 
@@ -49,10 +54,13 @@ describe("状态栏资源弹窗", () => {
     expect(screen.queryByTestId("status-metrics-panel")).toBeNull();
   });
 
-  it("CPU 高于 50% 时触发器变警告色", () => {
+  it("CPU 高于 50% 时摘要里的数字变警告色", () => {
     render(<StatusMetricsPopover metrics={{ ...M, cpu_pct: 80 }} />);
-    const dot = screen.getByTestId("status-metrics-trigger").querySelector("span");
-    expect(dot?.className).toContain("warn");
+    const spans = Array.from(
+      screen.getByTestId("status-metrics-trigger").querySelectorAll("span"),
+    );
+    const cpu = spans.find((s) => s.textContent === "80");
+    expect(cpu?.className).toContain("--c-warn");
   });
 
   it("指标还没到达时显示占位，不渲染空面板", () => {

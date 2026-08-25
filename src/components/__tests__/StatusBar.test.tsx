@@ -65,9 +65,8 @@ describe("StatusBar", () => {
     expect(bar).toHaveTextContent("—");
   });
 
-  it("收到 metrics 事件后，资源指示器折叠显示会话数（明细在弹窗里）", async () => {
-    // v1.4.x：原来常驻的 RSS / CPU / sessions 三段文字收进了点击弹窗——
-    // 状态栏右侧已经挤了编辑器信息、网络、磁盘，再摊开三段会变成噪音带。
+  it("收到 metrics 事件后，摘要仍常驻显示 RSS / CPU / sessions", async () => {
+    // 明细弹窗是**加**在摘要之上的，不是取代它。
     render(<StatusBar />);
     await vi.waitFor(() => {
       expect(emitFns.length).toBe(1);
@@ -75,10 +74,11 @@ describe("StatusBar", () => {
     act(() => {
       emitFns[0]({ rss_mb: 27, cpu_pct: 1.5, active_sessions: 5 });
     });
-    const trigger = screen.getByTestId("status-metrics-trigger");
-    expect(trigger.textContent).toContain("5");
-    // 折叠态不该把明细摊在状态栏上
-    expect(screen.getByTestId("status-bar")).not.toHaveTextContent("RSS");
+    const bar = screen.getByTestId("status-bar");
+    expect(bar).toHaveTextContent("RSS");
+    expect(bar).toHaveTextContent("27");
+    expect(bar).toHaveTextContent("CPU");
+    expect(bar).toHaveTextContent("sessions");
   });
 
   it("statusBarEnabled = false 时不渲染", () => {
@@ -87,16 +87,17 @@ describe("StatusBar", () => {
     expect(container.firstChild).toBeNull();
   });
 
-  it("CPU > 50% 时折叠态的指示点也变 warn —— 不展开也能看出机器在忙", async () => {
+  it("CPU > 50% 时摘要里的数字变 warn", async () => {
     render(<StatusBar />);
     await vi.waitFor(() => expect(emitFns.length).toBe(1));
     act(() => {
       emitFns[0]({ rss_mb: 30, cpu_pct: 75, active_sessions: 1 });
     });
-    const dot = screen
-      .getByTestId("status-metrics-trigger")
-      .querySelector("span");
-    expect(dot?.className).toContain("text-[var(--c-warn)]");
+    const spans = Array.from(
+      screen.getByTestId("status-metrics-trigger").querySelectorAll("span"),
+    );
+    const cpu = spans.find((s) => s.textContent === "75");
+    expect(cpu?.className).toContain("text-[var(--c-warn)]");
   });
 
   // ====== T5d：编辑器行列号 / 语言段 ======
