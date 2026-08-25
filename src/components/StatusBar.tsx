@@ -13,6 +13,7 @@ import { useTabsStore } from "../stores/tabs";
 import { useActiveSurface } from "../lib/useActiveSurface";
 import { languageLabel } from "../lib/cm-lang";
 import UpdateBadge from "./UpdateBadge";
+import StatusMetricsPopover from "./StatusMetricsPopover";
 import {
   Copy,
   GitBranch,
@@ -168,29 +169,7 @@ export default function StatusBar() {
         )}
         <NetworkStatus />
         {activeCwd && <DiskUsageDisplay cwd={activeCwd} />}
-        {m === null ? (
-          <span aria-label={t("statusBar.loadingPlaceholderAria")}>—</span>
-        ) : (
-          <>
-            <span title={t("statusBar.rssTitle")}>
-              RSS <span className="text-[var(--c-text-base)]">{m.rss_mb}</span> MB
-            </span>
-            <span title={t("statusBar.cpuTitle")}>
-              CPU{" "}
-              <span
-                className={
-                  m.cpu_pct > 50 ? "text-[var(--c-warn)]" : "text-[var(--c-text-base)]"
-                }
-              >
-                {m.cpu_pct.toFixed(0)}
-              </span>
-              %
-            </span>
-            <span title={t("statusBar.sessionsTitle")}>
-              <span className="text-[var(--c-text-base)]">{m.active_sessions}</span> sessions
-            </span>
-          </>
-        )}
+        <StatusMetricsPopover metrics={m} />
       </div>
     </footer>
   );

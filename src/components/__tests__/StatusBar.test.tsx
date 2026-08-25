@@ -65,24 +65,20 @@ describe("StatusBar", () => {
     expect(bar).toHaveTextContent("—");
   });
 
-  it("收到 metrics 事件后渲染 RSS / CPU / sessions", async () => {
+  it("收到 metrics 事件后，资源指示器折叠显示会话数（明细在弹窗里）", async () => {
+    // v1.4.x：原来常驻的 RSS / CPU / sessions 三段文字收进了点击弹窗——
+    // 状态栏右侧已经挤了编辑器信息、网络、磁盘，再摊开三段会变成噪音带。
     render(<StatusBar />);
-    // 等 useEffect + then 把 cb 推进 emitFns
     await vi.waitFor(() => {
       expect(emitFns.length).toBe(1);
     });
     act(() => {
       emitFns[0]({ rss_mb: 27, cpu_pct: 1.5, active_sessions: 5 });
     });
-    const bar = screen.getByTestId("status-bar");
-    expect(bar).toHaveTextContent("RSS");
-    expect(bar).toHaveTextContent("27");
-    expect(bar).toHaveTextContent("MB");
-    expect(bar).toHaveTextContent("CPU");
-    expect(bar).toHaveTextContent("2"); // toFixed(0) of 1.5 → "2"
-    expect(bar).toHaveTextContent("%");
-    expect(bar).toHaveTextContent("5");
-    expect(bar).toHaveTextContent("sessions");
+    const trigger = screen.getByTestId("status-metrics-trigger");
+    expect(trigger.textContent).toContain("5");
+    // 折叠态不该把明细摊在状态栏上
+    expect(screen.getByTestId("status-bar")).not.toHaveTextContent("RSS");
   });
 
   it("statusBarEnabled = false 时不渲染", () => {
@@ -91,18 +87,16 @@ describe("StatusBar", () => {
     expect(container.firstChild).toBeNull();
   });
 
-  it("CPU > 50% 高亮 warn token", async () => {
+  it("CPU > 50% 时折叠态的指示点也变 warn —— 不展开也能看出机器在忙", async () => {
     render(<StatusBar />);
     await vi.waitFor(() => expect(emitFns.length).toBe(1));
     act(() => {
       emitFns[0]({ rss_mb: 30, cpu_pct: 75, active_sessions: 1 });
     });
-    const bar = screen.getByTestId("status-bar");
-    // 找出文本为 75 的 span，应带 --c-warn token class
-    const allSpans = Array.from(bar.querySelectorAll("span"));
-    const cpuSpan = allSpans.find((s) => s.textContent === "75");
-    expect(cpuSpan).not.toBeUndefined();
-    expect(cpuSpan?.className).toContain("text-[var(--c-warn)]");
+    const dot = screen
+      .getByTestId("status-metrics-trigger")
+      .querySelector("span");
+    expect(dot?.className).toContain("text-[var(--c-warn)]");
   });
 
   // ====== T5d：编辑器行列号 / 语言段 ======

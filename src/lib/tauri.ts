@@ -849,6 +849,21 @@ export async function appVersion(): Promise<string> {
   return await invoke<string>("app_version");
 }
 
+/** 浏览器后退一步（注入 `history.back()`——Tauri 未暴露原生 goBack）。 */
+export async function browserGoBack(tabId: string): Promise<void> {
+  await invoke("browser_go_back", { tabId });
+}
+
+/** 浏览器前进一步。 */
+export async function browserGoForward(tabId: string): Promise<void> {
+  await invoke("browser_go_forward", { tabId });
+}
+
+/** 重新加载当前页（走 Tauri 原生 reload，不注入 location.reload）。 */
+export async function browserReload(tabId: string): Promise<void> {
+  await invoke("browser_reload", { tabId });
+}
+
 /** 「关于」页自助诊断用的环境信息（后端 `ipc::app::DiagnosticsInfo`）。 */
 export interface DiagnosticsInfo {
   /** 应用版本 */

@@ -1,5 +1,6 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   aiToolApprove,
   aiToolReject,
@@ -23,6 +24,7 @@ interface Props {
  * - low：不会触发本对话框（后端已自动批准）
  */
 export default function ConfirmDialog({ conversationId }: Props) {
+  const { t } = useTranslation();
   const [pending, setPending] = useState<AiToolRequestEvent | null>(null);
   const [confirmInput, setConfirmInput] = useState("");
   const rejectBtnRef = useRef<HTMLButtonElement>(null);
@@ -53,13 +55,19 @@ export default function ConfirmDialog({ conversationId }: Props) {
     }
   }, [pending]);
 
-  // 让浏览器 webview 在 modal 弹起时让位（v0.4.1 真机 smoke：WKWebView native overlay 盖住 React DOM）
+  // 让浏览器 webview 在 modal 弹起时让位（v0.4.1 实测：WKWebView native overlay 盖住 React DOM）
   useBrowserModalGuard(!!pending);
 
   if (!pending) return null;
 
   const isDestructive = pending.risk === "destructive";
-  const approveLocked = isDestructive && confirmInput !== "确认";
+  // 解锁词必须**跟界面语言走**。以前硬编码成中文"确认"，英文 / 日文界面下用户被要求
+  // 输入两个读不懂、多半也打不出来的汉字——等于非中文界面根本批不了破坏性操作。
+  // 比较前 trim + 忽略大小写：英文 "Confirm" / "confirm" 都该放行。
+  const unlockWord = t("confirmDialog.unlockWord");
+  const approveLocked =
+    isDestructive &&
+    confirmInput.trim().toLowerCase() !== unlockWord.toLowerCase();
 
   // v1.3.0 A1：仅 HIGH 提供「本会话都允许」——DESTRUCTIVE 红线不退，每次都要确认。
   // run_command 也排除（维护者 2026-07-27 拍板）：工具级授权对它太粗，一个工具名
@@ -122,7 +130,7 @@ export default function ConfirmDialog({ conversationId }: Props) {
           {pending.risk_reason && (
             <div
               className="mb-3 rounded border border-[var(--c-border)] bg-[var(--c-bg-base)] px-2 py-1 text-[11px] text-[var(--c-text-muted)]"
-              aria-label="风险评分原因"
+              aria-label={t("confirmDialog.riskReasonAria")}
             >
               <span className="text-[var(--c-text-dim)]">评分原因：</span>
               <span className="text-[var(--c-text-muted)]">{pending.risk_reason}</span>
@@ -146,14 +154,16 @@ export default function ConfirmDialog({ conversationId }: Props) {
           {isDestructive && (
             <div className="mb-3">
               <p className="mb-2 text-xs text-[var(--c-error)]">
-                此操作不可逆。如需继续，请在下方输入 <strong>确认</strong> 二字。
+                {t("confirmDialog.destructiveHintPrefix")}
+                <strong>{unlockWord}</strong>
+                {t("confirmDialog.destructiveHintSuffix")}
               </p>
               <input
                 type="text"
                 value={confirmInput}
                 onChange={(e) => setConfirmInput(e.target.value)}
-                placeholder="输入 确认 解锁批准"
-                aria-label="危险操作确认输入"
+                placeholder={t("confirmDialog.unlockPlaceholder", { word: unlockWord })}
+                aria-label={t("confirmDialog.unlockAria")}
                 className="w-full rounded border border-[var(--c-error)] bg-[var(--c-bg-elev-1)] px-2 py-1 text-sm text-[var(--c-text-base)] focus:border-[var(--c-error)] focus:outline-none"
               />
             </div>
@@ -164,18 +174,18 @@ export default function ConfirmDialog({ conversationId }: Props) {
               ref={rejectBtnRef}
               onClick={reject}
               className="rounded border border-[var(--c-border-strong)] px-3 py-1 text-sm text-[var(--c-text-base)] hover:bg-[var(--c-bg-elev-2)]"
-              aria-label="拒绝"
+              aria-label={t("confirmDialog.reject")}
             >
-              拒绝
+              {t("confirmDialog.reject")}
             </button>
             {canRememberAlways && (
               <button
                 onClick={() => approve(true)}
-                title={`本会话内自动批准 ${pending.name}，无需再确认（重启应用即失效）`}
+                title={t("confirmDialog.alwaysAllowTitle", { name: pending.name })}
                 className="rounded border border-[var(--c-border-strong)] px-3 py-1 text-sm text-[var(--c-text-muted)] hover:bg-[var(--c-bg-elev-2)] hover:text-[var(--c-text-base)]"
-                aria-label="本会话都允许"
+                aria-label={t("confirmDialog.alwaysAllow")}
               >
-                本会话都允许
+                {t("confirmDialog.alwaysAllow")}
               </button>
             )}
             <button
@@ -187,9 +197,9 @@ export default function ConfirmDialog({ conversationId }: Props) {
                   ? "bg-[var(--c-error)] text-white hover:opacity-90 disabled:cursor-not-allowed disabled:bg-[var(--c-bg-elev-3)] disabled:text-[var(--c-text-dim)]"
                   : "bg-[var(--c-success)] text-white hover:opacity-90")
               }
-              aria-label="批准"
+              aria-label={t("confirmDialog.approve")}
             >
-              批准
+              {t("confirmDialog.approve")}
             </button>
           </div>
         </Dialog.Content>

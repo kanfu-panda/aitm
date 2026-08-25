@@ -361,7 +361,7 @@ export default function FileTree() {
   // FilePreviewWorkspace 自动在终端下方上下 split 出现。
   // HR7-4 的"分屏体系下点文件 auto-create editor group + addTabToGroup"
   // 已撤销：editor 不再是 layout tree 的一个 group，而是 App.tsx 直接渲染
-  // 的全局单例。这样避免点几次就累积多个空 editor pane 把布局搞乱（真机 bug）。
+  // 的全局单例。这样避免点几次就累积多个空 editor pane 把布局搞乱（实测发现的 bug）。
   //
   // 文件夹仍由 row 展开逻辑处理，不调到这里。
   // 失败：openFile IPC 抛出时 fail-soft —— 控制台 warn 不打断用户。
@@ -820,6 +820,7 @@ function FileTreeRow({
   depth: number;
   ctx: TreeViewCtx;
 }) {
+  const { t } = useTranslation();
   const { expandedPaths, childrenByPath, loadErrorByPath } = ctx;
   const expanded = node.kind === "dir" && expandedPaths.has(node.path);
   /** 实际渲染用的 children：优先顶层缓存，回退 node 自带（后端一次给多层时） */
@@ -919,7 +920,7 @@ function FileTreeRow({
         {dirDirty && !fileBadge && (
           <span
             className="ml-auto inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400"
-            aria-label="目录内含未提交变更"
+            aria-label={t("fileTree.dirtyDirAria")}
             data-testid="git-dir-dirty-dot"
           />
         )}

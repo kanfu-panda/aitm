@@ -47,7 +47,8 @@
       "revealMac": "Finder で表示",
       "revealWindows": "エクスプローラーで表示",
       "revealGeneric": "ファイルマネージャーで表示"
-    }
+    },
+    "dirtyDirAria": "未コミットの変更を含むフォルダ"
   },
   "inputDialog": {
     "newFileTitle": "新規ファイル",
@@ -502,5 +503,39 @@
     "splitVertical": "右に分割",
     "splitHorizontal": "下に分割",
     "closePane": "分割を閉じる"
+  },
+  "browserNav": {
+    "back": "戻る",
+    "forward": "進む",
+    "reload": "再読み込み"
+  },
+  "metricsPopover": {
+    "title": "リソース",
+    "triggerAria": "リソース使用状況",
+    "sessions": "セッション数",
+    "cpu": "CPU",
+    "memory": "メモリ",
+    "rssNote": "メモリは RSS 値です。macOS では共有メモリを含むため高めに出ます。"
+  },
+  "confirmDialog": {
+    "unlockWord": "確認",
+    "destructiveHintPrefix": "この操作は取り消せません。続けるには下に ",
+    "destructiveHintSuffix": " と入力してください。",
+    "unlockPlaceholder": "{{word}} と入力して承認を解除",
+    "unlockAria": "破壊的操作の確認入力",
+    "riskReasonAria": "リスクスコアの理由",
+    "reject": "拒否",
+    "approve": "承認",
+    "alwaysAllow": "このセッションでは常に許可",
+    "alwaysAllowTitle": "このセッション中は {{name}} を自動承認（再起動で解除）"
+  },
+  "browserPanel": {
+    "collapse": "ブラウザを折りたたむ",
+    "collapseTitle": "サイドバーに折りたたむ（WebView のメモリを解放、タブは保持）",
+    "contentAria": "ブラウザの内容"
+  },
+  "paneGroup": {
+    "newTab": "新しいタブ",
+    "newTabTitle": "新しいタブ (⌘T)"
   }
 }

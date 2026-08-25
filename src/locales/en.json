@@ -47,7 +47,8 @@
       "revealMac": "Reveal in Finder",
       "revealWindows": "Show in File Explorer",
       "revealGeneric": "Show in file manager"
-    }
+    },
+    "dirtyDirAria": "Folder contains uncommitted changes"
   },
   "inputDialog": {
     "newFileTitle": "New File",
@@ -502,5 +503,39 @@
     "splitVertical": "Split right",
     "splitHorizontal": "Split down",
     "closePane": "Close pane"
+  },
+  "browserNav": {
+    "back": "Back",
+    "forward": "Forward",
+    "reload": "Reload"
+  },
+  "metricsPopover": {
+    "title": "Resources",
+    "triggerAria": "Resource usage",
+    "sessions": "Sessions",
+    "cpu": "CPU",
+    "memory": "Memory",
+    "rssNote": "Memory is RSS, which overstates usage on macOS by counting shared memory."
+  },
+  "confirmDialog": {
+    "unlockWord": "confirm",
+    "destructiveHintPrefix": "This cannot be undone. To continue, type ",
+    "destructiveHintSuffix": " below.",
+    "unlockPlaceholder": "Type {{word}} to unlock Approve",
+    "unlockAria": "Destructive action confirmation",
+    "riskReasonAria": "Risk score reason",
+    "reject": "Reject",
+    "approve": "Approve",
+    "alwaysAllow": "Allow for this session",
+    "alwaysAllowTitle": "Auto-approve {{name}} for this session (resets on restart)"
+  },
+  "browserPanel": {
+    "collapse": "Collapse browser",
+    "collapseTitle": "Collapse to the sidebar (frees all web view memory; tabs are kept)",
+    "contentAria": "Browser content"
+  },
+  "paneGroup": {
+    "newTab": "New tab",
+    "newTabTitle": "New tab (⌘T)"
   }
 }

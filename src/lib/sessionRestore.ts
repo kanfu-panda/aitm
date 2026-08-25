@@ -20,7 +20,7 @@ import { useBrowserStore } from "../stores/browser";
  * 重新加载）时不会把 tab 翻倍。
  */
 export function restoreSnapshotTabs(snapshot: SessionSnapshot): void {
-  // v1.3.2：浏览器 tab 独立恢复——终端没有 tab 不代表浏览器也没有，两者
+  // v1.4.0：浏览器 tab 独立恢复——终端没有 tab 不代表浏览器也没有，两者
   // 谁空谁不恢复，不能互相拖累（老 snapshot 没这个字段时是空数组，no-op）。
   useBrowserStore
     .getState()
@@ -39,7 +39,7 @@ export function restoreSnapshotTabs(snapshot: SessionSnapshot): void {
     // title 和 last_cwd 必须在**建 tab 的同一次 setState** 里带上，不能建完再补：
     // zustand 走 useSyncExternalStore，React 事件之外的更新会同步触发重渲染，
     // TerminalView 会在第一帧把 initialCwd 锁进 ref。晚一步写的 cwd 追不上，
-    // PTY 就起在家目录而不是上次的目录（v1.3.2 真机 smoke 抓到的回归）。
+    // PTY 就起在家目录而不是上次的目录（实测抓到的回归）。
     newIds.push(addTab({ title: t.title, lastCwd: t.cwd ?? undefined }));
   });
 
