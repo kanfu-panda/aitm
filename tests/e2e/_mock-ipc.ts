@@ -463,6 +463,45 @@ export async function installTauriMock(
         }
         if (cmd === "settings_reset") return null;
 
+        // === tmux 会话管理器 ===
+        if (cmd === "tmux_available") return true;
+        if (cmd === "tmux_list_sessions") {
+          return [
+            {
+              name: "build-farm",
+              windows: 3,
+              attached: 1,
+              created: 1700000000,
+              current_path: "/home/dev/project",
+              current_command: "cargo",
+              title: "nightly build",
+            },
+            {
+              name: "scratch",
+              windows: 1,
+              attached: 0,
+              created: 1700000100,
+              current_path: "/tmp",
+              current_command: "zsh",
+              title: null,
+            },
+          ];
+        }
+        if (cmd === "tmux_attach_command") {
+          const name = args.name as string;
+          const takeover = args.takeover as boolean;
+          return `tmux attach-session${takeover ? " -d" : ""} -t '${name}'`;
+        }
+        if (cmd === "tmux_interrupt_session" || cmd === "tmux_kill_session") {
+          // 暴露给 spec 断言：最近一次 tmux 干预动作
+          (
+            window as unknown as {
+              __lastTmuxAction: { cmd: string; name: string };
+            }
+          ).__lastTmuxAction = { cmd, name: args.name as string };
+          return null;
+        }
+
         // === Safety 白名单 ===
         if (cmd === "safety_validate_pattern") {
           const pattern = (args.pattern ?? "") as string;

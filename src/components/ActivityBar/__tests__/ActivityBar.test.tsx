@@ -26,6 +26,7 @@ function resetStores() {
   useSidebarStore.setState({
     open: false,
     fileTreeOpen: false,
+    tmuxOpen: false,
   });
   useBrowserStore.setState({
     panelOpen: false,
@@ -71,26 +72,41 @@ describe("ActivityBar", () => {
   // 2. 项目顺序（AI → Browser → spacer → Settings）
   // ============================================================
 
-  it("项目顺序：Sparkles → Globe → Folder → FilePreview → spacer → Settings", () => {
+  it("项目顺序：Sparkles → Globe → Folder → FilePreview → Tmux → spacer → Settings", () => {
     render(<ActivityBar position="right" onSettingsOpen={() => {}} />);
     const ai = screen.getByTestId("activity-bar-item-ai");
     const browser = screen.getByTestId("activity-bar-item-browser");
     const fileTree = screen.getByTestId("activity-bar-item-file-tree");
     const filePreview = screen.getByTestId("activity-bar-item-file-preview");
+    const tmux = screen.getByTestId("activity-bar-item-tmux");
     const spacer = screen.getByTestId("activity-bar-spacer");
     const settings = screen.getByTestId("activity-bar-item-settings");
 
     // 同一父容器（nav）下的 DOM 顺序
     // v0.10.0 HR9-6：文件预览按钮常驻（之前条件渲染——只有 openFiles>0 才显示），
     //   跟浏览器按钮一致；没文件时 disabled 灰显但仍占位。
+    // tmux 会话管理器排在文件预览之后、spacer 之前。
     const nav = screen.getByTestId("activity-bar");
     const items = Array.from(nav.children) as HTMLElement[];
     expect(items[0].contains(ai)).toBe(true);
     expect(items[1].contains(browser)).toBe(true);
     expect(items[2].contains(fileTree)).toBe(true);
     expect(items[3].contains(filePreview)).toBe(true);
-    expect(items[4]).toBe(spacer);
-    expect(items[5].contains(settings)).toBe(true);
+    expect(items[4].contains(tmux)).toBe(true);
+    expect(items[5]).toBe(spacer);
+    expect(items[6].contains(settings)).toBe(true);
+  });
+
+  // tmux 面板开关
+  it("点 tmux 按钮切换 sidebar store 的 tmuxOpen", () => {
+    render(<ActivityBar position="right" onSettingsOpen={() => {}} />);
+    expect(useSidebarStore.getState().tmuxOpen).toBe(false);
+
+    fireEvent.click(screen.getByTestId("activity-bar-item-tmux"));
+    expect(useSidebarStore.getState().tmuxOpen).toBe(true);
+
+    fireEvent.click(screen.getByTestId("activity-bar-item-tmux"));
+    expect(useSidebarStore.getState().tmuxOpen).toBe(false);
   });
 
   // ============================================================

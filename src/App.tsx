@@ -11,6 +11,7 @@ import AiSidebar from "./components/AiSidebar";
 import StatusBar from "./components/StatusBar";
 import { OPEN_ABOUT_EVENT } from "./components/UpdateBadge";
 import FileTree from "./components/FileTree";
+import TmuxPanel, { TMUX_PANEL_WIDTH } from "./components/tmux/TmuxPanel";
 import FilePreviewWorkspace from "./components/FilePreviewWorkspace";
 import QuitConfirmDialog from "./components/QuitConfirmDialog";
 import CommandPalette from "./components/CommandPalette";
@@ -75,6 +76,8 @@ export default function App() {
   const [settingsTab, setSettingsTab] = useState<"about" | undefined>(undefined);
   const addTab = useTabsStore((s) => s.addTab);
   const fileTreeOpen = useSidebarStore((s) => s.fileTreeOpen);
+  // tmux 会话管理器面板，跟 FileTree 同侧、定宽，不加分割条。
+  const tmuxOpen = useSidebarStore((s) => s.tmuxOpen);
   const browserPanelOpen = useBrowserStore((s) => s.panelOpen);
   // v0.4.1 T2：根据 settings.ui.activity_bar_position 切 root layout 方向。
   const activityBarPosition = useSettingsStore(
@@ -925,6 +928,15 @@ export default function App() {
             />
           </SidebarWrapper>
         )}
+        {fileTreePosition === "left" && tmuxOpen && (
+          <SidebarWrapper
+            width={TMUX_PANEL_WIDTH}
+            borderSide="right"
+            data-testid="tmux-panel-wrapper"
+          >
+            <TmuxPanel />
+          </SidebarWrapper>
+        )}
         {aiSidebarPosition === "left" && aiSidebarOpen && (
           <SidebarWrapper
             width={aiSidebarWidth}
@@ -999,6 +1011,15 @@ export default function App() {
               onChange={(next) => updateAiSidebarWidthLocal(next)}
               onCommit={() => commitSidebarSettings()}
             />
+          </SidebarWrapper>
+        )}
+        {fileTreePosition === "right" && tmuxOpen && (
+          <SidebarWrapper
+            width={TMUX_PANEL_WIDTH}
+            borderSide="left"
+            data-testid="tmux-panel-wrapper"
+          >
+            <TmuxPanel />
           </SidebarWrapper>
         )}
         {fileTreePosition === "right" && fileTreeOpen && (

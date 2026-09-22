@@ -23,7 +23,8 @@
     "filePreviewEmpty": "文件预览（无打开的文件）",
     "settings": "设置",
     "browserContextNoTabs": "关闭所有标签 ({{count}})",
-    "browserContextConfirm": "确定关闭全部 {{count}} 个浏览器标签？\n\n此操作不可撤销，所有标签的 URL/滚动位置都会丢失。"
+    "browserContextConfirm": "确定关闭全部 {{count}} 个浏览器标签？\n\n此操作不可撤销，所有标签的 URL/滚动位置都会丢失。",
+    "tmux": "tmux 会话"
   },
   "quitDialog": {
     "title": "确认退出 aitm？",
@@ -535,5 +536,19 @@
   "paneGroup": {
     "newTab": "新建标签",
     "newTabTitle": "新建标签 (⌘T)"
+  },
+  "tmux": {
+    "title": "tmux 会话",
+    "refresh": "刷新会话列表",
+    "emptyUnavailable": "未检测到 tmux。安装 tmux 后即可在这里管理会话。",
+    "emptyNoSessions": "当前没有 tmux 会话。",
+    "windows": "{{count}} 窗口",
+    "attachedBadge": "已连接 {{count}}",
+    "attachedHint": "该会话已被 {{count}} 个客户端连接；点击为共享接入，不会踢掉它们",
+    "attachHint": "点击接入 {{name}}（共享，不踢掉其它客户端）；右键查看更多操作",
+    "menuTakeover": "接管（踢掉其它客户端）",
+    "menuInterrupt": "中断当前命令",
+    "menuKill": "结束会话",
+    "killConfirm": "确定结束 tmux 会话 {{name}}？\n\n会话内正在运行的程序会一并终止，此操作不可撤销。"
   }
 }

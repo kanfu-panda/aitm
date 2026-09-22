@@ -1334,3 +1334,59 @@ export async function onPtyCwdChanged(
     cb(e.payload),
   );
 }
+
+// === tmux 会话管理器 ===
+
+/**
+ * 一个 tmux 会话的快照。字段名与后端保持 snake_case 一致（同 `TabMetadata`）。
+ *
+ * 注意 `current_command` 未必是可读的命令名——常驻程序会改写自己的进程名，
+ * 所以 UI 以 `title`（tmux 的 `pane_title`）作为任务标签。
+ */
+export interface TmuxSession {
+  /** 会话名，attach / kill 的标识。 */
+  name: string;
+  /** 窗口数量。 */
+  windows: number;
+  /** 已连接的客户端数；0 表示无人连接。 */
+  attached: number;
+  /** 创建时间，Unix 秒。 */
+  created: number;
+  /** 活动窗格的工作目录。 */
+  current_path: string | null;
+  /** 活动窗格正在跑的命令名（可能不可读，见上）。 */
+  current_command: string | null;
+  /** 活动窗格标题，作为任务标签展示。 */
+  title: string | null;
+}
+
+/** 本机是否能用 tmux。没装不是错误，返回 false。 */
+export async function tmuxAvailable(): Promise<boolean> {
+  return await invoke<boolean>("tmux_available");
+}
+
+/** 列出本机全部 tmux 会话。tmux 未安装 / 服务端未启动时返回空数组。 */
+export async function tmuxListSessions(): Promise<TmuxSession[]> {
+  return await invoke<TmuxSession[]>("tmux_list_sessions");
+}
+
+/**
+ * 取一条可安全写入终端 PTY 的 attach 命令文本（后端负责 shell 转义）。
+ * `takeover=true` 时带 `-d`，踢掉该会话的其它客户端。
+ */
+export async function tmuxAttachCommand(
+  name: string,
+  takeover: boolean,
+): Promise<string> {
+  return await invoke<string>("tmux_attach_command", { name, takeover });
+}
+
+/** 向会话发 Ctrl-C 中断当前命令；会话本身保留。 */
+export async function tmuxInterruptSession(name: string): Promise<void> {
+  await invoke("tmux_interrupt_session", { name });
+}
+
+/** 结束整个会话。**二次确认由调用方负责**。 */
+export async function tmuxKillSession(name: string): Promise<void> {
+  await invoke("tmux_kill_session", { name });
+}

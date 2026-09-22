@@ -41,11 +41,21 @@ impl SessionManager {
         session.resize(cols, rows).await
     }
 
-    /// 关闭会话。drop 掉 Arc 后 PTY 会自动清理；子进程 wait 在 read loop 里做。
+    /// 关闭会话：先从表里摘掉，**再显式挂断 PTY**。
+    ///
+    /// 挂断这一步不能省。此前这里只做了"摘掉 Arc"，注释写的是"drop 掉 Arc 后
+    /// PTY 会自动清理"——实际不会：PTY 读线程手里还攥着一个 `try_clone_reader()`
+    /// 复制出来的 master fd，master 端没真正关闭，内核就不会给前台进程组发
+    /// SIGHUP，shell 于是一直活着。平时看不出来（一个闲着的 shell 没有动静），
+    /// 但接入 tmux 之后立刻暴露：关掉标签页，tmux 里的客户端计数不降回去。
+    /// 详见 [`Session::hangup`]。
     pub async fn close(&self, id: SessionId) -> Result<()> {
-        let mut map = self.sessions.lock().await;
-        map.remove(&id)
-            .ok_or_else(|| anyhow!("session 不存在: {id}"))?;
+        let session = {
+            let mut map = self.sessions.lock().await;
+            map.remove(&id)
+                .ok_or_else(|| anyhow!("session 不存在: {id}"))?
+        };
+        session.hangup();
         Ok(())
     }
 
@@ -233,5 +243,129 @@ mod tests {
         assert_eq!(mgr.session_count().await, 2);
         mgr.close(id2).await.unwrap();
         assert_eq!(mgr.session_count().await, 1);
+    }
+}
+
+/// 关闭会话时"挂断 PTY"的回归测试。
+///
+/// 症状：从 tmux 会话管理器接入某个会话后关掉标签页，tmux 里的客户端计数
+/// 不降回去——因为 [`SessionManager::close`] 当时只是把
+/// `Arc<Session>` 从表里摘掉，而 PTY 读线程手里还攥着一个 `try_clone_reader()`
+/// 复制出来的 master fd，master 端从没真正关闭，内核也就不会给 slave 端的
+/// 前台进程组发 SIGHUP。于是 shell 一直活着，它底下的 `tmux attach-session`
+/// 自然也一直连着。
+///
+/// 正确行为对标真实终端模拟器：关窗口 = 挂断终端。
+#[cfg(all(test, unix))]
+mod close_hangup_tests {
+    use super::*;
+    use std::time::Duration;
+
+    /// 进程是否还在（已被 `wait()` 回收的僵尸也算不在）。
+    fn pid_alive(pid: u32) -> bool {
+        use sysinfo::{Pid, ProcessRefreshKind, ProcessStatus, ProcessesToUpdate, System};
+        let mut sys = System::new();
+        let p = Pid::from_u32(pid);
+        sys.refresh_processes_specifics(
+            ProcessesToUpdate::Some(&[p]),
+            true,
+            ProcessRefreshKind::nothing(),
+        );
+        match sys.process(p) {
+            None => false,
+            Some(proc_) => !matches!(proc_.status(), ProcessStatus::Zombie),
+        }
+    }
+
+    /// 轮询等进程消失，最多等 `limit`。
+    async fn wait_gone(pid: u32, limit: Duration) -> bool {
+        let deadline = std::time::Instant::now() + limit;
+        while std::time::Instant::now() < deadline {
+            if !pid_alive(pid) {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        !pid_alive(pid)
+    }
+
+    #[tokio::test]
+    async fn close_之后_shell_进程应该退出() {
+        let mgr = SessionManager::new();
+        let cfg = SessionConfig {
+            shell: Some("/bin/sh".to_string()),
+            cols: 80,
+            rows: 24,
+            ..Default::default()
+        };
+        let id = mgr.open(cfg).await.unwrap();
+        let shell_pid = mgr
+            .get(id)
+            .await
+            .unwrap()
+            .shell_pid()
+            .expect("应该拿得到 shell pid");
+        assert!(pid_alive(shell_pid), "刚开的 session，shell 应该活着");
+
+        mgr.close(id).await.unwrap();
+
+        assert!(
+            wait_gone(shell_pid, Duration::from_secs(5)).await,
+            "close 之后 shell 进程 {shell_pid} 应该已经退出"
+        );
+    }
+
+    #[tokio::test]
+    async fn close_之后_shell_的前台子进程也应该退出() {
+        let mgr = SessionManager::new();
+        let cfg = SessionConfig {
+            shell: Some("/bin/sh".to_string()),
+            cols: 80,
+            rows: 24,
+            ..Default::default()
+        };
+        let id = mgr.open(cfg).await.unwrap();
+        let shell_pid = mgr.get(id).await.unwrap().shell_pid().unwrap();
+
+        // 让 shell 起一个长命的前台子进程，模拟 `tmux attach-session`
+        mgr.write(id, b"sleep 300\n").await.unwrap();
+
+        // 等子进程真的起来（轮询它出现，不硬睡固定时长）
+        let child_pid = {
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            loop {
+                if let Some(p) = find_child_of(shell_pid) {
+                    break p;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "5s 内没等到 shell 的子进程起来"
+                );
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        };
+
+        mgr.close(id).await.unwrap();
+
+        assert!(
+            wait_gone(child_pid, Duration::from_secs(5)).await,
+            "close 之后前台子进程 {child_pid} 也应该退出（shell 收到 SIGHUP 会转给它的作业）"
+        );
+    }
+
+    /// 找 `parent_pid` 的第一个子进程 pid。
+    fn find_child_of(parent_pid: u32) -> Option<u32> {
+        use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
+        let mut sys = System::new();
+        sys.refresh_processes_specifics(
+            ProcessesToUpdate::All,
+            true,
+            ProcessRefreshKind::nothing(),
+        );
+        let parent = Pid::from_u32(parent_pid);
+        sys.processes()
+            .values()
+            .find(|p| p.parent() == Some(parent))
+            .map(|p| p.pid().as_u32())
     }
 }

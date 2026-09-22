@@ -105,6 +105,19 @@ interface Props {
    *      sessionId 已存在（rehydrate）则忽略——session 早已起来，不会再 spawn。
    */
   initialCwd?: string | null;
+  /**
+   * PTY 起来后写进去的一条初始输入（含换行）。
+   *
+   * tmux 会话管理器接入时用：新开普通 shell 标签页，把
+   * `tmux attach-session -t '<name>'` 写进去。PTY 的行规程会缓冲先到的输入，
+   * shell 启动后自行读取——这与 AI 工具 `run_command` 往 PTY 写命令是同一条路径。
+   *
+   * 与 [`initialCwd`] 同构：锁进 ref，**只在 `sessionId === null` 的首次 spawn
+   * 路径生效**，rehydrate 不会重放。写完由调用方清掉 store 里的字段。
+   */
+  initialInput?: string | null;
+  /** 初始输入已写进 PTY，调用方可以把它从 store 里清掉。 */
+  onInitialInputConsumed?: () => void;
   onSessionOpened?: (id: SessionId) => void;
   onExit?: (id: SessionId) => void;
   /**
@@ -121,6 +134,8 @@ interface Props {
 export default function TerminalView({
   sessionId,
   initialCwd,
+  initialInput,
+  onInitialInputConsumed,
   onSessionOpened,
   onExit,
   isActive = false,
@@ -136,13 +151,21 @@ export default function TerminalView({
   // v0.9.1 HR3-1：把 initialCwd 锁到 ref，避免父组件后续改它触发"useEffect 重跑→
   // 重 spawn PTY"的灾难（首次 effect 已经走过 sessionOpen 后，cwd 不再生效）。
   const initialCwdRef = useRef<string | null | undefined>(initialCwd);
+  // 同样锁进 ref，理由与 initialCwd 一致（避免父组件后续
+  // 改它触发 effect 重跑 → 重 spawn PTY）。
+  const initialInputRef = useRef<string | null | undefined>(initialInput);
   // 把回调存到 ref，避免它们的引用变化导致 effect 重跑
   const onOpenedRef = useRef(onSessionOpened);
+  const onInputConsumedRef = useRef(onInitialInputConsumed);
   const onExitRef = useRef(onExit);
 
   useEffect(() => {
     onOpenedRef.current = onSessionOpened;
   }, [onSessionOpened]);
+
+  useEffect(() => {
+    onInputConsumedRef.current = onInitialInputConsumed;
+  }, [onInitialInputConsumed]);
   useEffect(() => {
     onExitRef.current = onExit;
   }, [onExit]);
@@ -365,6 +388,17 @@ export default function TerminalView({
         }
         idRef.current = id;
         onOpenedRef.current?.(id);
+
+        // 首次 spawn 成功后把初始输入写进 PTY（只此一次）。
+        // 失败不阻断终端本身——用户仍然得到一个可用的 shell，自己敲命令即可。
+        const pending = initialInputRef.current;
+        if (pending) {
+          initialInputRef.current = null;
+          sessionWrite(id, new TextEncoder().encode(pending)).catch((e) =>
+            console.error("写入初始输入失败", e),
+          );
+          onInputConsumedRef.current?.();
+        }
       }
 
       unlistenData = await onSessionData(id, (bytes) => {

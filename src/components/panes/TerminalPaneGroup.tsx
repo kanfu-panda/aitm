@@ -68,6 +68,8 @@ export function TerminalPaneGroup({ group }: Props) {
   const tabs = useTabsStore((s) => s.tabs);
   const setGlobalActive = useTabsStore((s) => s.setActive);
   const setSessionId = useTabsStore((s) => s.setSessionId);
+  // 初始输入写进 PTY 后清掉，避免重放
+  const clearInitialInput = useTabsStore((s) => s.clearInitialInput);
   const unreadByTab = useTabsStore((s) => s.unreadByTab);
   const notifLevelByTab = useNotificationsStore((s) => s.byTab);
 
@@ -307,6 +309,8 @@ export function TerminalPaneGroup({ group }: Props) {
             <TerminalView
               sessionId={(t.sessionId as SessionId | null) ?? null}
               initialCwd={t.last_cwd ?? null}
+              initialInput={t.initialInput ?? null}
+              onInitialInputConsumed={() => clearInitialInput(t.id)}
               onSessionOpened={(sid) => setSessionId(t.id, sid)}
               onExit={() => handleCloseTab(t.id)}
               // F3（v1.1.0）：只在"本 tab 是本 group 的 active tab 且本 group
