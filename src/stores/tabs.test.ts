@@ -354,3 +354,43 @@ describe("useTabsStore", () => {
     });
   });
 });
+
+/**
+ * UT-T01/T02：tmux 接入用的"标签页初始输入"通道。
+ *
+ * tmux 会话管理器点击接入时，新开一个普通 shell 标签页并把
+ * `tmux attach-session -t '<name>'` 写进它的 PTY。命令文本随 tab 一起创建，
+ * 由 TerminalView 在首次 sessionOpen 之后写一次并清除。
+ */
+describe("tab 初始输入（tmux 接入通道）", () => {
+  beforeEach(() => {
+    useTabsStore.setState({ tabs: [], activeId: null, unreadByTab: {} });
+  });
+
+  it("UT-T01 addTab 传 initialInput 时写到 tab 上", () => {
+    const id = useTabsStore
+      .getState()
+      .addTab({ title: "tmux: alpha", initialInput: "tmux attach\n" });
+
+    const tab = useTabsStore.getState().tabs.find((t) => t.id === id);
+    expect(tab?.initialInput).toBe("tmux attach\n");
+    expect(tab?.title).toBe("tmux: alpha");
+  });
+
+  it("UT-T02 clearInitialInput 只清目标 tab，其余不受影响", () => {
+    const a = useTabsStore.getState().addTab({ initialInput: "cmd-a\n" });
+    const b = useTabsStore.getState().addTab({ initialInput: "cmd-b\n" });
+
+    useTabsStore.getState().clearInitialInput(a);
+
+    const tabs = useTabsStore.getState().tabs;
+    expect(tabs.find((t) => t.id === a)?.initialInput).toBeUndefined();
+    expect(tabs.find((t) => t.id === b)?.initialInput).toBe("cmd-b\n");
+  });
+
+  it("不传 initialInput 的普通新标签页不带该字段", () => {
+    const id = useTabsStore.getState().addTab();
+    const tab = useTabsStore.getState().tabs.find((t) => t.id === id);
+    expect(tab?.initialInput).toBeUndefined();
+  });
+});

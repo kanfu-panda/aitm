@@ -105,9 +105,29 @@ fn open_and_migrate_project(bucket_id: &str) -> Result<Connection> {
 }
 
 fn ensure_parent_dir(path: &Path) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("创建目录失败: {}", parent.display()))?;
+    let Some(parent) = path.parent() else {
+        return Ok(());
+    };
+    std::fs::create_dir_all(parent)
+        .with_context(|| format!("创建目录失败: {}", parent.display()))?;
+
+    // 这些目录里是 AI 对话内容，必须收紧到 0700：create_dir_all 受 umask 影响，
+    // 默认 umask 022 会建成 0755，同组用户即可进入读取。
+    //
+    // 要从叶子一路收到 `~/.aitm/` 本身 —— 项目库路径是
+    // `~/.aitm/projects/<UUID>/data.db`，一次 create_dir_all 可能新建三层目录，
+    // 只收紧最里层的话，外面两层仍是 0755。
+    let home = paths::aitm_home()?;
+    let mut cur = Some(parent);
+    while let Some(dir) = cur {
+        if !dir.starts_with(&home) {
+            break;
+        }
+        crate::fs_perms::set_private_dir(dir)?;
+        if dir == home {
+            break;
+        }
+        cur = dir.parent();
     }
     Ok(())
 }

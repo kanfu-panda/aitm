@@ -67,4 +67,6 @@ export {
   // 浏览器"请求移动版 / 桌面版站点"切换
   Smartphone,
   Monitor,
+  // tmux 会话管理器面板入口
+  SquareTerminal,
 } from "lucide-react";

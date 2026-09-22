@@ -61,6 +61,9 @@ pub fn load() -> AppSettings {
 pub fn save(settings: &AppSettings) -> Result<()> {
     let dir = config_dir()?;
     fs::create_dir_all(&dir).context("创建配置目录失败")?;
+    // 目录下还有对话数据库等敏感数据，收紧到 0700。create_dir_all 受 umask 影响，
+    // 默认 umask 022 会建成 0755，同组用户就能进来。
+    crate::fs_perms::set_private_dir(&dir)?;
     let path = config_path()?;
 
     let toml_str = toml::to_string_pretty(settings).context("序列化设置失败")?;
@@ -69,6 +72,9 @@ pub fn save(settings: &AppSettings) -> Result<()> {
     let tmp = dir.join(format!(".{CONFIG_FILE}.tmp"));
     {
         let mut f = fs::File::create(&tmp).context("创建临时配置文件失败")?;
+        // 密钥是明文落盘，**先收紧权限再写内容**：rename 保留权限位，最终文件即 0600，
+        // 且全程不存在"内容已在盘上但权限还是 0644"的窗口。
+        crate::fs_perms::set_private_file(&tmp)?;
         f.write_all(toml_str.as_bytes())
             .context("写入临时配置文件失败")?;
         f.sync_all().context("sync 临时配置文件失败")?;
@@ -175,6 +181,41 @@ mod tests {
             assert!(path.exists());
             let tmp = home.join(".aitm").join(".config.toml.tmp");
             assert!(!tmp.exists(), "tmp 文件应在 rename 后被清理");
+        });
+    }
+
+    /// 配置文件里存着明文 API 密钥，落盘权限必须是 0600（仅属主可读写）。
+    ///
+    /// 不能依赖进程 umask：默认 umask 022 会产出 0644，同组用户即可读到密钥。
+    #[cfg(unix)]
+    #[test]
+    fn save_后_配置文件权限为_0600() {
+        use std::os::unix::fs::PermissionsExt;
+        with_temp_home(|home| {
+            save(&AppSettings::default()).unwrap();
+            let path = home.join(".aitm").join("config.toml");
+            let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+            assert_eq!(
+                mode, 0o600,
+                "配置文件含明文 API 密钥，权限必须为 600，实际为 {mode:o}"
+            );
+        });
+    }
+
+    /// 数据目录下还有对话数据库等敏感内容，目录本身必须 0700，
+    /// 否则同组用户可以进入目录读取里面按默认权限创建的文件。
+    #[cfg(unix)]
+    #[test]
+    fn save_后_数据目录权限为_0700() {
+        use std::os::unix::fs::PermissionsExt;
+        with_temp_home(|home| {
+            save(&AppSettings::default()).unwrap();
+            let dir = home.join(".aitm");
+            let mode = fs::metadata(&dir).unwrap().permissions().mode() & 0o777;
+            assert_eq!(
+                mode, 0o700,
+                "数据目录不应允许同组或其他用户进入，权限必须为 700，实际为 {mode:o}"
+            );
         });
     }
 }

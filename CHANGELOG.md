@@ -2,6 +2,25 @@
 
 All notable changes to aitm will be documented in this file. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] — 2026-09-22
+
+### Added
+
+- **A tmux session manager in the sidebar.** It lists every tmux session on the machine — name, task label, window count, working directory, and how many clients are currently attached — and attaching is a click: aitm opens a new terminal tab and connects you to that session. No more `tmux ls` to look up the name and `tmux attach -t` to get in.
+  - Clicking **shares** the session: a terminal that is already attached elsewhere stays connected. To take it over exclusively, right-click and choose take over, which attaches with `-d`.
+  - The same context menu can interrupt whatever is running inside a session (`Ctrl-C`, the session survives) or kill the session outright, behind a confirmation.
+  - If tmux is not installed, or its server is not running, the panel says so in plain words instead of reporting an error.
+  - The task label comes from the pane title rather than the running command, because long-lived programs often rewrite their own process name into something unreadable.
+  - Scope note: aitm manages sessions, it does not take over tmux's rendering. Once you are inside a session, directory tracking, AI-executed commands and notifications do not work in that tab — tmux does not forward the terminal escape sequences those features rely on. This is a deliberate boundary, not an oversight.
+
+### Fixed
+
+- **Closing a tab did not actually hang up its terminal, so the shell process stayed alive.** Closing a tab only dropped the session from an internal table; the PTY reader thread still held a duplicated handle to the terminal's master side, so the terminal was never hung up and the kernel never signalled the shell to exit. An idle leftover shell is invisible in daily use, which is why this went unnoticed — but attach a tmux session in one of those tabs and it becomes obvious: close the tab and tmux still counts you as connected. Closing a tab now hangs up the terminal explicitly, so the shell and whatever it is running exit together, the way closing a window in any terminal emulator behaves.
+
+### Security
+
+- **The configuration file and data directories are now created with owner-only permissions.** `~/.aitm/config.toml` holds provider API keys in plain text and was written with the default mask, which on a typical setup leaves it readable by any other local account in the same group; the directory itself was traversable for the same reason. The file is now created as `0600` and the directories as `0700`, tightened *before* any content is written rather than after. Existing installations are corrected on the next save — no manual action needed.
+
 ## [1.4.3] — 2026-08-25
 
 ### Fixed

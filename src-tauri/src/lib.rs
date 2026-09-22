@@ -3,6 +3,7 @@
 //! `run_gui()` 是 main.rs 在无 CLI 子命令时的入口。
 
 pub mod cli;
+pub mod fs_perms;
 pub mod i18n;
 pub mod ipc;
 #[cfg(target_os = "macos")]
@@ -308,6 +309,12 @@ pub fn run_gui() {
             ipc::app::diagnostics_log_tail,
             // v0.10.6 T1：切语言时重建 NSMenu（macOS only；其他平台 no-op）
             ipc::menu::menu_rebuild,
+            // tmux 会话管理器（只读列表 + 接入 + 基本干预）
+            ipc::tmux::tmux_available,
+            ipc::tmux::tmux_list_sessions,
+            ipc::tmux::tmux_attach_command,
+            ipc::tmux::tmux_interrupt_session,
+            ipc::tmux::tmux_kill_session,
         ])
         .build(tauri::generate_context!())
         .expect("aitm 启动失败")

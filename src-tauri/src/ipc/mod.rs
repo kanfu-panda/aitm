@@ -12,6 +12,7 @@ pub mod safety;
 pub mod scope;
 pub mod session;
 pub mod settings;
+pub mod tmux;
 pub mod shell;
 pub mod system;
 pub mod update;

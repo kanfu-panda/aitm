@@ -19,6 +19,12 @@ interface SidebarState {
   filePreviewVisible: boolean;
   toggleFilePreview: () => void;
   setFilePreviewVisible: (visible: boolean) => void;
+
+  // === tmux 会话管理器面板 ===
+  /** tmux 面板开关。默认隐藏；点 ActivityBar 的 tmux 图标切换。 */
+  tmuxOpen: boolean;
+  toggleTmux: () => void;
+  setTmuxOpen: (open: boolean) => void;
 }
 
 export const useSidebarStore = create<SidebarState>((set) => ({
@@ -34,4 +40,8 @@ export const useSidebarStore = create<SidebarState>((set) => ({
   toggleFilePreview: () =>
     set((s) => ({ filePreviewVisible: !s.filePreviewVisible })),
   setFilePreviewVisible: (filePreviewVisible) => set({ filePreviewVisible }),
+
+  tmuxOpen: false,
+  toggleTmux: () => set((s) => ({ tmuxOpen: !s.tmuxOpen })),
+  setTmuxOpen: (tmuxOpen) => set({ tmuxOpen }),
 }));

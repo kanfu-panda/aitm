@@ -41,6 +41,16 @@ export interface Tab {
    * 用户右键关 tab / Cmd+W 关掉后从 store 移除。
    */
   spawnError?: string;
+  /**
+   * PTY 起来后要写进去的一条初始输入（含换行）。
+   *
+   * tmux 会话管理器点击接入时走这条路：新开一个**普通 shell 标签页**，
+   * 由 [`TerminalView`] 在首次 `sessionOpen` 成功之后写一次并调
+   * [`clearInitialInput`] 清掉，于是 detach 之后用户落回一个可用的 shell。
+   *
+   * 只在 `sessionId === null` 的首次 spawn 路径生效，跨重启 rehydrate 不会重放。
+   */
+  initialInput?: string;
 }
 
 interface TabsState {
@@ -60,7 +70,14 @@ interface TabsState {
    * TerminalView 会在第一帧把 `initialCwd` 锁进 ref——晚一步写的 cwd 再也
    * 追不上，PTY 就起在了默认目录（实测发现）。
    */
-  addTab: (init?: { title?: string; lastCwd?: string }) => TabId;
+  addTab: (init?: {
+    title?: string;
+    lastCwd?: string;
+    /** PTY 起来后写进去的初始命令（含换行）。 */
+    initialInput?: string;
+  }) => TabId;
+  /** 初始输入已写入 PTY，清掉避免重放。 */
+  clearInitialInput: (tabId: TabId) => void;
   closeTab: (id: TabId) => void;
   setActive: (id: TabId) => void;
   setSessionId: (tabId: TabId, sessionId: string) => void;
@@ -152,6 +169,7 @@ export const useTabsStore = create<TabsState>((set, get) => ({
           // （auto_title=false，后续 OSC 7 不覆写）。不给才跟随 cwd 自动改名。
           auto_title: init?.title === undefined,
           ...(init?.lastCwd ? { last_cwd: init.lastCwd } : {}),
+          ...(init?.initialInput ? { initialInput: init.initialInput } : {}),
         },
       ],
       activeId: id,
@@ -159,6 +177,14 @@ export const useTabsStore = create<TabsState>((set, get) => ({
     // v0.7.0-A：匿名统计——新开 terminal tab（不传 id / title）
     trackEvent("tab_opened");
     return id;
+  },
+
+  clearInitialInput: (tabId) => {
+    set((s) => ({
+      tabs: s.tabs.map((t) =>
+        t.id === tabId ? { ...t, initialInput: undefined } : t,
+      ),
+    }));
   },
 
   closeTab: (id) => {

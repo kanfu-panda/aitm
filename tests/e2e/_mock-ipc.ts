@@ -463,6 +463,64 @@ export async function installTauriMock(
         }
         if (cmd === "settings_reset") return null;
 
+        // === tmux 会话管理器 ===
+        if (cmd === "tmux_available") return true;
+        if (cmd === "tmux_list_sessions") {
+          return [
+            {
+              name: "build-farm",
+              windows: 3,
+              attached: 1,
+              created: 1700000000,
+              current_path: "/home/dev/project",
+              current_command: "cargo",
+              title: "nightly build",
+            },
+            {
+              name: "scratch",
+              windows: 1,
+              attached: 0,
+              created: 1700000100,
+              current_path: "/tmp",
+              current_command: "zsh",
+              title: null,
+            },
+            {
+              // 名字里带单引号：会话名是 tmux 使用者取的，对本程序来说是
+              // 不可信输入。放一条进夹具，让面板渲染和 attach 命令的转义
+              // 都真的跑过一遍这条边界。
+              name: "it's mine",
+              windows: 1,
+              attached: 0,
+              created: 1700000200,
+              current_path: "/tmp",
+              current_command: "zsh",
+              title: null,
+            },
+          ];
+        }
+        if (cmd === "tmux_attach_command") {
+          const name = args.name as string;
+          const takeover = args.takeover as boolean;
+          // 跟后端 `shell_single_quote` 同一套转义规则：单引号包裹，内部的 `'`
+          // 换成 `'\''`（闭合 → 转义单引号 → 重新开启）。
+          //
+          // 真正的转义是在 Rust 侧做的、由那边的单测把关，mock 永远测不到它；
+          // 这里对齐规则只是为了**别让 mock 说谎**——将来往夹具里塞一个带引号的
+          // 会话名时，E2E 看到的命令要和真后端给的是同一个。
+          const quoted = `'${name.split("'").join(`'\\''`)}'`;
+          return `tmux attach-session${takeover ? " -d" : ""} -t ${quoted}`;
+        }
+        if (cmd === "tmux_interrupt_session" || cmd === "tmux_kill_session") {
+          // 暴露给 spec 断言：最近一次 tmux 干预动作
+          (
+            window as unknown as {
+              __lastTmuxAction: { cmd: string; name: string };
+            }
+          ).__lastTmuxAction = { cmd, name: args.name as string };
+          return null;
+        }
+
         // === Safety 白名单 ===
         if (cmd === "safety_validate_pattern") {
           const pattern = (args.pattern ?? "") as string;

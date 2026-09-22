@@ -23,7 +23,8 @@
     "filePreviewEmpty": "File Preview (no open files)",
     "settings": "Settings",
     "browserContextNoTabs": "Close all tabs ({{count}})",
-    "browserContextConfirm": "Close all {{count}} browser tabs?\n\nThis cannot be undone; URLs and scroll positions will be lost."
+    "browserContextConfirm": "Close all {{count}} browser tabs?\n\nThis cannot be undone; URLs and scroll positions will be lost.",
+    "tmux": "tmux sessions"
   },
   "quitDialog": {
     "title": "Quit aitm?",
@@ -537,5 +538,19 @@
   "paneGroup": {
     "newTab": "New tab",
     "newTabTitle": "New tab (⌘T)"
+  },
+  "tmux": {
+    "title": "tmux sessions",
+    "refresh": "Refresh session list",
+    "emptyUnavailable": "tmux not found. Install tmux to manage sessions here.",
+    "emptyNoSessions": "No tmux sessions right now.",
+    "windows": "{{count}} windows",
+    "attachedBadge": "attached {{count}}",
+    "attachedHint": "{{count}} client(s) already attached; clicking shares the session without detaching them",
+    "attachHint": "Click to attach to {{name}} (shared, others stay connected); right-click for more",
+    "menuTakeover": "Take over (detach others)",
+    "menuInterrupt": "Interrupt current command",
+    "menuKill": "Kill session",
+    "killConfirm": "Kill tmux session {{name}}?\n\nEverything running inside it will be terminated. This cannot be undone."
   }
 }

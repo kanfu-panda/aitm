@@ -23,7 +23,8 @@
     "filePreviewEmpty": "ファイルプレビュー（開いているファイルなし）",
     "settings": "設定",
     "browserContextNoTabs": "すべてのタブを閉じる ({{count}})",
-    "browserContextConfirm": "{{count}} 個のブラウザタブをすべて閉じますか？\n\nこの操作は取り消せず、URL とスクロール位置は失われます。"
+    "browserContextConfirm": "{{count}} 個のブラウザタブをすべて閉じますか？\n\nこの操作は取り消せず、URL とスクロール位置は失われます。",
+    "tmux": "tmux セッション"
   },
   "quitDialog": {
     "title": "aitm を終了しますか？",
@@ -537,5 +538,19 @@
   "paneGroup": {
     "newTab": "新しいタブ",
     "newTabTitle": "新しいタブ (⌘T)"
+  },
+  "tmux": {
+    "title": "tmux セッション",
+    "refresh": "セッション一覧を更新",
+    "emptyUnavailable": "tmux が見つかりません。インストールするとここで管理できます。",
+    "emptyNoSessions": "現在 tmux セッションはありません。",
+    "windows": "{{count}} ウィンドウ",
+    "attachedBadge": "接続中 {{count}}",
+    "attachedHint": "このセッションには {{count}} 個のクライアントが接続中です。クリックしても切断されません",
+    "attachHint": "クリックで {{name}} に接続（共有、他クライアントは維持）。右クリックでその他の操作",
+    "menuTakeover": "乗っ取る（他を切断）",
+    "menuInterrupt": "実行中のコマンドを中断",
+    "menuKill": "セッションを終了",
+    "killConfirm": "tmux セッション {{name}} を終了しますか？\n\n実行中のプログラムもすべて終了します。取り消せません。"
   }
 }

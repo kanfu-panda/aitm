@@ -1,6 +1,13 @@
 import { useState, type CSSProperties, type MouseEvent } from "react";
 import { useTranslation } from "react-i18next";
-import { FileText, Folder, Globe, Settings, Sparkles } from "../icons";
+import {
+  FileText,
+  Folder,
+  Globe,
+  Settings,
+  Sparkles,
+  SquareTerminal,
+} from "../icons";
 import { useBrowserStore } from "../../stores/browser";
 import { PLACEHOLDER_BROWSER_BOUNDS } from "../../lib/browserOpenRequest";
 import { useSidebarStore } from "../../stores/sidebar";
@@ -47,6 +54,9 @@ export function ActivityBar({ position, onSettingsOpen }: ActivityBarProps) {
   const filePreviewHasContent = useFileEditorStore(
     (s) => s.openFiles.length > 0,
   );
+  // tmux 会话管理器面板
+  const tmuxOpen = useSidebarStore((s) => s.tmuxOpen);
+  const toggleTmux = useSidebarStore((s) => s.toggleTmux);
 
   const browserPanelOpen = useBrowserStore((s) => s.panelOpen);
   const browserTabsCount = useBrowserStore((s) => s.tabs.length);
@@ -250,6 +260,17 @@ export function ActivityBar({ position, onSettingsOpen }: ActivityBarProps) {
           onClick={toggleFilePreview}
           position={position}
           testId="activity-bar-item-file-preview"
+        />
+      </div>
+      {/* tmux 会话管理器。列出本机 tmux 会话，点击接入。 */}
+      <div style={itemWrapperStyle}>
+        <ActivityBarItem
+          icon={<SquareTerminal size={iconSize} aria-hidden />}
+          label={t("activityBar.tmux")}
+          isActive={tmuxOpen}
+          onClick={toggleTmux}
+          position={position}
+          testId="activity-bar-item-tmux"
         />
       </div>
       <div className="flex-1" data-testid="activity-bar-spacer" />
