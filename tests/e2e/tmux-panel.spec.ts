@@ -4,7 +4,8 @@ import { installTauriMock } from "./_mock-ipc";
 /**
  * tmux 会话管理器 E2E。
  *
- * mock 里固定两个会话：`build-farm`（已被 1 个客户端连接）与 `scratch`（无人连接）。
+ * mock 里固定三个会话：`build-farm`（已被 1 个客户端连接）、`scratch`（无人连接），
+ * 以及名字里带单引号的 `it's mine`（边界用例）。
  */
 
 test("E2E-01 默认面板不可见；点 ActivityBar tmux 图标可开关", async ({
@@ -35,6 +36,9 @@ test("E2E-02 面板打开后列出会话，名称与已连接标记可见", asyn
   // build-farm 有 1 个客户端连接 → 有标记；scratch 无人连接 → 没有
   await expect(page.getByTestId("tmux-attached-badge-build-farm")).toBeVisible();
   await expect(page.getByTestId("tmux-attached-badge-scratch")).toHaveCount(0);
+
+  // 名字里带单引号的会话照样列出来、点得到（testid 里也含引号）
+  await expect(page.getByTestId("tmux-session-item-it's mine")).toBeVisible();
 });
 
 test("E2E-03 点击会话项新开一个标题含会话名的终端标签页", async ({ page }) => {

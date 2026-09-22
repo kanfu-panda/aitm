@@ -63,10 +63,14 @@ pub struct Session {
     /// 把它置 false，后续命令自动退回 sentinel 包装法 —— **绝不能出现"永远等不到
     /// 标记、每条命令都熬到 120s 超时"** 的静默劣化。
     hook_active: AtomicBool,
-    /// 用来给 shell 子进程发 SIGHUP 的句柄（portable-pty 的 `ChildKiller`）。
+    /// 用来终止 shell 子进程的句柄（portable-pty 的 `ChildKiller` 克隆）。
+    ///
+    /// 发什么信号由 portable-pty 按平台决定：Unix 上 `ProcessSignaller::kill()`
+    /// 发的是 **SIGHUP**（只发这一个，不会再升级到 SIGKILL），Windows 上走
+    /// `TerminateProcess`。下面 [`hangup`](Self::hangup) 的推导依赖 Unix 的语义。
     ///
     /// `child` 本体被 move 进了 PTY 读线程做 `wait()` 回收，外面够不着，
-    /// 所以单独克隆一个 killer 留在 Session 里给 [`hangup`](Self::hangup) 用。
+    /// 所以单独克隆一个 killer 留在 Session 里。
     killer: StdMutex<Box<dyn ChildKiller + Send + Sync>>,
 }
 
@@ -358,7 +362,7 @@ impl Session {
         sys.process(pid).and_then(|p| p.cwd().map(|c| c.to_path_buf()))
     }
 
-    /// 挂断这个 PTY —— 给 shell 子进程发 SIGHUP。
+    /// 挂断这个 PTY —— 终止跑在里面的 shell 子进程。
     ///
     /// 对标真实终端模拟器"关掉窗口 = 挂断终端"的语义。**必须显式做**，因为
     /// 光把 `Arc<Session>` 丢掉是不够的：PTY 读线程手里还攥着一个
@@ -369,9 +373,11 @@ impl Session {
     /// 客户端计数不降回去——就是这条路径漏了。shell 还在，它底下的
     /// `tmux attach-session` 自然也一直连着。
     ///
-    /// shell 是这个 PTY 会话的控制进程（portable-pty 建会话时做了 setsid +
-    /// TIOCSCTTY），所以它一退出，内核会接着给该终端的前台进程组补发 SIGHUP，
-    /// 里面跑的命令跟着一起收摊。
+    /// **Unix 上**（`ChildKiller` 发 SIGHUP）连锁是这样的：shell 是这个 PTY 会话的
+    /// 控制进程（portable-pty 建会话时做了 setsid + TIOCSCTTY），它收到 SIGHUP
+    /// 退出后，内核会接着给该终端的前台进程组补发 SIGHUP，里面跑的命令跟着一起
+    /// 收摊——所以连 `tmux attach-session` 这种孙子进程也会断开。
+    /// Windows 上是直接 `TerminateProcess` 掉 shell，没有这层信号传导。
     ///
     /// 失败只记日志不上抛：会话都要关了，这里报错没有可恢复的动作。
     pub fn hangup(&self) {
