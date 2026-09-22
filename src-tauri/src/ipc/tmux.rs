@@ -1,6 +1,5 @@
 //! tmux 会话管理器 IPC。
 //!
-//! 定位见 `docs/02_design/architecture/-tmux-session-manager-arch.md`：
 //! aitm **不**完整兼容 tmux（tmux 会吞掉 OSC 转义序列，完整支持要改 PTY 协议层），
 //! 只做"看见 + 一键进入 + 基本干预"的会话管理器。本模块是无状态的：每条命令
 //! fork 一次 tmux 子进程，不持有任何共享状态、不碰既有会话表。
@@ -21,6 +20,49 @@ const LIST_FORMAT: &str = "#{session_name}\u{1f}#{session_windows}\u{1f}#{sessio
 ///
 /// 命中这些不是故障——用户只是没开 tmux，UI 应显示空状态而不是红色错误。
 const NO_SERVER_MARKERS: &[&str] = &["no server running", "no sessions", "error connecting"];
+
+/// tmux 可执行文件的候选绝对路径，按常见程度排序。
+///
+/// 为什么不直接用裸名字 `"tmux"` 让 PATH 去查找：**macOS 上从访达 / 程序坞
+/// 启动的 `.app` 不继承 shell 的 PATH**。`launchctl getenv PATH` 是空的，GUI 进程
+/// 拿到的是系统默认的 `/usr/bin:/bin:/usr/sbin:/sbin`，而 tmux 通常装在 Homebrew
+/// 前缀下（Apple Silicon 是 `/opt/homebrew/bin`，Intel 是 `/usr/local/bin`），
+/// 根本不在那个最小 PATH 里，spawn 直接 `NotFound` —— 表现就是面板永远说
+/// "未检测到 tmux"。
+///
+/// 开发模式下 `pnpm tauri dev` 是从终端起的、继承了完整 PATH，所以这个问题
+/// 在 dev 里完全看不出来，只有装成 `.app` 再打开才会暴露。
+const TMUX_CANDIDATES: &[&str] = &[
+    "/opt/homebrew/bin/tmux", // Homebrew（Apple Silicon）
+    "/usr/local/bin/tmux",    // Homebrew（Intel）
+    "/opt/local/bin/tmux",    // MacPorts
+    "/usr/bin/tmux",          // 系统自带 / 多数 Linux 发行版
+];
+
+/// 在候选绝对路径里挑第一个真实存在的；都不存在就回退到裸名字 `name`。
+///
+/// 回退不是摆设：dev 模式和 Linux 上 PATH 是全的，裸名字查得到；用户把 tmux 装在
+/// 冷门位置时，让 spawn 自己去 PATH 上碰一次运气，也好过直接判定不可用。
+///
+/// `exists` 作为参数注入，测试里就不必真去碰文件系统。
+fn resolve_bin<'a>(
+    name: &'a str,
+    candidates: &[&'a str],
+    exists: impl Fn(&str) -> bool,
+) -> &'a str {
+    candidates
+        .iter()
+        .copied()
+        .find(|p| exists(p))
+        .unwrap_or(name)
+}
+
+/// 本次调用要用的 tmux 可执行文件路径。
+fn tmux_bin() -> &'static str {
+    resolve_bin("tmux", TMUX_CANDIDATES, |p| {
+        std::path::Path::new(p).exists()
+    })
+}
 
 /// 一个 tmux 会话的快照。字段名保持 snake_case 直接透给前端（与 `TabMetadata` 一致）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -111,7 +153,7 @@ fn is_no_server_error(stderr: &str) -> bool {
 
 /// 跑一条 tmux 子命令，只关心成败。参数以数组传递，**不经过 shell**。
 async fn run_tmux(args: Vec<String>) -> Result<(), String> {
-    let out = tokio::task::spawn_blocking(move || Command::new("tmux").args(&args).output())
+    let out = tokio::task::spawn_blocking(move || Command::new(tmux_bin()).args(&args).output())
         .await
         .map_err(|e| format!("执行 tmux 任务失败：{e}"))?;
 
@@ -138,7 +180,7 @@ async fn run_tmux(args: Vec<String>) -> Result<(), String> {
 /// 不是故障，UI 据此显示空状态。
 #[tauri::command]
 pub async fn tmux_available() -> Result<bool, String> {
-    tokio::task::spawn_blocking(|| Command::new("tmux").arg("-V").output().is_ok())
+    tokio::task::spawn_blocking(|| Command::new(tmux_bin()).arg("-V").output().is_ok())
         .await
         .map_err(|e| format!("探测 tmux 失败：{e}"))
 }
@@ -149,7 +191,7 @@ pub async fn tmux_available() -> Result<bool, String> {
 #[tauri::command]
 pub async fn tmux_list_sessions() -> Result<Vec<TmuxSession>, String> {
     let out = tokio::task::spawn_blocking(|| {
-        Command::new("tmux")
+        Command::new(tmux_bin())
             .args(["list-sessions", "-F", LIST_FORMAT])
             .output()
     })
@@ -361,6 +403,65 @@ mod tests {
         assert!(!is_no_server_error("session not found: ghost"));
         assert!(!is_no_server_error("permission denied"));
         assert!(!is_no_server_error(""));
+    }
+
+    // === 可执行文件解析（GUI 启动时 PATH 只有 /usr/bin:/bin:/usr/sbin:/sbin）===
+
+    #[test]
+    fn ut_b16_命中第一个存在的候选路径() {
+        let exists = |p: &str| p == "/usr/local/bin/tmux";
+        assert_eq!(
+            resolve_bin("tmux", TMUX_CANDIDATES, exists),
+            "/usr/local/bin/tmux"
+        );
+    }
+
+    #[test]
+    fn ut_b17_多个候选都存在时取列表里靠前的() {
+        let exists = |p: &str| p == "/opt/homebrew/bin/tmux" || p == "/usr/bin/tmux";
+        assert_eq!(
+            resolve_bin("tmux", TMUX_CANDIDATES, exists),
+            "/opt/homebrew/bin/tmux",
+            "候选顺序应按常见程度排，Homebrew 优先于系统目录"
+        );
+    }
+
+    #[test]
+    fn ut_b18_一个候选都不存在时回退到裸名字() {
+        // 回退是有意义的：dev 模式 / Linux 上 PATH 是全的，裸名字查得到；
+        // 而且装在冷门位置时，让 spawn 自己去 PATH 上碰运气也比直接放弃好。
+        assert_eq!(resolve_bin("tmux", TMUX_CANDIDATES, |_| false), "tmux");
+    }
+
+    #[test]
+    fn ut_b19_候选列表覆盖两种_homebrew_前缀与_macports() {
+        let joined = TMUX_CANDIDATES.join(" ");
+        for must in [
+            "/opt/homebrew/bin/tmux", // Apple Silicon Homebrew
+            "/usr/local/bin/tmux",    // Intel Homebrew
+            "/opt/local/bin/tmux",    // MacPorts
+            "/usr/bin/tmux",          // 系统自带 / Linux 发行版
+        ] {
+            assert!(joined.contains(must), "候选列表缺少 {must}");
+        }
+    }
+
+    #[test]
+    fn ut_b20_本机装了_tmux_时解析结果是绝对路径_不依赖_path() {
+        // 这条守的是本次修复的核心不变量：解析结果**不能**是裸名字，否则一旦
+        // 从访达启动（PATH 只剩 /usr/bin:/bin:/usr/sbin:/sbin）就又找不到了。
+        // 本机没装 tmux 时（CI / 别人的机器）这条自然不适用，跳过。
+        let installed = TMUX_CANDIDATES
+            .iter()
+            .any(|p| std::path::Path::new(p).exists());
+        if !installed {
+            return;
+        }
+        let bin = tmux_bin();
+        assert!(
+            bin.starts_with('/'),
+            "本机装着 tmux，应解析成绝对路径而不是裸名字，实际拿到 {bin:?}"
+        );
     }
 
     // === 可用性探测（真跑本机，但只断言"不 panic + 返回布尔"）===

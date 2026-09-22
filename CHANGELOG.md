@@ -2,6 +2,12 @@
 
 All notable changes to aitm will be documented in this file. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.1] — 2026-09-22
+
+### Fixed
+
+- **The tmux panel always said tmux was not installed, even when it was.** An app launched from Finder or the Dock on macOS does not inherit the shell's `PATH`; it gets the system default of `/usr/bin:/bin:/usr/sbin:/sbin`. tmux is normally installed under a Homebrew prefix (`/opt/homebrew/bin` on Apple Silicon, `/usr/local/bin` on Intel), which is not on that list, so looking it up by name never found it. The binary is now resolved against the usual install locations — both Homebrew prefixes, MacPorts, and the system directory — falling back to a `PATH` lookup if none of them match. Running from a terminal in development inherits the full `PATH`, which is why this only showed up in an installed build.
+
 ## [1.5.0] — 2026-09-22
 
 ### Added
