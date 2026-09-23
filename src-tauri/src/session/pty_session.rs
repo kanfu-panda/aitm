@@ -209,6 +209,37 @@ fn ensure_utf8_locale(cmd: &mut CommandBuilder) {
     }
 }
 
+/// 取 PTY master 的写入端。
+///
+/// **Unix 上不用 portable-pty 的 `take_writer()`**：它返回的 `UnixMasterWriter` 在 Drop
+/// 时会往终端里写一个 `\n` 加 EOF 字符（Ctrl-D），本意是让 shell 优雅退出。可关标签时
+/// 这一写发生在 SIGHUP 送达之前，前台程序会先收到一个**回车**：
+///
+/// - 前台是 tmux 客户端 → 回车和 Ctrl-D 被原样转发进 tmux 会话，会话里的 shell 退出，
+///   **会话被结束**（用户期望的是只断开、会话保留）
+/// - 提示符后面有敲了一半的命令 → 那个回车会**把它执行掉**
+///
+/// 这里改为复制一份 master 描述符来写，Drop 时只关闭描述符、不写任何东西。挂断交给
+/// [`Session::hangup`] 的 SIGHUP。复制用 `try_clone_to_owned()`，底层是
+/// `F_DUPFD_CLOEXEC`——普通 `dup()` 不带 CLOEXEC，描述符会泄漏进之后新开标签的 shell，
+/// 让已关掉的 PTY 一直释放不了。
+#[cfg(unix)]
+fn master_writer(master: &dyn portable_pty::MasterPty) -> Result<Box<dyn Write + Send>> {
+    use std::os::fd::BorrowedFd;
+    let raw = master.as_raw_fd().context("拿不到 PTY master 描述符")?;
+    // SAFETY: raw 属于 `master`，调用期间它一直存活；这里只借用来复制，不转移所有权
+    let owned = unsafe { BorrowedFd::borrow_raw(raw) }
+        .try_clone_to_owned()
+        .context("复制 PTY master 描述符失败")?;
+    Ok(Box::new(std::fs::File::from(owned)))
+}
+
+/// Windows 的 ConPTY 写入端没有上述注入行为，照常用 `take_writer()`。
+#[cfg(not(unix))]
+fn master_writer(master: &dyn portable_pty::MasterPty) -> Result<Box<dyn Write + Send>> {
+    master.take_writer().context("拿不到 PTY writer")
+}
+
 impl Session {
     /// 启动一个新会话，spawn 子 shell。
     pub fn spawn(cfg: SessionConfig) -> Result<Self> {
@@ -261,7 +292,7 @@ impl Session {
         // slave 端 fd 已交给子进程，drop 掉父进程持有的句柄
         drop(pair.slave);
 
-        let writer = pair.master.take_writer().context("拿不到 PTY writer")?;
+        let writer = master_writer(pair.master.as_ref())?;
         let mut reader = pair.master.try_clone_reader().context("拿不到 PTY reader")?;
 
         let (tx, rx) = mpsc::unbounded_channel::<Vec<u8>>();

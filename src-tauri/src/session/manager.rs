@@ -353,6 +353,48 @@ mod close_hangup_tests {
         );
     }
 
+    /// **关标签不能往终端里凭空写入任何东西。**
+    ///
+    /// portable-pty 的 `UnixMasterWriter` 在 Drop 时会写一个 `\n` 加 EOF 字符（Ctrl-D）。
+    /// 关标签时这发生在 SIGHUP 送达之前，于是前台程序会先收到一个回车：
+    /// - 前台是 `cat > 文件` → 文件里多出一个换行（本用例据此判断）
+    /// - 前台是 tmux 客户端 → 回车和 Ctrl-D 被转发进 tmux 会话，会话里的 shell 退出，
+    ///   **会话被结束**；如果提示符后面还有敲了一半的命令，那个回车会**把它执行掉**
+    #[tokio::test]
+    async fn close_不会往前台程序写入回车或_eof() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let target = dir.path().join("sink.txt");
+        let mgr = SessionManager::new();
+        let id = mgr
+            .open(SessionConfig {
+                shell: Some("/bin/sh".to_string()),
+                cols: 80,
+                rows: 24,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+
+        let cmd = format!("cat > '{}'\n", target.display());
+        mgr.write(id, cmd.as_bytes()).await.unwrap();
+        // 等 cat 真的起来并建出文件
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while !target.exists() {
+            assert!(std::time::Instant::now() < deadline, "5s 内 cat 没起来");
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        mgr.close(id).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        let got = std::fs::read(&target).unwrap();
+        assert!(
+            got.is_empty(),
+            "关标签往前台程序里写进了 {got:?}（应当什么都不写）"
+        );
+    }
+
     /// 找 `parent_pid` 的第一个子进程 pid。
     fn find_child_of(parent_pid: u32) -> Option<u32> {
         use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};

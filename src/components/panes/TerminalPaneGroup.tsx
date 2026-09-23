@@ -31,7 +31,13 @@ import { CSS } from "@dnd-kit/utilities";
 import { useTabsStore, type Tab, type TabId } from "../../stores/tabs";
 import { usePaneLayoutStore, type PaneGroup } from "../../stores/pane-layout";
 import { useFocusSurfaceStore } from "../../stores/focus-surface";
-import { sessionHasRunningCommand, type SessionId } from "../../lib/tauri";
+import {
+  sessionHasRunningCommand,
+  tmuxKillSession,
+  tmuxSessionOfTab,
+  type SessionId,
+  type TmuxSessionRef,
+} from "../../lib/tauri";
 import TerminalView from "../TerminalView";
 import TabMetadataIcons from "../TabMetadataIcons";
 import CloseTabConfirmDialog from "../CloseTabConfirmDialog";
@@ -108,6 +114,8 @@ export function TerminalPaneGroup({ group }: Props) {
   const [pendingClose, setPendingClose] = useState<{
     tabId: TabId;
     title: string;
+    /** 该标签接着的 tmux 会话；有则弹框换成"保留 / 结束会话"两个选项。 */
+    tmux: TmuxSessionRef | null;
   } | null>(null);
 
   /**
@@ -125,10 +133,22 @@ export function TerminalPaneGroup({ group }: Props) {
       void closeTabInGroup(group.id, tabId);
       return;
     }
+    // 先看是不是接着 tmux：是的话弹专用框。tmux 客户端本身也算"运行中的命令"，
+    // 不先分流的话会落进通用的"有任务正在运行"——那句话读起来像会话会跟着没了，
+    // 而实际上关标签只会断开连接、会话照常在后台跑。
+    try {
+      const tmux = await tmuxSessionOfTab(tab.sessionId);
+      if (tmux) {
+        setPendingClose({ tabId, title: tab.title, tmux });
+        return;
+      }
+    } catch (e) {
+      console.warn("tmuxSessionOfTab 失败，按普通标签处理", e);
+    }
     try {
       const hasRunning = await sessionHasRunningCommand(tab.sessionId);
       if (hasRunning) {
-        setPendingClose({ tabId, title: tab.title });
+        setPendingClose({ tabId, title: tab.title, tmux: null });
         return;
       }
     } catch (e) {
@@ -405,6 +425,17 @@ export function TerminalPaneGroup({ group }: Props) {
           }
         }}
         onCancel={() => setPendingClose(null)}
+        tmuxSession={pendingClose?.tmux ?? null}
+        onCloseAndKillTmux={() => {
+          const p = pendingClose;
+          if (!p?.tmux) return;
+          setPendingClose(null);
+          // 先结束会话再关标签。结束失败（比如会话刚被别处关掉）也照样关标签，
+          // 不把用户卡在弹框里。
+          void tmuxKillSession(p.tmux.id)
+            .catch((e) => console.warn("结束 tmux 会话失败", e))
+            .finally(() => void closeTabInGroup(group.id, p.tabId));
+        }}
       />
     </div>
   );

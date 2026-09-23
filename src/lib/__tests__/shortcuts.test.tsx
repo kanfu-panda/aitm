@@ -23,6 +23,7 @@ interface SpyHandlers {
   toggleSidebar: ReturnType<typeof vi.fn>;
   toggleBrowser: ReturnType<typeof vi.fn>;
   toggleFilePreview: ReturnType<typeof vi.fn>;
+  toggleTmux: ReturnType<typeof vi.fn>;
   splitVertical: ReturnType<typeof vi.fn>;
   splitHorizontal: ReturnType<typeof vi.fn>;
   closePane: ReturnType<typeof vi.fn>;
@@ -38,6 +39,7 @@ function makeSpies(): SpyHandlers {
     toggleSidebar: vi.fn(),
     toggleBrowser: vi.fn(),
     toggleFilePreview: vi.fn(),
+    toggleTmux: vi.fn(),
     splitVertical: vi.fn(),
     splitHorizontal: vi.fn(),
     closePane: vi.fn(),
@@ -144,6 +146,25 @@ describe("useShortcuts", () => {
     expect(h.toggleFilePreview).toHaveBeenCalledTimes(1);
     expect(h.toggleBrowser).not.toHaveBeenCalled();
     expect(h.toggleSidebar).not.toHaveBeenCalled();
+  });
+
+  it("Cmd+Shift+M → 触发 toggleTmux，不误触其它面板开关", () => {
+    render(<Host h={h} />);
+    act(() => {
+      fireMetaKey("M", { shift: true });
+    });
+    expect(h.toggleTmux).toHaveBeenCalledTimes(1);
+    expect(h.toggleFilePreview).not.toHaveBeenCalled();
+    expect(h.toggleBrowser).not.toHaveBeenCalled();
+    expect(h.toggleSidebar).not.toHaveBeenCalled();
+  });
+
+  it("Cmd+M（无 Shift）→ 不触发 toggleTmux（macOS 上 Cmd+M 是最小化窗口）", () => {
+    render(<Host h={h} />);
+    act(() => {
+      fireMetaKey("m");
+    });
+    expect(h.toggleTmux).not.toHaveBeenCalled();
   });
 
   it("Cmd+E（无 Shift）→ 不触发 toggleFilePreview", () => {

@@ -315,6 +315,10 @@ pub fn run_gui() {
             ipc::tmux::tmux_attach_command,
             ipc::tmux::tmux_interrupt_session,
             ipc::tmux::tmux_kill_session,
+            ipc::tmux::tmux_new_session,
+            ipc::tmux::tmux_rename_session,
+            ipc::tmux::tmux_capture_pane,
+            ipc::tmux::tmux_session_of_tab,
         ])
         .build(tauri::generate_context!())
         .expect("aitm 启动失败")

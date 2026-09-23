@@ -55,6 +55,8 @@ vi.mock("../../../lib/tauri", async (orig) => {
   return {
     ...real,
     sessionHasRunningCommand: vi.fn().mockResolvedValue(false),
+    tmuxSessionOfTab: vi.fn().mockResolvedValue(null),
+    tmuxKillSession: vi.fn().mockResolvedValue(undefined),
   };
 });
 
@@ -65,11 +67,17 @@ import {
   type PaneGroup,
 } from "../../../stores/pane-layout";
 import { useTabsStore } from "../../../stores/tabs";
-import { sessionHasRunningCommand } from "../../../lib/tauri";
+import {
+  sessionHasRunningCommand,
+  tmuxKillSession,
+  tmuxSessionOfTab,
+} from "../../../lib/tauri";
 
 const mockHasRunning = sessionHasRunningCommand as unknown as ReturnType<
   typeof vi.fn
 >;
+const mockTmuxOfTab = tmuxSessionOfTab as unknown as ReturnType<typeof vi.fn>;
+const mockTmuxKill = tmuxKillSession as unknown as ReturnType<typeof vi.fn>;
 
 function resetAllStores() {
   usePaneLayoutStore.setState({
@@ -95,6 +103,10 @@ beforeEach(() => {
   resetAllStores();
   mockHasRunning.mockReset();
   mockHasRunning.mockResolvedValue(false);
+  mockTmuxOfTab.mockReset();
+  mockTmuxOfTab.mockResolvedValue(null);
+  mockTmuxKill.mockReset();
+  mockTmuxKill.mockResolvedValue(undefined);
 });
 afterEach(cleanup);
 
@@ -679,5 +691,117 @@ describe("TerminalPaneGroup — F3 激活 tab 自动聚焦", () => {
     expect(
       screen.getByTestId("terminal-view-stub-s1").getAttribute("data-active"),
     ).toBe("false");
+  });
+});
+
+/* ============================================================================
+ * 关闭接着 tmux 的标签：默认保留会话，可选同时结束
+ * ========================================================================== */
+describe("TerminalPaneGroup — 关闭接着 tmux 的标签", () => {
+  function renderTmuxTab() {
+    useTabsStore.setState({
+      tabs: [{ id: "t1", title: "tmux: build", sessionId: "s1", auto_title: false }],
+      activeId: "t1",
+      unreadByTab: {},
+    });
+    const group = makeGroup({ id: "g-tmux", tab_ids: ["t1"], active_tab_id: "t1" });
+    usePaneLayoutStore.setState({
+      root: { kind: "leaf", group },
+      active_group_id: "g-tmux",
+    });
+    render(<TerminalPaneGroup group={group} />);
+  }
+
+  it("接着 tmux → 弹框写明会话会保留，并给出保留 / 结束两个选项", async () => {
+    mockTmuxOfTab.mockResolvedValue({ id: "$7", name: "build" });
+    renderTmuxTab();
+
+    fireEvent.click(screen.getByLabelText("关闭标签"));
+
+    const dialog = await screen.findByRole("dialog");
+    expect(mockTmuxOfTab).toHaveBeenCalledWith("s1");
+    expect(dialog.textContent).toContain("build");
+    expect(
+      screen.getByRole("button", { name: "关闭标签，保留会话" }),
+    ).toBeTruthy();
+    expect(screen.getByRole("button", { name: "关闭并结束会话" })).toBeTruthy();
+    // 默认焦点在"保留"上：回车即是最安全的选择
+    await waitFor(() =>
+      expect(document.activeElement?.textContent).toBe("关闭标签，保留会话"),
+    );
+  });
+
+  it("点保留 → 标签关闭，不结束 tmux 会话", async () => {
+    mockTmuxOfTab.mockResolvedValue({ id: "$7", name: "build" });
+    renderTmuxTab();
+
+    fireEvent.click(screen.getByLabelText("关闭标签"));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "关闭标签，保留会话" }),
+    );
+
+    await waitFor(() =>
+      expect(screen.queryByTestId("terminal-pane-group-tab-t1")).toBeNull(),
+    );
+    expect(mockTmuxKill).not.toHaveBeenCalled();
+  });
+
+  it("点结束 → 以 id 结束 tmux 会话，再关闭标签", async () => {
+    mockTmuxOfTab.mockResolvedValue({ id: "$7", name: "build" });
+    renderTmuxTab();
+
+    fireEvent.click(screen.getByLabelText("关闭标签"));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "关闭并结束会话" }),
+    );
+
+    await waitFor(() => expect(mockTmuxKill).toHaveBeenCalledWith("$7"));
+    await waitFor(() =>
+      expect(screen.queryByTestId("terminal-pane-group-tab-t1")).toBeNull(),
+    );
+  });
+
+  it("结束会话失败 → 仍然关闭标签（不把用户卡在弹框里）", async () => {
+    mockTmuxOfTab.mockResolvedValue({ id: "$7", name: "build" });
+    mockTmuxKill.mockRejectedValue(new Error("can't find session"));
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    renderTmuxTab();
+
+    fireEvent.click(screen.getByLabelText("关闭标签"));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "关闭并结束会话" }),
+    );
+
+    await waitFor(() =>
+      expect(screen.queryByTestId("terminal-pane-group-tab-t1")).toBeNull(),
+    );
+    warnSpy.mockRestore();
+  });
+
+  it("没接 tmux → 走原来的运行中命令检查", async () => {
+    mockTmuxOfTab.mockResolvedValue(null);
+    mockHasRunning.mockResolvedValue(true);
+    renderTmuxTab();
+
+    fireEvent.click(screen.getByLabelText("关闭标签"));
+
+    const dialog = await screen.findByRole("dialog");
+    expect(mockHasRunning).toHaveBeenCalledWith("s1");
+    expect(dialog.textContent).toContain("有任务正在运行");
+  });
+
+  it("tmux 查询失败 → 退回原来的运行中命令检查", async () => {
+    mockTmuxOfTab.mockRejectedValue(new Error("ipc 炸了"));
+    mockHasRunning.mockResolvedValue(false);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    renderTmuxTab();
+
+    fireEvent.click(screen.getByLabelText("关闭标签"));
+
+    await waitFor(() => expect(mockHasRunning).toHaveBeenCalledWith("s1"));
+    await waitFor(() =>
+      expect(screen.queryByTestId("terminal-pane-group-tab-t1")).toBeNull(),
+    );
+    warnSpy.mockRestore();
   });
 });

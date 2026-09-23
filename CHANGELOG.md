@@ -2,6 +2,22 @@
 
 All notable changes to aitm will be documented in this file. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.0] — 2026-09-24
+
+### Added
+
+- **Create and rename tmux sessions from the panel.** New sessions are named after the current tab's directory by default and start in that directory, then open straight into a new tab. Names cannot be empty, contain `.` or `:`, or duplicate an existing session — the dialog says so before anything is sent.
+- **Output preview.** Expand a session to see its last 30 lines of output without attaching, so you do not resize its window or disturb a terminal that is already connected.
+- **New-output marker.** A session that has produced output since you last looked at it (expanded its preview or attached) is flagged in the list. Nothing is flagged on first open.
+- **The list refreshes every 3 seconds while the panel is open**, so sessions created or ended elsewhere show up almost immediately. Background refreshes do not flicker the loading state and do not pile up if tmux is slow; refreshing stops when the panel is closed.
+- **`Cmd+Shift+M` toggles the tmux panel.** It can be rebound in settings and appears in the command palette. `Cmd+M` was avoided because macOS uses it to minimise the window.
+- **Closing a tab attached to tmux now asks whether to keep or end the session.** The dialog explains that closing the tab only disconnects it and the session keeps running; keeping it is the default. Tabs where you ran `tmux attach` or `tmux new` yourself are recognised too.
+
+### Fixed
+
+- **Closing a tab typed a newline and Ctrl-D into the terminal.** The underlying PTY library writes those two characters when its writer is released, and on tab close they often reached the foreground program before the hang-up signal did. For a tab attached to tmux, the Ctrl-D was forwarded into the session and its shell exited — **ending the session**. Worse, a half-typed command at the prompt could be **executed** by that newline. Closing a tab now writes nothing to the terminal and only sends the hang-up signal.
+- **Ending, interrupting or attaching to a session could act on a different one.** Sessions were addressed by name, and tmux matches names by prefix: with only `build-long` present, an action aimed at `build` landed on `build-long` — for example when `build` had just been closed elsewhere and the list had not refreshed yet. Every per-session action now addresses tmux's session ID, which is exact and survives a rename.
+
 ## [1.5.2] — 2026-09-23
 
 ### Fixed

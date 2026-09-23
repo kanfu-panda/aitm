@@ -267,6 +267,7 @@ export function ActivityBar({ position, onSettingsOpen }: ActivityBarProps) {
         <ActivityBarItem
           icon={<SquareTerminal size={iconSize} aria-hidden />}
           label={t("activityBar.tmux")}
+          shortcut="⌘⇧M"
           isActive={tmuxOpen}
           onClick={toggleTmux}
           position={position}
