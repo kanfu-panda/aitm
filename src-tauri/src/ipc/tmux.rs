@@ -112,6 +112,24 @@ fn parse_sessions(stdout: &str) -> Vec<TmuxSession> {
         .collect()
 }
 
+/// 解析 stdout；**有输出却一条都解析不出来时报错，而不是当成"没有会话"**。
+///
+/// 这条守的是一类最难发现的故障：tmux 明明列出了会话，但分隔符被环境改写
+/// （locale 缺失时控制字符会变成 `_`），于是每行字段数不足被整行丢弃。
+/// 如果这时候返回空列表，界面会理直气壮地显示"当前没有 tmux 会话"——
+/// **一个自信的错误答案比一个报错危险得多**。
+fn parse_or_report(stdout: &str) -> Result<Vec<TmuxSession>, String> {
+    let sessions = parse_sessions(stdout);
+    let non_empty_lines = stdout.lines().filter(|l| !l.trim().is_empty()).count();
+    if sessions.is_empty() && non_empty_lines > 0 {
+        return Err(format!(
+            "tmux 返回了 {non_empty_lines} 行，但一条都解析不出来——\
+             分隔符可能被环境改写（检查 LANG / LC_CTYPE）"
+        ));
+    }
+    Ok(sessions)
+}
+
 /// 空字符串归一为 `None`。
 fn non_empty(s: &str) -> Option<String> {
     if s.is_empty() {
@@ -151,9 +169,27 @@ fn is_no_server_error(stderr: &str) -> bool {
     NO_SERVER_MARKERS.iter().any(|m| lower.contains(m))
 }
 
+/// 构造一个跑 tmux 的 `Command`，并补上 UTF-8 locale。
+///
+/// **locale 这步不能省**：`.app` 从访达 / 程序坞启动时拿不到 `LANG` / `LC_CTYPE`，
+/// tmux 在非 UTF-8 locale 下会把格式输出里的**所有控制字符替换成 `_`**——包括
+/// [`FIELD_SEP`]。结果是每行只剩一个字段，[`parse_sessions`] 因为字段数不足全部
+/// 丢弃，列表被解析成空，UI 上表现为"当前没有 tmux 会话"，而实际会话好好地跑着。
+///
+/// 实测（同一个 tmux、同一条命令，只差环境）：
+/// - 有 `LANG`：`b"aim-quant\x1f1\x1f1"`
+/// - 无 `LANG`：`b"aim-quant_1_1"`
+fn tmux_command() -> Command {
+    let mut cmd = Command::new(tmux_bin());
+    for (key, value) in crate::session::platform::missing_utf8_locale_env() {
+        cmd.env(key, value);
+    }
+    cmd
+}
+
 /// 跑一条 tmux 子命令，只关心成败。参数以数组传递，**不经过 shell**。
 async fn run_tmux(args: Vec<String>) -> Result<(), String> {
-    let out = tokio::task::spawn_blocking(move || Command::new(tmux_bin()).args(&args).output())
+    let out = tokio::task::spawn_blocking(move || tmux_command().args(&args).output())
         .await
         .map_err(|e| format!("执行 tmux 任务失败：{e}"))?;
 
@@ -180,7 +216,7 @@ async fn run_tmux(args: Vec<String>) -> Result<(), String> {
 /// 不是故障，UI 据此显示空状态。
 #[tauri::command]
 pub async fn tmux_available() -> Result<bool, String> {
-    tokio::task::spawn_blocking(|| Command::new(tmux_bin()).arg("-V").output().is_ok())
+    tokio::task::spawn_blocking(|| tmux_command().arg("-V").output().is_ok())
         .await
         .map_err(|e| format!("探测 tmux 失败：{e}"))
 }
@@ -191,7 +227,7 @@ pub async fn tmux_available() -> Result<bool, String> {
 #[tauri::command]
 pub async fn tmux_list_sessions() -> Result<Vec<TmuxSession>, String> {
     let out = tokio::task::spawn_blocking(|| {
-        Command::new(tmux_bin())
+        tmux_command()
             .args(["list-sessions", "-F", LIST_FORMAT])
             .output()
     })
@@ -203,7 +239,7 @@ pub async fn tmux_list_sessions() -> Result<Vec<TmuxSession>, String> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
         Err(e) => Err(format!("执行 tmux 失败：{e}")),
         Ok(o) if o.status.success() => {
-            Ok(parse_sessions(&String::from_utf8_lossy(&o.stdout)))
+            parse_or_report(&String::from_utf8_lossy(&o.stdout))
         }
         Ok(o) => {
             let stderr = String::from_utf8_lossy(&o.stderr);
@@ -403,6 +439,114 @@ mod tests {
         assert!(!is_no_server_error("session not found: ghost"));
         assert!(!is_no_server_error("permission denied"));
         assert!(!is_no_server_error(""));
+    }
+
+    // === locale 缺失导致分隔符被吃掉（安装版真实故障）===
+
+    #[test]
+    fn ut_b21_有输出却一条都解析不出来时报错_而不是当成没有会话() {
+        // 这正是安装版里看到的 stdout：tmux 把 0x1f 换成了 `_`
+        let mangled = "aim-quant_1_1_1700000000_/tmp_zsh_title\nother_1_0_1700000001_/tmp_zsh_t";
+        let err = parse_or_report(mangled).unwrap_err();
+        assert!(err.contains("2 行"), "应报出实际行数，实际：{err}");
+        assert!(
+            err.contains("LANG") || err.contains("LC_CTYPE"),
+            "错误信息应指向 locale，实际：{err}"
+        );
+    }
+
+    #[test]
+    fn ut_b22_真的没有会话时返回空列表_不报错() {
+        assert_eq!(parse_or_report("").unwrap().len(), 0);
+        assert_eq!(parse_or_report("\n  \n").unwrap().len(), 0);
+    }
+
+    #[test]
+    fn ut_b23_正常输出照常解析() {
+        let ok = line(&["a", "1", "0", "1700000000", "/tmp", "zsh", "t"]);
+        assert_eq!(parse_or_report(&ok).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn ut_b24_缺失_locale_时会被补上() {
+        let _g = crate::test_env_lock::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let saved: Vec<_> = ["LANG", "LC_CTYPE"]
+            .iter()
+            .map(|k| (*k, std::env::var(k).ok()))
+            .collect();
+        // SAFETY: ENV_LOCK 串行，与其它改 env 的测试互斥
+        unsafe {
+            for (k, _) in &saved {
+                std::env::remove_var(k);
+            }
+        }
+        let pairs = crate::session::platform::missing_utf8_locale_env();
+        let keys: Vec<_> = pairs.iter().map(|(k, _)| *k).collect();
+        unsafe {
+            for (k, v) in saved {
+                match v {
+                    Some(v) => std::env::set_var(k, v),
+                    None => std::env::remove_var(k),
+                }
+            }
+        }
+        assert!(keys.contains(&"LANG"), "LANG 缺失时应被补上");
+        assert!(keys.contains(&"LC_CTYPE"), "LC_CTYPE 缺失时应被补上");
+    }
+
+    /// 端到端回归：**清掉 locale 之后仍然要能列出会话**。
+    ///
+    /// 这条直接复现安装版的故障条件——`.app` 从访达启动时 `LANG` / `LC_CTYPE`
+    /// 都是空的。修复前在这个条件下 tmux 会把分隔符换成 `_`，解析结果为空；
+    /// 修复后 [`tmux_command`] 会把 locale 补回去。
+    ///
+    /// 复现条件是**同时缺 `LANG` 和 `TMUX`**：任一存在 tmux 都会正常输出控制字符。
+    /// 依赖本机真的有 tmux 会话，没有就跳过（CI / 别人的机器）。
+    // ENV_LOCK 是 std::sync::Mutex，这里确实跨 await 持有它。
+    // 单测跑在 current_thread runtime 上、且 env 是进程级全局状态——
+    // 必须整段串行，否则并发测试会互相覆盖 LANG/TMUX。不会死锁。
+    #[allow(clippy::await_holding_lock)]
+    #[tokio::test]
+    async fn ut_b25_清掉_locale_后仍能列出本机会话() {
+        let _g = crate::test_env_lock::ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+
+        // 先在当前环境下看看本机到底有没有会话；没有就没什么可断言的
+        let baseline = tmux_list_sessions().await.unwrap_or_default();
+        if baseline.is_empty() {
+            return;
+        }
+
+        // 必须连 TMUX 一起清掉：开发机的 shell 常常本身就跑在 tmux 里，
+        // 而 tmux 子进程看到 TMUX 时即使没有 locale 也会正常输出控制字符——
+        // 留着它这条测试就永远是绿的（第一版就栽在这）。
+        let saved: Vec<_> = ["LANG", "LC_CTYPE", "LC_ALL", "TMUX", "TMUX_PANE"]
+            .iter()
+            .map(|k| (*k, std::env::var(k).ok()))
+            .collect();
+        // SAFETY: ENV_LOCK 串行
+        unsafe {
+            for (k, _) in &saved {
+                std::env::remove_var(k);
+            }
+        }
+        let got = tmux_list_sessions().await;
+        unsafe {
+            for (k, v) in saved {
+                match v {
+                    Some(v) => std::env::set_var(k, v),
+                    None => std::env::remove_var(k),
+                }
+            }
+        }
+
+        let got = got.expect("清掉 locale 后不应报错");
+        assert_eq!(
+            got.len(),
+            baseline.len(),
+            "清掉 LANG / LC_CTYPE 后列出的会话数应与正常环境一致"
+        );
     }
 
     // === 可执行文件解析（GUI 启动时 PATH 只有 /usr/bin:/bin:/usr/sbin:/sbin）===

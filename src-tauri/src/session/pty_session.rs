@@ -204,21 +204,9 @@ fn resolve_initial_cwd(cwd: Option<&str>) -> Option<std::path::PathBuf> {
 ///
 /// 修：缺失或为空 → fallback 到通用 UTF-8 locale。已设的尊重用户偏好不动。
 fn ensure_utf8_locale(cmd: &mut CommandBuilder) {
-    let lang_set = std::env::var("LANG")
-        .ok()
-        .map(|v| !v.is_empty())
-        .unwrap_or(false);
-    if !lang_set {
-        cmd.env("LANG", "en_US.UTF-8");
+    for (key, value) in super::platform::missing_utf8_locale_env() {
+        cmd.env(key, value);
     }
-    let ctype_set = std::env::var("LC_CTYPE")
-        .ok()
-        .map(|v| !v.is_empty())
-        .unwrap_or(false);
-    if !ctype_set {
-        cmd.env("LC_CTYPE", "UTF-8");
-    }
-    // LC_ALL 不主动设——它会强覆盖所有 LC_*，可能 override 用户其它偏好（如 LC_NUMERIC）
 }
 
 impl Session {
