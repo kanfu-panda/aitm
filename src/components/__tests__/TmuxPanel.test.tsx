@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { TmuxSession } from "../../lib/tauri";
 
@@ -14,6 +14,10 @@ const tmuxListSessionsMock = vi.fn();
 const tmuxAttachCommandMock = vi.fn();
 const tmuxInterruptSessionMock = vi.fn();
 const tmuxKillSessionMock = vi.fn();
+const tmuxNewSessionMock = vi.fn();
+const tmuxRenameSessionMock = vi.fn();
+const tmuxCapturePaneMock = vi.fn();
+const sessionCurrentCwdMock = vi.fn();
 
 vi.mock("../../lib/tauri", async (orig) => {
   const real = await orig<typeof import("../../lib/tauri")>();
@@ -21,10 +25,16 @@ vi.mock("../../lib/tauri", async (orig) => {
     ...real,
     tmuxAvailable: () => tmuxAvailableMock(),
     tmuxListSessions: () => tmuxListSessionsMock(),
-    tmuxAttachCommand: (name: string, takeover: boolean) =>
-      tmuxAttachCommandMock(name, takeover),
-    tmuxInterruptSession: (name: string) => tmuxInterruptSessionMock(name),
-    tmuxKillSession: (name: string) => tmuxKillSessionMock(name),
+    tmuxAttachCommand: (id: string, takeover: boolean) =>
+      tmuxAttachCommandMock(id, takeover),
+    tmuxInterruptSession: (id: string) => tmuxInterruptSessionMock(id),
+    tmuxKillSession: (id: string) => tmuxKillSessionMock(id),
+    tmuxNewSession: (name: string, cwd: string | null) =>
+      tmuxNewSessionMock(name, cwd),
+    tmuxRenameSession: (id: string, name: string) =>
+      tmuxRenameSessionMock(id, name),
+    tmuxCapturePane: (id: string) => tmuxCapturePaneMock(id),
+    sessionCurrentCwd: (id: string) => sessionCurrentCwdMock(id),
   };
 });
 
@@ -32,8 +42,14 @@ import TmuxPanel from "../tmux/TmuxPanel";
 import { useTmuxStore } from "../../stores/tmux";
 import { useTabsStore } from "../../stores/tabs";
 
-function session(name: string, attached = 0): TmuxSession {
+function session(
+  name: string,
+  attached = 0,
+  activity = 100,
+): TmuxSession {
   return {
+    id: `$${name}`,
+    activity,
     name,
     windows: 2,
     attached,
@@ -59,6 +75,7 @@ describe("TmuxPanel", () => {
       loading: false,
       error: null,
       available: true,
+      seen: {},
     });
     useTabsStore.setState({ tabs: [], activeId: null, unreadByTab: {} });
     tmuxAvailableMock.mockResolvedValue(true);
@@ -123,7 +140,7 @@ describe("TmuxPanel", () => {
     expect(tab.title).toContain("alpha");
     expect(tab.initialInput).toBe("tmux attach-session -t 'alpha'\n");
     // 默认是共享接入，不踢人
-    expect(tmuxAttachCommandMock).toHaveBeenCalledWith("alpha", false);
+    expect(tmuxAttachCommandMock).toHaveBeenCalledWith("$alpha", false);
   });
 
   it("UT-P06 右键弹出菜单，含接管 / 中断 / 结束三项", async () => {
@@ -154,7 +171,7 @@ describe("TmuxPanel", () => {
     fireEvent.click(screen.getByTestId("tmux-menu-takeover"));
 
     await waitFor(() =>
-      expect(tmuxAttachCommandMock).toHaveBeenCalledWith("alpha", true),
+      expect(tmuxAttachCommandMock).toHaveBeenCalledWith("$alpha", true),
     );
     await waitFor(() => expect(useTabsStore.getState().tabs).toHaveLength(1));
     expect(useTabsStore.getState().tabs[0].initialInput).toBe(
@@ -174,7 +191,7 @@ describe("TmuxPanel", () => {
     fireEvent.click(screen.getByTestId("tmux-menu-interrupt"));
 
     await waitFor(() =>
-      expect(tmuxInterruptSessionMock).toHaveBeenCalledWith("alpha"),
+      expect(tmuxInterruptSessionMock).toHaveBeenCalledWith("$alpha"),
     );
   });
 
@@ -193,7 +210,7 @@ describe("TmuxPanel", () => {
     fireEvent.click(screen.getByTestId("tmux-menu-kill"));
 
     await waitFor(() =>
-      expect(tmuxKillSessionMock).toHaveBeenCalledWith("alpha"),
+      expect(tmuxKillSessionMock).toHaveBeenCalledWith("$alpha"),
     );
     expect(confirmSpy).toHaveBeenCalled();
     confirmSpy.mockRestore();
@@ -227,5 +244,172 @@ describe("TmuxPanel", () => {
         callsBefore,
       ),
     );
+  });
+});
+
+describe("TmuxPanel 增强：定时刷新、新建、改名、预览、新输出", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    useTmuxStore.setState({
+      sessions: [],
+      loading: false,
+      error: null,
+      available: true,
+      seen: {},
+    });
+    useTabsStore.setState({ tabs: [], activeId: null, unreadByTab: {} });
+    tmuxAvailableMock.mockResolvedValue(true);
+    tmuxListSessionsMock.mockResolvedValue([]);
+    tmuxAttachCommandMock.mockResolvedValue("tmux attach-session -t '$new'");
+  });
+
+  it("UT-P12 挂载期间每 3 秒刷新一次，卸载后不再刷新", async () => {
+    vi.useFakeTimers();
+    try {
+      const view = render(<TmuxPanel />);
+      await act(async () => {
+        await Promise.resolve();
+      });
+      const afterMount = tmuxListSessionsMock.mock.calls.length;
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3_000);
+      });
+      expect(tmuxListSessionsMock.mock.calls.length).toBe(afterMount + 1);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3_000);
+      });
+      expect(tmuxListSessionsMock.mock.calls.length).toBe(afterMount + 2);
+
+      view.unmount();
+      const afterUnmount = tmuxListSessionsMock.mock.calls.length;
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_000);
+      });
+      expect(tmuxListSessionsMock.mock.calls.length).toBe(afterUnmount);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("UT-P13 新建：预填当前标签页目录名，确认后建会话并打开接入标签页", async () => {
+    useTabsStore.setState({
+      tabs: [
+        {
+          id: "t1",
+          title: "x",
+          sessionId: "sid-1",
+          auto_title: true,
+          cwd: "/home/dev/my.proj",
+        },
+      ],
+      activeId: "t1",
+      unreadByTab: {},
+    });
+    sessionCurrentCwdMock.mockResolvedValue("/home/dev/my.proj");
+    tmuxNewSessionMock.mockResolvedValue("$new");
+    await renderPanel();
+
+    fireEvent.click(screen.getByTestId("tmux-new"));
+    const input = (await screen.findByTestId(
+      "input-dialog-input",
+    )) as HTMLInputElement;
+    // 目录名里的 . 替换成 _
+    await waitFor(() => expect(input.value).toBe("my_proj"));
+
+    fireEvent.click(screen.getByTestId("input-dialog-ok"));
+
+    await waitFor(() =>
+      expect(tmuxNewSessionMock).toHaveBeenCalledWith(
+        "my_proj",
+        "/home/dev/my.proj",
+      ),
+    );
+    await waitFor(() =>
+      expect(useTabsStore.getState().tabs.length).toBe(2),
+    );
+    expect(tmuxAttachCommandMock).toHaveBeenCalledWith("$new", false);
+  });
+
+  it("UT-P14 新建时重名或含冒号：显示错误且不调接口", async () => {
+    tmuxListSessionsMock.mockResolvedValue([session("taken")]);
+    await renderPanel();
+    await screen.findByTestId("tmux-session-item-taken");
+
+    fireEvent.click(screen.getByTestId("tmux-new"));
+    const input = await screen.findByTestId("input-dialog-input");
+
+    fireEvent.change(input, { target: { value: "taken" } });
+    expect(await screen.findByTestId("input-dialog-error")).toBeInTheDocument();
+    expect(screen.getByTestId("input-dialog-ok")).toBeDisabled();
+
+    fireEvent.change(input, { target: { value: "a:b" } });
+    expect(await screen.findByTestId("input-dialog-error")).toBeInTheDocument();
+    expect(screen.getByTestId("input-dialog-ok")).toBeDisabled();
+
+    expect(tmuxNewSessionMock).not.toHaveBeenCalled();
+  });
+
+  it("UT-P15 右键重命名：预填当前名，确认后以 id 调改名接口", async () => {
+    tmuxListSessionsMock.mockResolvedValue([session("alpha")]);
+    tmuxRenameSessionMock.mockResolvedValue(undefined);
+    await renderPanel();
+    await screen.findByTestId("tmux-session-item-alpha");
+
+    fireEvent.contextMenu(screen.getByTestId("tmux-session-item-alpha"));
+    fireEvent.click(screen.getByTestId("tmux-menu-rename"));
+
+    const input = (await screen.findByTestId(
+      "input-dialog-input",
+    )) as HTMLInputElement;
+    expect(input.value).toBe("alpha");
+    fireEvent.change(input, { target: { value: "alpha-2" } });
+    fireEvent.click(screen.getByTestId("input-dialog-ok"));
+
+    await waitFor(() =>
+      expect(tmuxRenameSessionMock).toHaveBeenCalledWith("$alpha", "alpha-2"),
+    );
+  });
+
+  it("UT-P16 展开：调预览接口并显示文本，同时消除新输出标记", async () => {
+    tmuxListSessionsMock.mockResolvedValueOnce([session("alpha", 0, 100)]);
+    tmuxListSessionsMock.mockResolvedValue([session("alpha", 0, 900)]);
+    tmuxCapturePaneMock.mockResolvedValue("step 1\nstep 2 done");
+    await renderPanel();
+    await screen.findByTestId("tmux-session-item-alpha");
+    // 第二次刷新拿到更大的 activity → 出现新输出标记
+    fireEvent.click(screen.getByTestId("tmux-refresh"));
+    await screen.findByTestId("tmux-new-output-alpha");
+
+    fireEvent.click(screen.getByTestId("tmux-expand-alpha"));
+
+    await waitFor(() =>
+      expect(tmuxCapturePaneMock).toHaveBeenCalledWith("$alpha"),
+    );
+    const preview = await screen.findByTestId("tmux-preview-alpha");
+    expect(preview.textContent).toContain("step 2 done");
+    expect(screen.queryByTestId("tmux-new-output-alpha")).toBeNull();
+  });
+
+  it("UT-P17 首次加载不显示新输出标记", async () => {
+    tmuxListSessionsMock.mockResolvedValue([session("alpha", 0, 900)]);
+    await renderPanel();
+    await screen.findByTestId("tmux-session-item-alpha");
+    expect(screen.queryByTestId("tmux-new-output-alpha")).toBeNull();
+  });
+
+  it("UT-P18 预览失败时在预览区显示错误，不影响列表", async () => {
+    tmuxListSessionsMock.mockResolvedValue([session("alpha")]);
+    tmuxCapturePaneMock.mockRejectedValue(new Error("can't find session"));
+    await renderPanel();
+    await screen.findByTestId("tmux-session-item-alpha");
+
+    fireEvent.click(screen.getByTestId("tmux-expand-alpha"));
+
+    const preview = await screen.findByTestId("tmux-preview-alpha");
+    await waitFor(() =>
+      expect(preview.textContent).toContain("can't find session"),
+    );
+    expect(screen.getByTestId("tmux-session-item-alpha")).toBeInTheDocument();
   });
 });

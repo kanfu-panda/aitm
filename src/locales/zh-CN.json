@@ -273,7 +273,8 @@
       "toggleFilePreview": "切换文件预览面板",
       "splitVertical": "左右分屏",
       "splitHorizontal": "上下分屏",
-      "closePane": "关闭分屏"
+      "closePane": "关闭分屏",
+      "toggleTmux": "切换 tmux 会话面板"
     }
   },
   "providers": {
@@ -333,7 +334,10 @@
     "title": "关闭标签 \"{{title}}\"？",
     "description": "有任务正在运行，确定关闭吗？",
     "cancel": "取消",
-    "forceClose": "关闭"
+    "forceClose": "关闭",
+    "tmuxDescription": "这个标签接着 tmux 会话「{{name}}」。关闭标签只会断开连接，会话会继续在后台运行，之后可以从 tmux 面板重新接入。",
+    "keepSession": "关闭标签，保留会话",
+    "killSession": "关闭并结束会话"
   },
   "closeFileConfirm": {
     "dialogAria": "关闭文件确认",
@@ -501,7 +505,8 @@
     "toggleFilePreview": "切换文件面板",
     "splitVertical": "向右分屏",
     "splitHorizontal": "向下分屏",
-    "closePane": "关闭分屏"
+    "closePane": "关闭分屏",
+    "toggleTmux": "切换 tmux 面板"
   },
   "browserNav": {
     "back": "后退",
@@ -549,6 +554,25 @@
     "menuTakeover": "接管（踢掉其它客户端）",
     "menuInterrupt": "中断当前命令",
     "menuKill": "结束会话",
-    "killConfirm": "确定结束 tmux 会话 {{name}}？\n\n会话内正在运行的程序会一并终止，此操作不可撤销。"
+    "killConfirm": "确定结束 tmux 会话 {{name}}？\n\n会话内正在运行的程序会一并终止，此操作不可撤销。",
+    "new": "新建会话",
+    "newTitle": "新建 tmux 会话",
+    "newCwdHint": "工作目录：{{cwd}}",
+    "newOk": "新建并接入",
+    "renameTitle": "重命名会话",
+    "renameOk": "重命名",
+    "menuRename": "重命名",
+    "nameEmpty": "会话名不能为空",
+    "nameBadChar": "会话名不能包含 . 或 :",
+    "nameControl": "会话名不能包含控制字符",
+    "nameTaken": "已有同名会话",
+    "newOutput": "新输出",
+    "newOutputHint": "上次查看之后这个会话有了新输出",
+    "expand": "展开预览",
+    "collapse": "收起预览",
+    "previewTitle": "最近输出",
+    "previewReload": "刷新预览",
+    "previewLoading": "正在读取…",
+    "previewEmpty": "暂无输出"
   }
 }

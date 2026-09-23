@@ -1344,7 +1344,15 @@ export async function onPtyCwdChanged(
  * 所以 UI 以 `title`（tmux 的 `pane_title`）作为任务标签。
  */
 export interface TmuxSession {
-  /** 会话名，attach / kill 的标识。 */
+  /**
+   * tmux 的 `session_id`（形如 `$96`）。**所有针对具体会话的操作都传它**，不传名字：
+   * tmux 按名字定位时做前缀匹配，目标已被关掉时会误中名字以它开头的另一个会话；
+   * id 精确，且改名后不变。
+   */
+  id: string;
+  /** 最近一次有输出的时间，Unix 秒。用来判断"上次查看后有没有新输出"。 */
+  activity: number;
+  /** 会话名，只用于显示。 */
   name: string;
   /** 窗口数量。 */
   windows: number;
@@ -1375,18 +1383,60 @@ export async function tmuxListSessions(): Promise<TmuxSession[]> {
  * `takeover=true` 时带 `-d`，踢掉该会话的其它客户端。
  */
 export async function tmuxAttachCommand(
-  name: string,
+  id: string,
   takeover: boolean,
 ): Promise<string> {
-  return await invoke<string>("tmux_attach_command", { name, takeover });
+  return await invoke<string>("tmux_attach_command", { id, takeover });
 }
 
 /** 向会话发 Ctrl-C 中断当前命令；会话本身保留。 */
-export async function tmuxInterruptSession(name: string): Promise<void> {
-  await invoke("tmux_interrupt_session", { name });
+export async function tmuxInterruptSession(id: string): Promise<void> {
+  await invoke("tmux_interrupt_session", { id });
 }
 
 /** 结束整个会话。**二次确认由调用方负责**。 */
-export async function tmuxKillSession(name: string): Promise<void> {
-  await invoke("tmux_kill_session", { name });
+export async function tmuxKillSession(id: string): Promise<void> {
+  await invoke("tmux_kill_session", { id });
+}
+
+/**
+ * 新建一个后台会话，返回新会话的 id。
+ * `cwd` 为 null 或不是目录时由 tmux 用默认目录；重名时后端报错。
+ */
+export async function tmuxNewSession(
+  name: string,
+  cwd: string | null,
+): Promise<string> {
+  return await invoke<string>("tmux_new_session", { name, cwd });
+}
+
+/** 重命名会话。id 不变。 */
+export async function tmuxRenameSession(
+  id: string,
+  name: string,
+): Promise<void> {
+  await invoke("tmux_rename_session", { id, name });
+}
+
+/** 取会话最后 30 行输出（纯文本，不含转义序列），不接入。 */
+export async function tmuxCapturePane(id: string): Promise<string> {
+  return await invoke<string>("tmux_capture_pane", { id });
+}
+
+/** 某个标签（aitm 会话）接入着的 tmux 会话。 */
+export interface TmuxSessionRef {
+  id: string;
+  name: string;
+}
+
+/**
+ * 查这个标签里是否接着 tmux 会话：按进程父子关系判断，所以手敲的 `tmux attach` /
+ * `tmux new` 也能识别。没接、tmux 没装、服务端没起来都返回 null。
+ */
+export async function tmuxSessionOfTab(
+  sessionId: SessionId,
+): Promise<TmuxSessionRef | null> {
+  return await invoke<TmuxSessionRef | null>("tmux_session_of_tab", {
+    id: sessionId,
+  });
 }

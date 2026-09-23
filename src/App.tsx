@@ -454,6 +454,7 @@ export default function App() {
     // 跟浏览器面板 toggle 行为一致；没打开文件时也允许 toggle store 状态
     // （视觉无变化但不报错，下次开文件直接生效）。
     toggleFilePreview: () => useSidebarStore.getState().toggleFilePreview(),
+    toggleTmux: () => useSidebarStore.getState().toggleTmux(),
     // v0.9.1 HR3-5：Cmd+Shift+B → 切浏览器面板。
     // panelOpen=true → minimizePanel（保留 tabs，仅 destroy webview）
     // panelOpen=false → restorePanel（placeholder bounds 0,0,800,600；

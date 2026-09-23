@@ -468,6 +468,8 @@ export async function installTauriMock(
         if (cmd === "tmux_list_sessions") {
           return [
             {
+              id: "$1",
+              activity: 1700000500,
               name: "build-farm",
               windows: 3,
               attached: 1,
@@ -477,6 +479,8 @@ export async function installTauriMock(
               title: "nightly build",
             },
             {
+              id: "$2",
+              activity: 1700000100,
               name: "scratch",
               windows: 1,
               attached: 0,
@@ -489,6 +493,8 @@ export async function installTauriMock(
               // 名字里带单引号：会话名是 tmux 使用者取的，对本程序来说是
               // 不可信输入。放一条进夹具，让面板渲染和 attach 命令的转义
               // 都真的跑过一遍这条边界。
+              id: "$3",
+              activity: 1700000200,
               name: "it's mine",
               windows: 1,
               attached: 0,
@@ -500,7 +506,8 @@ export async function installTauriMock(
           ];
         }
         if (cmd === "tmux_attach_command") {
-          const name = args.name as string;
+          // 现在按 session_id 接入（形如 `$1`）；名字只用于显示
+          const name = args.id as string;
           const takeover = args.takeover as boolean;
           // 跟后端 `shell_single_quote` 同一套转义规则：单引号包裹，内部的 `'`
           // 换成 `'\''`（闭合 → 转义单引号 → 重新开启）。
@@ -511,13 +518,25 @@ export async function installTauriMock(
           const quoted = `'${name.split("'").join(`'\\''`)}'`;
           return `tmux attach-session${takeover ? " -d" : ""} -t ${quoted}`;
         }
+        if (cmd === "tmux_capture_pane") {
+          return `$ cargo build\n   Compiling demo v0.1.0\n    Finished preview for ${args.id as string}`;
+        }
+        if (cmd === "tmux_new_session" || cmd === "tmux_rename_session") {
+          // 暴露给 spec 断言：最近一次新建 / 改名收到的参数
+          (
+            window as unknown as {
+              __lastTmuxEdit: { cmd: string; args: Record<string, unknown> };
+            }
+          ).__lastTmuxEdit = { cmd, args };
+          return cmd === "tmux_new_session" ? "$9" : null;
+        }
         if (cmd === "tmux_interrupt_session" || cmd === "tmux_kill_session") {
           // 暴露给 spec 断言：最近一次 tmux 干预动作
           (
             window as unknown as {
-              __lastTmuxAction: { cmd: string; name: string };
+              __lastTmuxAction: { cmd: string; id: string };
             }
-          ).__lastTmuxAction = { cmd, name: args.name as string };
+          ).__lastTmuxAction = { cmd, id: args.id as string };
           return null;
         }
 

@@ -275,7 +275,8 @@
       "toggleFilePreview": "Toggle file preview panel",
       "splitVertical": "Split left/right",
       "splitHorizontal": "Split top/bottom",
-      "closePane": "Close split"
+      "closePane": "Close split",
+      "toggleTmux": "Toggle tmux sessions panel"
     }
   },
   "providers": {
@@ -335,7 +336,10 @@
     "title": "Close tab \"{{title}}\"?",
     "description": "A task is running. Close anyway?",
     "cancel": "Cancel",
-    "forceClose": "Close"
+    "forceClose": "Close",
+    "tmuxDescription": "This tab is attached to tmux session \"{{name}}\". Closing the tab only disconnects it; the session keeps running in the background, and you can reattach from the tmux panel later.",
+    "keepSession": "Close tab, keep session",
+    "killSession": "Close and end session"
   },
   "closeFileConfirm": {
     "dialogAria": "Confirm close file",
@@ -503,7 +507,8 @@
     "toggleFilePreview": "Toggle file panel",
     "splitVertical": "Split right",
     "splitHorizontal": "Split down",
-    "closePane": "Close pane"
+    "closePane": "Close pane",
+    "toggleTmux": "Toggle tmux panel"
   },
   "browserNav": {
     "back": "Back",
@@ -551,6 +556,25 @@
     "menuTakeover": "Take over (detach others)",
     "menuInterrupt": "Interrupt current command",
     "menuKill": "Kill session",
-    "killConfirm": "Kill tmux session {{name}}?\n\nEverything running inside it will be terminated. This cannot be undone."
+    "killConfirm": "Kill tmux session {{name}}?\n\nEverything running inside it will be terminated. This cannot be undone.",
+    "new": "New session",
+    "newTitle": "New tmux session",
+    "newCwdHint": "Working directory: {{cwd}}",
+    "newOk": "Create and attach",
+    "renameTitle": "Rename session",
+    "renameOk": "Rename",
+    "menuRename": "Rename",
+    "nameEmpty": "Session name cannot be empty",
+    "nameBadChar": "Session name cannot contain . or :",
+    "nameControl": "Session name cannot contain control characters",
+    "nameTaken": "A session with this name already exists",
+    "newOutput": "new",
+    "newOutputHint": "This session has produced output since you last looked",
+    "expand": "Show preview",
+    "collapse": "Hide preview",
+    "previewTitle": "Recent output",
+    "previewReload": "Refresh preview",
+    "previewLoading": "Loading…",
+    "previewEmpty": "No output yet"
   }
 }

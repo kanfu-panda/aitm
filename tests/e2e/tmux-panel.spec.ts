@@ -83,3 +83,72 @@ test("E2E-04 右键会话项弹出菜单，接管 / 中断 / 结束三项可见"
     )
     .toBe("tmux_interrupt_session");
 });
+
+test("E2E-05 新建会话 → 标签页 +1，且以输入的名字调用新建", async ({ page }) => {
+  await installTauriMock(page);
+  await page.goto("/");
+  await expect(page.getByRole("tab")).toHaveCount(1, { timeout: 5_000 });
+
+  await page.getByTestId("activity-bar-item-tmux").click();
+  await page.getByTestId("tmux-new").click();
+  const input = page.getByTestId("input-dialog-input");
+  await input.fill("e2e-fresh");
+  await page.getByTestId("input-dialog-ok").click();
+
+  await expect(page.getByRole("tab")).toHaveCount(2);
+  await expect
+    .poll(async () =>
+      page.evaluate(
+        () =>
+          (
+            window as unknown as {
+              __lastTmuxEdit?: { cmd: string; args: { name?: string } };
+            }
+          ).__lastTmuxEdit,
+      ),
+    )
+    .toMatchObject({ cmd: "tmux_new_session", args: { name: "e2e-fresh" } });
+});
+
+test("E2E-06 展开会话 → 预览区出现输出", async ({ page }) => {
+  await installTauriMock(page);
+  await page.goto("/");
+
+  await page.getByTestId("activity-bar-item-tmux").click();
+  await page.getByTestId("tmux-expand-build-farm").click();
+
+  const preview = page.getByTestId("tmux-preview-build-farm");
+  await expect(preview).toBeVisible();
+  await expect(preview).toContainText("Finished preview for $1");
+});
+
+test("E2E-07 右键重命名 → 改名接口收到 id 与新名", async ({ page }) => {
+  await installTauriMock(page);
+  await page.goto("/");
+
+  await page.getByTestId("activity-bar-item-tmux").click();
+  await page
+    .getByTestId("tmux-session-item-scratch")
+    .click({ button: "right" });
+  await page.getByTestId("tmux-menu-rename").click();
+  const input = page.getByTestId("input-dialog-input");
+  await expect(input).toHaveValue("scratch");
+  await input.fill("scratch-2");
+  await page.getByTestId("input-dialog-ok").click();
+
+  await expect
+    .poll(async () =>
+      page.evaluate(
+        () =>
+          (
+            window as unknown as {
+              __lastTmuxEdit?: { cmd: string; args: Record<string, unknown> };
+            }
+          ).__lastTmuxEdit,
+      ),
+    )
+    .toMatchObject({
+      cmd: "tmux_rename_session",
+      args: { id: "$2", name: "scratch-2" },
+    });
+});

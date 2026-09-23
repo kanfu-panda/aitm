@@ -17,7 +17,7 @@ import {
  */
 
 describe("DEFAULT_KEYBINDINGS", () => {
-  it("含全部 12 个 action（上述 11 个 + openCommandPalette）", () => {
+  it("含全部 13 个 action（上述 12 个 + openCommandPalette）", () => {
     const expected: ActionName[] = [
       "newTab",
       "closeTab",
@@ -27,6 +27,7 @@ describe("DEFAULT_KEYBINDINGS", () => {
       "toggleSidebar",
       "toggleBrowser",
       "toggleFilePreview",
+      "toggleTmux",
       "splitVertical",
       "splitHorizontal",
       "closePane",
@@ -36,6 +37,11 @@ describe("DEFAULT_KEYBINDINGS", () => {
       expect(DEFAULT_KEYBINDINGS[action]).toBeTruthy();
     }
     expect(Object.keys(DEFAULT_KEYBINDINGS).length).toBe(expected.length);
+  });
+
+  it("tmux 面板默认绑定 Cmd+Shift+M，且与其它默认绑定无冲突", () => {
+    expect(DEFAULT_KEYBINDINGS.toggleTmux).toBe("Cmd+Shift+M");
+    expect(findConflicts(DEFAULT_KEYBINDINGS)).toEqual([]);
   });
 
   it("默认 binding 全部可解析（无 typo）", () => {

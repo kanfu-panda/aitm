@@ -32,6 +32,7 @@ export type ActionName =
   | "toggleSidebar"
   | "toggleBrowser"
   | "toggleFilePreview"
+  | "toggleTmux"
   | "splitVertical"
   | "splitHorizontal"
   | "closePane"
@@ -55,6 +56,8 @@ export const DEFAULT_KEYBINDINGS: Record<ActionName, string> = {
   toggleSidebar: "Cmd+/",
   toggleBrowser: "Cmd+Shift+B",
   toggleFilePreview: "Cmd+Shift+E",
+  // tmux 会话面板。M = Multiplexer；不用 Cmd+M——macOS 上那是"最小化窗口"
+  toggleTmux: "Cmd+Shift+M",
   splitVertical: "Cmd+\\",
   splitHorizontal: "Cmd+Shift+\\",
   closePane: "Cmd+Shift+W",
@@ -228,6 +231,8 @@ interface Handlers {
    * 没打开任何文件时按 shortcut 仍 toggle store 状态（无视觉变化但不报错）。
    */
   toggleFilePreview: () => void;
+  /** Cmd+Shift+M → 开关 tmux 会话面板（与 ActivityBar 上的图标等效）。 */
+  toggleTmux: () => void;
   /**
    * v0.10.0 HR6-3d：Cmd+\\ → 在 active group 上做左右分屏（vertical 切线）。
    * direction 语义跟 LayoutNode 对齐：左右分 = `horizontal`（panel rows）。
@@ -310,6 +315,9 @@ export function useShortcuts(h: Handlers): void {
               break;
             case "toggleFilePreview":
               h.toggleFilePreview();
+              break;
+            case "toggleTmux":
+              h.toggleTmux();
               break;
             case "splitVertical":
               h.splitVertical();

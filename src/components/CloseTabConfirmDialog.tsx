@@ -7,6 +7,13 @@ interface Props {
   pendingTabTitle: string | null;
   onConfirm: () => void;
   onCancel: () => void;
+  /**
+   * 这个标签接着的 tmux 会话；非 null 时换成 tmux 专用文案与按钮：
+   * 「关闭标签，保留会话」（= `onConfirm`，默认焦点）与「关闭并结束会话」
+   * （= `onCloseAndKillTmux`）。
+   */
+  tmuxSession?: { id: string; name: string } | null;
+  onCloseAndKillTmux?: () => void;
 }
 
 /**
@@ -22,6 +29,8 @@ export default function CloseTabConfirmDialog({
   pendingTabTitle,
   onConfirm,
   onCancel,
+  tmuxSession = null,
+  onCloseAndKillTmux,
 }: Props) {
   const { t } = useTranslation();
   const open = pendingTabTitle !== null;
@@ -41,25 +50,56 @@ export default function CloseTabConfirmDialog({
             {t("closeTabDialog.title", { title: pendingTabTitle ?? "" })}
           </Dialog.Title>
           <Dialog.Description className="mt-2 text-sm text-[var(--c-text-muted)]">
-            {t("closeTabDialog.description")}
+            {tmuxSession
+              ? t("closeTabDialog.tmuxDescription", { name: tmuxSession.name })
+              : t("closeTabDialog.description")}
           </Dialog.Description>
-          <div className="mt-5 flex justify-end gap-2">
-            <button
-              type="button"
-              onClick={onCancel}
-              autoFocus
-              className="rounded border border-[var(--c-border-strong)] px-3 py-1.5 text-sm text-[var(--c-text-base)] hover:bg-[var(--c-bg-elev-2)]"
-            >
-              {t("closeTabDialog.cancel")}
-            </button>
-            <button
-              type="button"
-              onClick={onConfirm}
-              className="rounded bg-[var(--c-error)] px-3 py-1.5 text-sm text-white hover:opacity-90"
-            >
-              {t("closeTabDialog.forceClose")}
-            </button>
-          </div>
+          {tmuxSession ? (
+            // tmux 标签：关标签只会断开客户端，会话本就会保留——所以"保留"是安全的默认，
+            // 拿默认焦点（回车即选它）；"结束会话"是额外的破坏性动作，放在它左边、标成危险色。
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={onCancel}
+                className="rounded border border-[var(--c-border-strong)] px-3 py-1.5 text-sm text-[var(--c-text-base)] hover:bg-[var(--c-bg-elev-2)]"
+              >
+                {t("closeTabDialog.cancel")}
+              </button>
+              <button
+                type="button"
+                onClick={onCloseAndKillTmux}
+                className="rounded border border-[var(--c-error)] px-3 py-1.5 text-sm text-[var(--c-error)] hover:bg-[var(--c-bg-elev-2)]"
+              >
+                {t("closeTabDialog.killSession")}
+              </button>
+              <button
+                type="button"
+                onClick={onConfirm}
+                autoFocus
+                className="rounded bg-[var(--c-success)] px-3 py-1.5 text-sm text-white hover:opacity-90"
+              >
+                {t("closeTabDialog.keepSession")}
+              </button>
+            </div>
+          ) : (
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={onCancel}
+                autoFocus
+                className="rounded border border-[var(--c-border-strong)] px-3 py-1.5 text-sm text-[var(--c-text-base)] hover:bg-[var(--c-bg-elev-2)]"
+              >
+                {t("closeTabDialog.cancel")}
+              </button>
+              <button
+                type="button"
+                onClick={onConfirm}
+                className="rounded bg-[var(--c-error)] px-3 py-1.5 text-sm text-white hover:opacity-90"
+              >
+                {t("closeTabDialog.forceClose")}
+              </button>
+            </div>
+          )}
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
