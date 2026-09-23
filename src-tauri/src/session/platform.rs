@@ -25,6 +25,32 @@ pub fn default_shell() -> String {
     }
 }
 
+/// 进程环境里缺失、需要补给子进程的 UTF-8 locale 变量。
+///
+/// **为什么需要**：macOS 上从访达 / 程序坞启动的 `.app` 拿不到 shell 的环境，
+/// `LANG` / `LC_CTYPE` 都是空的。子进程会因此退回到 POSIX/C locale，行为与
+/// 从终端启动时不一致：
+///
+/// - zsh 会走 POSIX 模式，中文输入法的 EM DASH 等多字节字符显示成 `<00XX>`
+/// - **tmux 会把格式输出里的所有控制字符替换成 `_`**，`list-sessions -F` 用的
+///   分隔符直接被吃掉，于是一行只剩一个字段、整份列表被解析成空
+///
+/// 返回的是**当前进程里确实缺失**的那些项；已经设过的不覆盖，免得盖掉用户偏好。
+/// 不设 `LC_ALL`——它会强覆盖所有 `LC_*`，可能 override 用户其它偏好（如 `LC_NUMERIC`）。
+pub fn missing_utf8_locale_env() -> Vec<(&'static str, &'static str)> {
+    let mut out = Vec::new();
+    for (key, value) in [("LANG", "en_US.UTF-8"), ("LC_CTYPE", "UTF-8")] {
+        let already_set = std::env::var(key)
+            .ok()
+            .map(|v| !v.is_empty())
+            .unwrap_or(false);
+        if !already_set {
+            out.push((key, value));
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

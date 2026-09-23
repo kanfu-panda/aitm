@@ -2,6 +2,13 @@
 
 All notable changes to aitm will be documented in this file. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.2] — 2026-09-23
+
+### Fixed
+
+- **The tmux panel reported that there were no sessions, while sessions were in fact running.** An app launched from Finder or the Dock gets no `LANG` or `LC_CTYPE`, and outside a UTF-8 locale tmux replaces every control character in its formatted output with `_`. The field separator used to read the session list was among them, so each line collapsed into a single field and the whole list was discarded as unparseable. tmux is now invoked with a UTF-8 locale, the same treatment terminal sessions have had for a while.
+- **A parse failure of that kind is no longer reported as "no sessions".** If tmux returns output and none of it can be parsed, the panel now shows an error pointing at the locale instead of quietly claiming the list is empty. A confident wrong answer is considerably more dangerous than an error, and it is what kept the previous release's bug hidden.
+
 ## [1.5.1] — 2026-09-22
 
 ### Fixed
