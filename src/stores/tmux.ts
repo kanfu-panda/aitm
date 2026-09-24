@@ -8,6 +8,7 @@ import {
   tmuxRenameSession,
   type TmuxSession,
 } from "../lib/tauri";
+import { useTabsStore } from "./tabs";
 
 /**
  * tmux 会话管理器状态。
@@ -64,6 +65,30 @@ export function hasNewOutput(
   return last !== undefined && s.activity > last;
 }
 
+/**
+ * 正被 aitm 自己的标签接着的会话，把"已查看"推进到当前活动时间。
+ *
+ * 接入这个动作本身会让 tmux 重绘、刷新活动时间，用户在里面打字也会——这些都是
+ * 用户正在看的输出，标"新输出"只会是噪音。别处终端接着的会话不受影响。
+ */
+function seenByAitmTabs(
+  seen: Record<string, number>,
+  sessions: TmuxSession[],
+): Record<string, number> {
+  const mine = new Set(
+    useTabsStore
+      .getState()
+      .tabs.map((t) => t.tmuxSessionId)
+      .filter((id): id is string => id !== undefined),
+  );
+  if (mine.size === 0) return seen;
+  const next = { ...seen };
+  for (const s of sessions) {
+    if (mine.has(s.id)) next[s.id] = s.activity;
+  }
+  return next;
+}
+
 /** 给第一次出现的 id 记基线；已有记录的原样保留。 */
 function withBaseline(
   seen: Record<string, number>,
@@ -110,7 +135,7 @@ export const useTmuxStore = create<TmuxState>((set, get) => ({
         set((st) => ({
           available: true,
           sessions,
-          seen: withBaseline(st.seen, sessions),
+          seen: seenByAitmTabs(withBaseline(st.seen, sessions), sessions),
           error: null,
           loading: false,
         }));

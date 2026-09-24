@@ -573,6 +573,7 @@
     "previewTitle": "最近输出",
     "previewReload": "刷新预览",
     "previewLoading": "正在读取…",
-    "previewEmpty": "暂无输出"
+    "previewEmpty": "暂无输出",
+    "attachNoPane": "没有可以放新标签的分屏（当前分屏的标签数可能已达上限），请先关掉一些标签再试。"
   }
 }

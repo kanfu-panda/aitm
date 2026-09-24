@@ -575,6 +575,7 @@
     "previewTitle": "最近の出力",
     "previewReload": "プレビューを更新",
     "previewLoading": "読み込み中…",
-    "previewEmpty": "出力はまだありません"
+    "previewEmpty": "出力はまだありません",
+    "attachNoPane": "新しいタブを置けるペインがありません（現在のペインのタブ数が上限に達している可能性があります）。いくつかタブを閉じてから再試行してください。"
   }
 }

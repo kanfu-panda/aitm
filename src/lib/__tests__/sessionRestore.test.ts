@@ -1,6 +1,18 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { restoreSnapshotTabs } from "../sessionRestore";
+const tmuxListSessionsMock = vi.fn();
+const tmuxAttachCommandMock = vi.fn();
+vi.mock("../tauri", async (orig) => {
+  const real = await orig<typeof import("../tauri")>();
+  return {
+    ...real,
+    tmuxListSessions: () => tmuxListSessionsMock(),
+    tmuxAttachCommand: (id: string, takeover: boolean) =>
+      tmuxAttachCommandMock(id, takeover),
+  };
+});
+
+import { resolveTmuxReattach, restoreSnapshotTabs } from "../sessionRestore";
 import type { SessionSnapshot } from "../tauri";
 import {
   INITIAL_GROUP_ID,
@@ -194,5 +206,92 @@ describe("恢复出来的 tab 一进 store 就必须带着 cwd", () => {
     unsub();
 
     expect(badStates).toEqual([]);
+  });
+});
+
+describe("重启恢复时把 tmux 标签接回去", () => {
+  beforeEach(() => {
+    resetStores();
+    vi.clearAllMocks();
+  });
+
+  function tmuxSnapshot(): SessionSnapshot {
+    return makeSnapshot({
+      tabs: [
+        {
+          tab_id: "old-1",
+          title: "main",
+          cwd: "/proj",
+          unread: 0,
+          group_id: INITIAL_GROUP_ID,
+        },
+        {
+          tab_id: "old-2",
+          title: "tmux: alive",
+          cwd: "/proj",
+          unread: 0,
+          group_id: INITIAL_GROUP_ID,
+          tmux_session_id: "$7",
+        },
+        {
+          tab_id: "old-3",
+          title: "tmux: gone",
+          cwd: "/proj",
+          unread: 0,
+          group_id: INITIAL_GROUP_ID,
+          tmux_session_id: "$8",
+        },
+      ],
+    });
+  }
+
+  it("应该_当快照里的_tmux_会话仍在时_只为它生成接入命令", async () => {
+    tmuxListSessionsMock.mockResolvedValue([{ id: "$7" }, { id: "$99" }]);
+    tmuxAttachCommandMock.mockResolvedValue("'/bin/tmux' attach-session -t '$7'");
+
+    const reattach = await resolveTmuxReattach(tmuxSnapshot());
+
+    expect([...reattach.keys()]).toEqual(["old-2"]);
+    expect(reattach.get("old-2")).toBe("'/bin/tmux' attach-session -t '$7'");
+    // 重启恢复是共享接入，不踢掉别处的客户端
+    expect(tmuxAttachCommandMock).toHaveBeenCalledWith("$7", false);
+  });
+
+  it("应该_当查询_tmux_失败时_不接回任何标签也不抛错", async () => {
+    tmuxListSessionsMock.mockRejectedValue(new Error("tmux 不可用"));
+    const reattach = await resolveTmuxReattach(tmuxSnapshot());
+    expect(reattach.size).toBe(0);
+  });
+
+  it("应该_当快照没有任何_tmux_标签时_不调用_tmux", async () => {
+    const reattach = await resolveTmuxReattach(makeSnapshot());
+    expect(reattach.size).toBe(0);
+    expect(tmuxListSessionsMock).not.toHaveBeenCalled();
+  });
+
+  it("应该_当会话仍在时_恢复出的标签带接入命令并记住会话_id", () => {
+    restoreSnapshotTabs(
+      tmuxSnapshot(),
+      new Map([["old-2", "'/bin/tmux' attach-session -t '$7'"]]),
+    );
+    const tabs = useTabsStore.getState().tabs;
+    expect(tabs).toHaveLength(3);
+    expect(tabs[1].title).toBe("tmux: alive");
+    expect(tabs[1].initialInput).toBe("'/bin/tmux' attach-session -t '$7'\n");
+    expect(tabs[1].tmuxSessionId).toBe("$7");
+    // 普通标签不受影响
+    expect(tabs[0].initialInput).toBeUndefined();
+    expect(tabs[0].tmuxSessionId).toBeUndefined();
+  });
+
+  it("应该_当会话已不在时_恢复成普通标签且标题跟随目录", () => {
+    restoreSnapshotTabs(tmuxSnapshot(), new Map());
+    const gone = useTabsStore.getState().tabs[2];
+    expect(gone.initialInput).toBeUndefined();
+    expect(gone.tmuxSessionId).toBeUndefined();
+    // 不再挂着"tmux: gone"这种名不副实的标题
+    expect(gone.auto_title).toBe(true);
+    expect(gone.title).not.toContain("tmux");
+    expect(gone.last_cwd).toBe("/proj");
   });
 });

@@ -6,7 +6,8 @@ import type { TmuxSession } from "../../lib/tauri";
  * TmuxPanel 单测。
  *
  * 覆盖：列表渲染、已连接标记、两种空状态、点击接入、右键菜单三个动作、刷新。
- * lib/tauri 整模块 mock；确认框用 window.confirm 的 spy。
+ * lib/tauri 整模块 mock。结束会话的确认走应用内对话框：WKWebView 不实现
+ * `window.confirm`（直接返回 false、不弹窗），所以测试里把它钉成 false 来模拟 macOS 上的实际行为。
  */
 
 const tmuxAvailableMock = vi.fn();
@@ -39,8 +40,13 @@ vi.mock("../../lib/tauri", async (orig) => {
 });
 
 import TmuxPanel from "../tmux/TmuxPanel";
-import { useTmuxStore } from "../../stores/tmux";
+import { hasNewOutput, useTmuxStore } from "../../stores/tmux";
 import { useTabsStore } from "../../stores/tabs";
+import {
+  INITIAL_GROUP_ID,
+  usePaneLayoutStore,
+  type LayoutNode,
+} from "../../stores/pane-layout";
 
 function session(
   name: string,
@@ -78,6 +84,18 @@ describe("TmuxPanel", () => {
       seen: {},
     });
     useTabsStore.setState({ tabs: [], activeId: null, unreadByTab: {} });
+    usePaneLayoutStore.setState({
+      root: {
+        kind: "leaf",
+        group: {
+          id: INITIAL_GROUP_ID,
+          type: "terminal",
+          tab_ids: [],
+          active_tab_id: null,
+        },
+      },
+      active_group_id: INITIAL_GROUP_ID,
+    });
     tmuxAvailableMock.mockResolvedValue(true);
     tmuxListSessionsMock.mockResolvedValue([]);
     tmuxAttachCommandMock.mockResolvedValue("tmux attach-session -t 'alpha'");
@@ -139,8 +157,101 @@ describe("TmuxPanel", () => {
     const tab = useTabsStore.getState().tabs[0];
     expect(tab.title).toContain("alpha");
     expect(tab.initialInput).toBe("tmux attach-session -t 'alpha'\n");
+    // 记下接的是哪个会话：重启恢复时靠它接回去
+    expect(tab.tmuxSessionId).toBe("$alpha");
     // 默认是共享接入，不踢人
     expect(tmuxAttachCommandMock).toHaveBeenCalledWith("$alpha", false);
+  });
+
+  it("应该_当处于分屏时点击会话_新标签进入当前焦点分屏组并成为其活动标签", async () => {
+    const root: LayoutNode = {
+      kind: "split",
+      direction: "horizontal",
+      ratio: 0.5,
+      left: {
+        kind: "leaf",
+        group: {
+          id: "g-left",
+          type: "terminal",
+          tab_ids: ["t-left"],
+          active_tab_id: "t-left",
+        },
+      },
+      right: {
+        kind: "leaf",
+        group: {
+          id: "g-right",
+          type: "terminal",
+          tab_ids: ["t-right"],
+          active_tab_id: "t-right",
+        },
+      },
+    };
+    usePaneLayoutStore.setState({ root, active_group_id: "g-right" });
+    useTabsStore.setState({
+      tabs: [
+        { id: "t-left", title: "l", sessionId: null, auto_title: true },
+        { id: "t-right", title: "r", sessionId: null, auto_title: true },
+      ],
+      activeId: "t-right",
+      unreadByTab: {},
+    });
+    tmuxListSessionsMock.mockResolvedValue([session("alpha")]);
+    await renderPanel();
+    await waitFor(() =>
+      expect(screen.getByTestId("tmux-session-item-alpha")).toBeInTheDocument(),
+    );
+
+    fireEvent.click(screen.getByTestId("tmux-session-item-alpha"));
+
+    await waitFor(() => expect(useTabsStore.getState().tabs).toHaveLength(3));
+    const newTab = useTabsStore.getState().tabs[2];
+    expect(newTab.initialInput).toBe("tmux attach-session -t 'alpha'\n");
+    const after = usePaneLayoutStore.getState().root;
+    if (after.kind !== "split" || after.right.kind !== "leaf") {
+      throw new Error("分屏结构不应被改变");
+    }
+    expect(after.right.group.tab_ids).toContain(newTab.id);
+    expect(after.right.group.active_tab_id).toBe(newTab.id);
+  });
+
+  it("应该_当接入失败时_不清除该会话的新输出标记", async () => {
+    // 先让 alpha 带着"新输出"：基线 100，之后活动时间变成 200
+    tmuxListSessionsMock.mockResolvedValue([session("alpha", 0, 200)]);
+    useTmuxStore.setState({ seen: { $alpha: 100 } });
+    // 没有可放新标签的分屏（与标签数已满同一条返回 null 的路径）
+    usePaneLayoutStore.setState({ active_group_id: null });
+    await renderPanel();
+    await waitFor(() =>
+      expect(screen.getByTestId("tmux-new-output-alpha")).toBeInTheDocument(),
+    );
+
+    fireEvent.click(screen.getByTestId("tmux-session-item-alpha"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("tmux-error")).toBeInTheDocument(),
+    );
+    const st = useTmuxStore.getState();
+    expect(hasNewOutput(st.sessions[0], st.seen)).toBe(true);
+    expect(screen.getByTestId("tmux-new-output-alpha")).toBeInTheDocument();
+  });
+
+  it("应该_当取接入命令失败时_不清除该会话的新输出标记", async () => {
+    tmuxListSessionsMock.mockResolvedValue([session("alpha", 0, 200)]);
+    useTmuxStore.setState({ seen: { $alpha: 100 } });
+    tmuxAttachCommandMock.mockRejectedValue(new Error("tmux 出错"));
+    await renderPanel();
+    await waitFor(() =>
+      expect(screen.getByTestId("tmux-new-output-alpha")).toBeInTheDocument(),
+    );
+
+    fireEvent.click(screen.getByTestId("tmux-session-item-alpha"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("tmux-error")).toBeInTheDocument(),
+    );
+    const st = useTmuxStore.getState();
+    expect(hasNewOutput(st.sessions[0], st.seen)).toBe(true);
   });
 
   it("UT-P06 右键弹出菜单，含接管 / 中断 / 结束三项", async () => {
@@ -195,12 +306,9 @@ describe("TmuxPanel", () => {
     );
   });
 
-  it("UT-P09 结束会话并确认时调 kill 接口", async () => {
+  it("UT-P09 结束会话：弹应用内确认框，确认后以 id 调 kill 接口", async () => {
     tmuxListSessionsMock.mockResolvedValue([session("alpha")]);
     tmuxKillSessionMock.mockResolvedValue(undefined);
-    const confirmSpy = vi
-      .spyOn(window, "confirm")
-      .mockImplementation(() => true);
     await renderPanel();
     await waitFor(() =>
       expect(screen.getByTestId("tmux-session-item-alpha")).toBeInTheDocument(),
@@ -208,19 +316,15 @@ describe("TmuxPanel", () => {
 
     fireEvent.contextMenu(screen.getByTestId("tmux-session-item-alpha"));
     fireEvent.click(screen.getByTestId("tmux-menu-kill"));
+    fireEvent.click(await screen.findByTestId("confirm-action-ok"));
 
     await waitFor(() =>
       expect(tmuxKillSessionMock).toHaveBeenCalledWith("$alpha"),
     );
-    expect(confirmSpy).toHaveBeenCalled();
-    confirmSpy.mockRestore();
   });
 
-  it("UT-P10 结束会话但取消确认时不调 kill 接口", async () => {
+  it("UT-P10 结束会话但在确认框点取消时不调 kill 接口", async () => {
     tmuxListSessionsMock.mockResolvedValue([session("alpha")]);
-    const confirmSpy = vi
-      .spyOn(window, "confirm")
-      .mockImplementation(() => false);
     await renderPanel();
     await waitFor(() =>
       expect(screen.getByTestId("tmux-session-item-alpha")).toBeInTheDocument(),
@@ -228,8 +332,32 @@ describe("TmuxPanel", () => {
 
     fireEvent.contextMenu(screen.getByTestId("tmux-session-item-alpha"));
     fireEvent.click(screen.getByTestId("tmux-menu-kill"));
+    fireEvent.click(await screen.findByTestId("confirm-action-cancel"));
 
+    await waitFor(() =>
+      expect(screen.queryByTestId("confirm-action-ok")).toBeNull(),
+    );
     expect(tmuxKillSessionMock).not.toHaveBeenCalled();
+  });
+
+  it("应该_当运行环境不支持_window_confirm_时_结束会话仍能确认并执行", async () => {
+    // macOS 上 WKWebView 的行为：不弹窗，直接返回 false
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    tmuxListSessionsMock.mockResolvedValue([session("alpha")]);
+    tmuxKillSessionMock.mockResolvedValue(undefined);
+    await renderPanel();
+    await waitFor(() =>
+      expect(screen.getByTestId("tmux-session-item-alpha")).toBeInTheDocument(),
+    );
+
+    fireEvent.contextMenu(screen.getByTestId("tmux-session-item-alpha"));
+    fireEvent.click(screen.getByTestId("tmux-menu-kill"));
+    fireEvent.click(await screen.findByTestId("confirm-action-ok"));
+
+    await waitFor(() =>
+      expect(tmuxKillSessionMock).toHaveBeenCalledWith("$alpha"),
+    );
+    expect(confirmSpy).not.toHaveBeenCalled();
     confirmSpy.mockRestore();
   });
 

@@ -116,8 +116,14 @@ interface PaneLayoutState {
    *
    * 替代旧 `useShortcuts.newTab` 的 `useTabsStore.getState().addTab()` 直调，
    * 保证 Cmd+T / "+" 按钮新 tab 都进 active group。
+   *
+   * `init` 原样透传给 `addTab`（如 tmux 面板接入时带的标题与初始输入）。
+   * **任何要新开终端标签的地方都走这里，不要直调 `addTab`**：分屏时直调出来的标签
+   * 不属于任何 group，既看不见、PTY 也不会启动。
    */
-  addTabToActiveGroup: () => Promise<string | null>;
+  addTabToActiveGroup: (
+    init?: Parameters<ReturnType<typeof useTabsStore.getState>["addTab"]>[0],
+  ) => Promise<string | null>;
 
   /**
    * 在 group 内关 terminal tab。
@@ -533,7 +539,7 @@ export const usePaneLayoutStore = create<PaneLayoutState>((set, get) => ({
     return newId;
   },
 
-  addTabToActiveGroup: async () => {
+  addTabToActiveGroup: async (init) => {
     const { active_group_id, root } = get();
     if (!active_group_id) return null;
     const found = findGroupPath(root, active_group_id);
@@ -549,7 +555,7 @@ export const usePaneLayoutStore = create<PaneLayoutState>((set, get) => ({
     }
 
     // 同步开 PTY tab；useTabsStore 内部 set activeId 给该 tab（保 xterm 焦点）
-    const newTabId = useTabsStore.getState().addTab();
+    const newTabId = useTabsStore.getState().addTab(init);
     // 加进 group.tab_ids + 切 group.active_tab_id
     const nextGroup: PaneGroup = {
       ...g,

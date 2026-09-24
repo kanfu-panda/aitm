@@ -152,3 +152,152 @@ test("E2E-07 右键重命名 → 改名接口收到 id 与新名", async ({ page
       args: { id: "$2", name: "scratch-2" },
     });
 });
+
+test("E2E-08 分屏时点击会话：新标签出现在当前焦点分屏里", async ({ page }) => {
+  await installTauriMock(page);
+  await page.goto("/");
+  await expect(page.getByRole("tab")).toHaveCount(1, { timeout: 5_000 });
+
+  // 拆出第二个分屏（自带 1 个标签），焦点落在新分屏上
+  await page.evaluate(() => {
+    const w = window as unknown as {
+      __getPaneLayout: () => {
+        splitGroupWithNewTab: (gid: string, dir: string) => string | null;
+        root: { kind: string; group?: { id: string } };
+      };
+    };
+    const layout = w.__getPaneLayout();
+    if (layout.root.kind === "leaf" && layout.root.group) {
+      layout.splitGroupWithNewTab(layout.root.group.id, "horizontal");
+    }
+  });
+  const groups = page.getByTestId("terminal-pane-group");
+  await expect(groups).toHaveCount(2);
+  await expect(groups.nth(1).getByRole("tab")).toHaveCount(1);
+
+  await page.getByTestId("activity-bar-item-tmux").click();
+  await page.getByTestId("tmux-session-item-build-farm").click();
+
+  // 1.6.0 的缺陷：新标签只进了标签列表、不属于任何分屏，界面上一个都不多
+  await expect(groups.nth(1).getByRole("tab")).toHaveCount(2);
+  await expect(
+    groups.nth(1).getByText("tmux: build-farm").first(),
+  ).toBeVisible();
+});
+
+test("E2E-09 右键结束会话：弹应用内确认框，确认后调结束接口", async ({
+  page,
+}) => {
+  // 模拟 macOS 上的 WKWebView：window.confirm 不弹窗、直接返回 false
+  await page.addInitScript(() => {
+    window.confirm = () => false;
+  });
+  await installTauriMock(page);
+  await page.goto("/");
+
+  await page.getByTestId("activity-bar-item-tmux").click();
+  await page
+    .getByTestId("tmux-session-item-scratch")
+    .click({ button: "right" });
+  await page.getByTestId("tmux-menu-kill").click();
+
+  await expect(page.getByTestId("confirm-action-dialog")).toBeVisible();
+  await page.getByTestId("confirm-action-ok").click();
+
+  await expect
+    .poll(async () =>
+      page.evaluate(
+        () =>
+          (
+            window as unknown as {
+              __lastTmuxAction?: { cmd: string; id: string };
+            }
+          ).__lastTmuxAction,
+      ),
+    )
+    .toMatchObject({ cmd: "tmux_kill_session" });
+  await expect(page.getByTestId("confirm-action-dialog")).not.toBeVisible();
+});
+
+test("E2E-10 面板接入后，快照里记下这个标签接的 tmux 会话", async ({
+  page,
+}) => {
+  await installTauriMock(page);
+  await page.goto("/");
+  await page.getByTestId("activity-bar-item-tmux").click();
+  await page.getByTestId("tmux-session-item-build-farm").click();
+
+  await expect
+    .poll(
+      async () =>
+        page.evaluate(() => {
+          const snap = (
+            window as unknown as {
+              __lastSnapshotSave?: {
+                tabs: { title: string; tmux_session_id?: string | null }[];
+              };
+            }
+          ).__lastSnapshotSave;
+          return snap?.tabs.map((t) => t.tmux_session_id ?? null) ?? [];
+        }),
+      { timeout: 5_000 },
+    )
+    .toContain("$1");
+});
+
+test("E2E-11 重启恢复：会话还在的 tmux 标签自动接回，已结束的恢复成普通标签", async ({
+  page,
+}) => {
+  await installTauriMock(page);
+  await page.addInitScript(() => {
+    const set = (
+      window as unknown as { __setSessionSnapshot?: (s: unknown) => void }
+    ).__setSessionSnapshot;
+    set?.({
+      schema_version: 1,
+      saved_at_ms: 1_700_000_000_000,
+      tabs: [
+        {
+          tab_id: "t1",
+          title: "tmux: build-farm",
+          cwd: "/proj",
+          unread: 0,
+          group_id: "g-initial",
+          tmux_session_id: "$1",
+        },
+        {
+          tab_id: "t2",
+          title: "tmux: gone",
+          cwd: "/proj",
+          unread: 0,
+          group_id: "g-initial",
+          tmux_session_id: "$404",
+        },
+      ],
+      active_tab_id: "t1",
+    });
+  });
+  await page.goto("/");
+
+  await expect(page.getByRole("tab")).toHaveCount(2, { timeout: 5_000 });
+  await expect(page.getByText("tmux: build-farm").first()).toBeVisible();
+  // 已结束的会话不再顶着 tmux 标题
+  await expect(page.getByText("tmux: gone")).toHaveCount(0);
+
+  // 仍在的那个会话：接入命令被写进了终端
+  await expect
+    .poll(
+      async () =>
+        page.evaluate(() =>
+          (window as unknown as { __sessionWrites: string[] }).__sessionWrites.join(
+            "",
+          ),
+        ),
+      { timeout: 5_000 },
+    )
+    .toContain("attach-session -t '$1'");
+  const writes = await page.evaluate(() =>
+    (window as unknown as { __sessionWrites: string[] }).__sessionWrites.join(""),
+  );
+  expect(writes).not.toContain("$404");
+});

@@ -51,6 +51,14 @@ export interface Tab {
    * 只在 `sessionId === null` 的首次 spawn 路径生效，跨重启 rehydrate 不会重放。
    */
   initialInput?: string;
+  /**
+   * 这个标签从 tmux 面板接入的会话 id（形如 `$96`）。
+   *
+   * 两个用途：随快照落盘，重启时会话还在就自动接回去；面板刷新时，被 aitm 自己的
+   * 标签接着的会话不标"新输出"（接入本身就会让 tmux 重绘、刷新活动时间）。
+   * 只记录经面板接入的；在标签里手敲 `tmux attach` 不会被记下。
+   */
+  tmuxSessionId?: string;
 }
 
 interface TabsState {
@@ -75,6 +83,8 @@ interface TabsState {
     lastCwd?: string;
     /** PTY 起来后写进去的初始命令（含换行）。 */
     initialInput?: string;
+    /** 从 tmux 面板接入时记下的会话 id，见 [`Tab.tmuxSessionId`]。 */
+    tmuxSessionId?: string;
   }) => TabId;
   /** 初始输入已写入 PTY，清掉避免重放。 */
   clearInitialInput: (tabId: TabId) => void;
@@ -170,6 +180,7 @@ export const useTabsStore = create<TabsState>((set, get) => ({
           auto_title: init?.title === undefined,
           ...(init?.lastCwd ? { last_cwd: init.lastCwd } : {}),
           ...(init?.initialInput ? { initialInput: init.initialInput } : {}),
+          ...(init?.tmuxSessionId ? { tmuxSessionId: init.tmuxSessionId } : {}),
         },
       ],
       activeId: id,

@@ -88,6 +88,11 @@ pub struct TabSnapshot {
     ///
     /// 兼容旧 snapshot：缺省 / None → restore 时 fallback 到 INITIAL_GROUP_ID。
     pub group_id: Option<String>,
+    /// 这个标签从 tmux 面板接入的会话 id（形如 `$96`）；没接为 None。
+    ///
+    /// 重启恢复时，若该会话仍在，前端自动写入接入命令把标签接回去；不在了就恢复成
+    /// 普通标签。纯增字段，旧 snapshot 缺省为 None（结构体级 `serde(default)`）。
+    pub tmux_session_id: Option<String>,
 }
 
 /// snapshot 文件绝对路径。dirs::data_dir() 失败（理论不该发生）→ fallback HOME/.aitm/sessions/
@@ -174,6 +179,7 @@ mod tests {
                     cwd: Some("/Users/x/proj".into()),
                     unread: 0,
                     group_id: Some("g-initial".into()),
+                    tmux_session_id: None,
                 },
                 TabSnapshot {
                     tab_id: "tab-2".into(),
@@ -181,6 +187,7 @@ mod tests {
                     cwd: Some("/var/log".into()),
                     unread: 3,
                     group_id: Some("g-right".into()),
+                    tmux_session_id: None,
                 },
             ],
             active_tab_id: Some("tab-1".into()),
@@ -268,6 +275,34 @@ mod tests {
     }
 
     #[test]
+    fn 应该_当标签接着_tmux_会话时_快照保存再读取原样保留会话_id() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("snap.json");
+        let mut snap = sample_snapshot();
+        snap.tabs[0].tmux_session_id = Some("$96".into());
+
+        save_to(&path, &snap).unwrap();
+        let loaded = load_from(&path).unwrap().unwrap();
+        assert_eq!(loaded.tabs[0].tmux_session_id.as_deref(), Some("$96"));
+        assert_eq!(loaded.tabs[1].tmux_session_id, None);
+    }
+
+    #[test]
+    fn 应该_当读取旧版快照没有_tmux_字段时_视为没接_tmux() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("snap.json");
+        let payload = serde_json::json!({
+            "schema_version": SCHEMA_VERSION,
+            "saved_at_ms": 0,
+            "tabs": [{"tab_id": "t1", "title": "x", "cwd": null, "unread": 0, "group_id": null}],
+            "active_tab_id": "t1",
+        });
+        std::fs::write(&path, payload.to_string()).unwrap();
+        let loaded = load_from(&path).unwrap().unwrap();
+        assert_eq!(loaded.tabs[0].tmux_session_id, None);
+    }
+
+    #[test]
     fn save_自动创建父目录() {
         let tmp = TempDir::new().unwrap();
         let path = tmp.path().join("nested/a/b/snap.json");
@@ -322,6 +357,7 @@ mod tests {
                 cwd: Some(format!("/some/long/path/with/many/segments/{i}")),
                 unread: 0,
                 group_id: None,
+                tmux_session_id: None,
             })
             .collect();
         let big = SessionSnapshot {
@@ -405,6 +441,7 @@ mod tests {
                     cwd: None,
                     unread: 0,
                     group_id: Some("g-initial".into()),
+                    tmux_session_id: None,
                 },
                 TabSnapshot {
                     tab_id: "t2".into(),
@@ -412,6 +449,7 @@ mod tests {
                     cwd: None,
                     unread: 0,
                     group_id: Some("g-right-side".into()),
+                    tmux_session_id: None,
                 },
                 TabSnapshot {
                     tab_id: "t3".into(),
@@ -419,6 +457,7 @@ mod tests {
                     cwd: None,
                     unread: 0,
                     group_id: None,
+                    tmux_session_id: None,
                 },
             ],
             active_tab_id: Some("t1".into()),

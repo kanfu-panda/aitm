@@ -13,6 +13,9 @@ import {
   SquareTerminal,
 } from "../icons";
 import InputDialog from "../InputDialog";
+import ConfirmActionDialog, {
+  type ConfirmActionRequest,
+} from "../ConfirmActionDialog";
 import {
   sessionCurrentCwd,
   tmuxAttachCommand,
@@ -21,6 +24,7 @@ import {
 } from "../../lib/tauri";
 import { hasNewOutput, useTmuxStore } from "../../stores/tmux";
 import { useTabsStore } from "../../stores/tabs";
+import { usePaneLayoutStore } from "../../stores/pane-layout";
 
 /**
  * tmux 会话管理器面板。
@@ -29,9 +33,9 @@ import { useTabsStore } from "../../stores/tabs";
  * 序列，所以进到会话里之后目录跟踪 / AI 执行命令 / 通知都到不了外层——这是
  * 架构边界，不为它改 PTY 协议层。
  *
- * 接入方式：新开一个**普通 shell 标签页**，把 `tmux attach-session -t '<id>'`
- * 作为初始输入写进它的 PTY。这样 detach 之后用户落回一个可用的 shell，
- * 而且完全不需要改 `SessionConfig` 契约。
+ * 接入方式：在当前焦点分屏组里新开一个**普通 shell 标签页**，把
+ * `tmux attach-session -t '<id>'` 作为初始输入写进它的 PTY。这样 detach 之后用户
+ * 落回一个可用的 shell，而且完全不需要改 `SessionConfig` 契约。
  *
  * **所有针对具体会话的操作都传 `session_id`，不传名字**：tmux 按名字定位时做前缀
  * 匹配，目标已被关掉时会误中名字以它开头的另一个会话。名字只用于显示。
@@ -127,7 +131,7 @@ export default function TmuxPanel() {
   const newSession = useTmuxStore((s) => s.newSession);
   const renameSession = useTmuxStore((s) => s.renameSession);
   const markSeen = useTmuxStore((s) => s.markSeen);
-  const addTab = useTabsStore((s) => s.addTab);
+  const addTabToActiveGroup = usePaneLayoutStore((s) => s.addTabToActiveGroup);
 
   /** 当前右键菜单对应的会话 id；null 表示没有打开的菜单。 */
   const [menuFor, setMenuFor] = useState<string | null>(null);
@@ -136,6 +140,7 @@ export default function TmuxPanel() {
   const [previews, setPreviews] = useState<Record<string, Preview>>({});
   const [dialog, setDialog] =
     useState<ComponentProps<typeof InputDialog>["open"]>(null);
+  const [confirm, setConfirm] = useState<ConfirmActionRequest | null>(null);
 
   // 挂载时拉一次，之后每 3 秒静默刷新一次。面板只在打开时挂载，关掉面板定时器就
   // 清掉了，不需要额外的开关——"关闭即停止刷新"是结构上保证的。
@@ -156,10 +161,21 @@ export default function TmuxPanel() {
    */
   const attach = async (id: string, name: string, takeover: boolean) => {
     setMenuFor(null);
-    markSeen(id);
     try {
       const cmd = await tmuxAttachCommand(id, takeover);
-      addTab({ title: `tmux: ${name}`, initialInput: `${cmd}\n` });
+      // 必须经分屏组开标签：直调 tabs store 的 addTab，分屏时新标签不属于任何组，
+      // 看不见、PTY 也不启动（1.6.0 的"点了没反应"）
+      const tabId = await addTabToActiveGroup({
+        title: `tmux: ${name}`,
+        initialInput: `${cmd}\n`,
+        tmuxSessionId: id,
+      });
+      if (tabId === null) {
+        useTmuxStore.setState({ error: t("tmux.attachNoPane") });
+        return;
+      }
+      // 标签真的建出来才算"看过了"：接入失败时用户并没看到它，不能清掉新输出标记
+      markSeen(id);
     } catch (e) {
       useTmuxStore.setState({
         error: e instanceof Error ? e.message : String(e),
@@ -244,9 +260,12 @@ export default function TmuxPanel() {
 
   const handleKill = (s: TmuxSession) => {
     setMenuFor(null);
-    // 二次确认走原生 confirm，与 ActivityBar 关闭全部浏览器标签的做法一致
-    if (!window.confirm(t("tmux.killConfirm", { name: s.name }))) return;
-    void killSession(s.id);
+    // 二次确认用应用内对话框：WKWebView 里 window.confirm 不弹窗、直接返回 false
+    setConfirm({
+      message: t("tmux.killConfirm", { name: s.name }),
+      confirmLabel: t("tmux.menuKill"),
+      onConfirm: () => void killSession(s.id),
+    });
   };
 
   const openMenu = (e: MouseEvent, id: string) => {
@@ -342,6 +361,7 @@ export default function TmuxPanel() {
       </div>
 
       <InputDialog open={dialog} onClose={() => setDialog(null)} />
+      <ConfirmActionDialog open={confirm} onClose={() => setConfirm(null)} />
     </div>
   );
 }

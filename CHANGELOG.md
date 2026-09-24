@@ -2,6 +2,24 @@
 
 All notable changes to aitm will be documented in this file. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.1] — 2026-09-24
+
+### Fixed
+
+- **Clicking a session in the tmux panel did nothing when the window was split.** The new tab was added to the tab list but not to any pane, so it was never shown and its terminal never started. Every click left behind one of these invisible tabs; they were saved with the rest and came back after a restart as plain, unattached shells titled `tmux: …`. Tabs opened from the tmux panel now land in the focused pane, like `Cmd+T`. If that pane is already full, the panel says so.
+- **"Kill session" in the tmux panel had no effect.** Its confirmation used the browser's `window.confirm`, which the macOS web view does not implement: no dialog appeared and the answer was always "cancel". "Close all tabs" on the browser icon had the same problem. Both now use an in-app confirmation dialog.
+- **Attaching could fail with `command not found: tmux`.** The attach command ran a bare `tmux` inside the tab's shell, and that shell is not a login shell, so it does not read `~/.zprofile` — which is exactly where Homebrew's install instructions put its `PATH` setup. The attach command now uses the full path to tmux.
+- **The new-output marker was backwards.** It relied on tmux's `session_activity`, which only changes when a client types or attaches, not when the session prints something. So the marker lit up while you were working inside a session and stayed dark when a background session actually produced output. Activity is now taken from the most recent output across the session's windows, and sessions attached in one of aitm's own tabs are not flagged.
+- **Attaching no longer clears the new-output marker if the tab could not be opened.**
+
+### Changed
+
+- **Tabs attached to tmux are reattached after a restart.** When you quit aitm with tabs attached to tmux sessions, reopening it attaches them again if the sessions are still running. If a session has ended in the meantime, its tab is restored as a normal tab. This applies to tabs opened from the tmux panel; tabs where you typed `tmux attach` yourself are restored as before.
+
+### Upgrading from 1.6.0
+
+If you clicked sessions in a split window on 1.6.0, the invisible tabs it created were saved and will still appear after upgrading, titled `tmux: …`. They are ordinary shells — close them once.
+
 ## [1.6.0] — 2026-09-24
 
 ### Added
