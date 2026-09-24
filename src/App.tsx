@@ -65,7 +65,10 @@ import {
   stopBrowserSuspendTimer,
 } from "./lib/browserSuspend";
 import { handleBrowserOpenRequested } from "./lib/browserOpenRequest";
-import { restoreSnapshotTabs } from "./lib/sessionRestore";
+import {
+  resolveTmuxReattach,
+  restoreSnapshotTabs,
+} from "./lib/sessionRestore";
 import { digitFromCode, resolveDigitTarget } from "./lib/tabDigitSwitch";
 
 export default function App() {
@@ -561,7 +564,9 @@ export default function App() {
       // 静默恢复上次的终端 tab。必须排在 pane_layout restore 之后：
       // restoreSnapshotTabs 要按 snapshot 记的 group_id 把 tab 放回对应 group，
       // 那些 group 得先存在。
-      if (snapshot) restoreSnapshotTabs(snapshot);
+      if (snapshot) {
+        restoreSnapshotTabs(snapshot, await resolveTmuxReattach(snapshot));
+      }
 
       setStartupResolved(true);
     })();
@@ -656,6 +661,7 @@ export default function App() {
           cwd: t.last_cwd ?? t.cwd ?? null,
           unread: unread[t.id] ?? 0,
           group_id: groupByTab.get(t.id) ?? null,
+          tmux_session_id: t.tmuxSessionId ?? null,
         })),
         active_tab_id: state.activeId,
         // v1.4.0：浏览器 tab 一起存。空白页不值得跨重启带着走，过滤掉。

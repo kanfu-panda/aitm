@@ -575,6 +575,7 @@
     "previewTitle": "Recent output",
     "previewReload": "Refresh preview",
     "previewLoading": "Loading…",
-    "previewEmpty": "No output yet"
+    "previewEmpty": "No output yet",
+    "attachNoPane": "No pane can take a new tab (the current pane may have reached its tab limit). Close some tabs and try again."
   }
 }

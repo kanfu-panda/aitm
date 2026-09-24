@@ -14,7 +14,7 @@ use std::process::Command;
 const FIELD_SEP: char = '\u{1f}';
 
 /// `tmux list-sessions -F` 的格式串，字段顺序与 [`TmuxSession`] 一一对应。
-const LIST_FORMAT: &str = "#{session_name}\u{1f}#{session_windows}\u{1f}#{session_attached}\u{1f}#{session_created}\u{1f}#{pane_current_path}\u{1f}#{pane_current_command}\u{1f}#{pane_title}\u{1f}#{session_id}\u{1f}#{session_activity}";
+const LIST_FORMAT: &str = "#{session_name}\u{1f}#{session_windows}\u{1f}#{session_attached}\u{1f}#{session_created}\u{1f}#{pane_current_path}\u{1f}#{pane_current_command}\u{1f}#{pane_title}\u{1f}#{session_id}\u{1f}#{window_activity}";
 
 /// tmux 输出里代表"服务端没起来 / 没有会话"的措辞。
 ///
@@ -86,8 +86,36 @@ pub struct TmuxSession {
     /// 按名字定位时 tmux 做前缀匹配，目标已被关掉时会误中名字以它开头的另一个会话；
     /// 而 id 精确且改名后不变。见 [`validate_session_id`]。
     pub id: String,
-    /// 会话最近一次有输出的时间，Unix 秒。前端据此判断"上次查看后有没有新输出"。
+    /// 会话最近一次有输出的时间，Unix 秒：取它所有窗口里最新的 `window_activity`
+    /// （见 [`latest_window_activity`]）。前端据此判断"上次查看后有没有新输出"。
     pub activity: i64,
+}
+
+/// 列各会话每个窗口最近一次有输出的时间，用来算会话的活动时间。
+const WINDOW_ACTIVITY_FORMAT: &str = "#{session_id}\u{1f}#{window_activity}";
+
+/// 解析 `list-windows -a -F WINDOW_ACTIVITY_FORMAT`：每个会话取所有窗口里最新的时间。
+///
+/// **不能用 `session_activity`**：它只在有客户端输入 / 接入时才更新，会话在后台产生
+/// 输出时纹丝不动——1.6.0 的"新输出提示"就因此正好反了：用户自己接入、打字时亮，
+/// 后台真有输出时反而不亮。`window_activity` 才随窗格输出变化；多窗口会话里任何一个
+/// 窗口有输出都该算，所以取最大值。
+fn latest_window_activity(stdout: &str) -> std::collections::HashMap<String, i64> {
+    let mut latest = std::collections::HashMap::new();
+    for line in stdout.lines() {
+        let mut f = line.split(FIELD_SEP);
+        let (Some(id), Some(t)) = (f.next(), f.next()) else {
+            continue;
+        };
+        let Ok(t) = t.trim().parse::<i64>() else {
+            continue;
+        };
+        latest
+            .entry(id.to_string())
+            .and_modify(|v: &mut i64| *v = (*v).max(t))
+            .or_insert(t);
+    }
+    latest
 }
 
 /// 解析 `tmux list-sessions -F LIST_FORMAT` 的 stdout。
@@ -163,11 +191,16 @@ fn shell_single_quote(s: &str) -> String {
 /// **必须单引号包裹**，否则 `$96` 会被当成位置参数展开成空串。
 ///
 /// `takeover = true` 时加 `-d`，踢掉该会话的其它客户端独占接入。
-fn build_attach_command(id: &str, takeover: bool) -> Result<String, String> {
+///
+/// `bin` 传解析出的 tmux 路径（[`tmux_bin`]），**不要写裸 `tmux`**：命令是在标签页的
+/// shell 里执行的，而 aitm 起的是非登录 shell、不读 `~/.zprofile`——Homebrew 默认把
+/// PATH 配在那里，于是标签页里根本找不到 `tmux`。路径同样单引号包裹。
+fn build_attach_command(bin: &str, id: &str, takeover: bool) -> Result<String, String> {
     validate_session_id(id)?;
     let flag = if takeover { " -d" } else { "" };
     Ok(format!(
-        "tmux attach-session{flag} -t {}",
+        "{} attach-session{flag} -t {}",
+        shell_single_quote(bin),
         shell_single_quote(id)
     ))
 }
@@ -438,7 +471,26 @@ pub async fn tmux_list_sessions() -> Result<Vec<TmuxSession>, String> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
         Err(e) => Err(format!("执行 tmux 失败：{e}")),
         Ok(o) if o.status.success() => {
-            parse_or_report(&String::from_utf8_lossy(&o.stdout))
+            let mut sessions = parse_or_report(&String::from_utf8_lossy(&o.stdout))?;
+            // 列表里带的是当前窗口的活动时间；再取一次所有窗口的，覆盖成最新值。
+            // 这一步失败不影响列表本身，保留当前窗口的值即可
+            let windows = tokio::task::spawn_blocking(|| {
+                tmux_command()
+                    .args(["list-windows", "-a", "-F", WINDOW_ACTIVITY_FORMAT])
+                    .output()
+            })
+            .await;
+            if let Ok(Ok(w)) = windows {
+                if w.status.success() {
+                    let latest = latest_window_activity(&String::from_utf8_lossy(&w.stdout));
+                    for s in &mut sessions {
+                        if let Some(&t) = latest.get(&s.id) {
+                            s.activity = s.activity.max(t);
+                        }
+                    }
+                }
+            }
+            Ok(sessions)
         }
         Ok(o) => {
             let stderr = String::from_utf8_lossy(&o.stderr);
@@ -454,7 +506,7 @@ pub async fn tmux_list_sessions() -> Result<Vec<TmuxSession>, String> {
 /// 构造 attach 命令文本给前端写进终端标签页。见 [`build_attach_command`]。
 #[tauri::command]
 pub async fn tmux_attach_command(id: String, takeover: bool) -> Result<String, String> {
-    build_attach_command(&id, takeover)
+    build_attach_command(tmux_bin(), &id, takeover)
 }
 
 /// 向会话的活动窗格发 Ctrl-C，中断里面正在跑的前台命令。会话本身保留。
@@ -519,7 +571,7 @@ mod tests {
 
     /// 拼一行 tmux 格式串输出，字段顺序与 `LIST_FORMAT` 一致。
     ///
-    /// 给了**恰好 7 个字段**时自动补上 `session_id`（`$1`）与 `session_activity`（`0`），
+    /// 给了**恰好 7 个字段**时自动补上 `session_id`（`$1`）与 `window_activity`（`0`），
     /// 让只关心前 7 个字段的老用例不必改动；需要控制 id / activity 的用例直接给满 9 个。
     fn line(fields: &[&str]) -> String {
         let mut v: Vec<&str> = fields.to_vec();
@@ -615,8 +667,22 @@ mod tests {
     #[test]
     fn ut_b07_attach_命令以单引号包裹_id_防止_shell_展开() {
         // `$96` 不加引号写进 shell 会被当成变量展开成空串
-        let cmd = build_attach_command("$96", false).unwrap();
-        assert_eq!(cmd, "tmux attach-session -t '$96'");
+        let cmd = build_attach_command("/opt/homebrew/bin/tmux", "$96", false).unwrap();
+        assert_eq!(cmd, "'/opt/homebrew/bin/tmux' attach-session -t '$96'");
+    }
+
+    #[test]
+    fn 应该_当标签页_shell_的_path_里没有_tmux_时_接入命令仍用解析出的绝对路径() {
+        // aitm 起的是非登录 shell，不读 ~/.zprofile；Homebrew 默认把 PATH 配在那里，
+        // 于是标签页里敲裸 `tmux` 会报 command not found。命令必须自带完整路径。
+        let cmd = build_attach_command(tmux_bin(), "$96", false).unwrap();
+        assert!(
+            cmd.starts_with(&shell_single_quote(tmux_bin())),
+            "接入命令应以解析出的 tmux 路径开头：{cmd}"
+        );
+        // 路径里含空格等字符时也不能被 shell 拆开
+        let odd = build_attach_command("/Apps/My Tools/tmux", "$96", false).unwrap();
+        assert!(odd.starts_with("'/Apps/My Tools/tmux' "), "{odd}");
     }
 
     #[test]
@@ -626,21 +692,21 @@ mod tests {
 
     #[test]
     fn ut_b09_注入串作为_id_直接被拒() {
-        assert!(build_attach_command("x; rm -rf ~", false).is_err());
-        assert!(build_attach_command("$96; rm -rf ~", false).is_err());
+        assert!(build_attach_command("tmux", "x; rm -rf ~", false).is_err());
+        assert!(build_attach_command("tmux", "$96; rm -rf ~", false).is_err());
     }
 
     #[test]
     fn ut_b10_接管模式命令含_d_且在_t_之前() {
-        let cmd = build_attach_command("$96", true).unwrap();
-        assert_eq!(cmd, "tmux attach-session -d -t '$96'");
+        let cmd = build_attach_command("tmux", "$96", true).unwrap();
+        assert_eq!(cmd, "'tmux' attach-session -d -t '$96'");
         assert!(cmd.find("-d").unwrap() < cmd.find("-t").unwrap());
     }
 
     #[test]
     fn ut_b11_非法_id_返回错误() {
         for bad in ["", "   ", "$", "96", "$9a", "=work"] {
-            assert!(build_attach_command(bad, false).is_err(), "{bad:?} 应被拒");
+            assert!(build_attach_command("tmux", bad, false).is_err(), "{bad:?} 应被拒");
         }
     }
 
@@ -909,6 +975,67 @@ mod tests {
         result.unwrap();
     }
 
+    #[test]
+    fn 应该_当会话有多个窗口时_活动时间取所有窗口里最新的一个() {
+        let out = format!(
+            "$1{s}100\n$1{s}350\n$2{s}200\n坏行\n$1{s}300\n",
+            s = FIELD_SEP
+        );
+        let m = latest_window_activity(&out);
+        assert_eq!(m.get("$1"), Some(&350));
+        assert_eq!(m.get("$2"), Some(&200));
+        assert_eq!(m.len(), 2);
+    }
+
+    #[allow(clippy::await_holding_lock)]
+    #[tokio::test]
+    async fn 应该_当没人接着的会话在后台产生输出时_列表里的活动时间随之变大() {
+        let _g = crate::test_env_lock::ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if !tmux_available().await.unwrap_or(false) {
+            return;
+        }
+        let name = format!("{E2E_PREFIX}-act-{}", std::process::id());
+
+        let result: Result<(), String> = async {
+            let id = tmux_new_session(name.clone(), Some("/tmp".into())).await?;
+            // 等 shell 起来、首屏输出落定，再取基线
+            tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+            let before = tmux_list_sessions()
+                .await?
+                .into_iter()
+                .find(|s| s.id == id)
+                .ok_or("列表里找不到新会话")?
+                .activity;
+
+            // 活动时间按秒计，跨过一秒再产生输出
+            tokio::time::sleep(std::time::Duration::from_millis(1_300)).await;
+            let sent = tmux_command()
+                .args(["send-keys", "-t", &pane_target(&id)?, "echo aitm-activity", "Enter"])
+                .status()
+                .map_err(|e| e.to_string())?;
+            ensure(sent.success(), "send-keys 失败".into())?;
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+            let after = tmux_list_sessions()
+                .await?
+                .into_iter()
+                .find(|s| s.id == id)
+                .ok_or("输出后找不到会话")?
+                .activity;
+            ensure(
+                after > before,
+                format!("后台有输出后活动时间应变大：before={before} after={after}"),
+            )?;
+            Ok(())
+        }
+        .await;
+
+        cleanup_names(&[&name]).await;
+        result.unwrap();
+    }
+
     #[allow(clippy::await_holding_lock)]
     #[tokio::test]
     async fn ut_b35_端到端_按不存在的_id_结束不会误中前缀相同的会话() {
@@ -1050,7 +1177,7 @@ mod tests {
                 "接入前不应识别出会话".into(),
             )?;
 
-            let cmd = build_attach_command(&tmux_id, false)?;
+            let cmd = build_attach_command(tmux_bin(), &tmux_id, false)?;
             mgr.write(sid, format!("{cmd}\n").as_bytes())
                 .await
                 .map_err(|e| e.to_string())?;

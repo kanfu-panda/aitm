@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ActivityBar } from "../ActivityBar";
 import { useBrowserStore } from "../../../stores/browser";
@@ -342,7 +342,7 @@ describe("ActivityBar", () => {
     expect(menu.textContent).toContain("关闭所有标签 (2)");
   });
 
-  it("点 context menu 关闭所有标签 → 弹 confirm；确认 → closePanel 清空", async () => {
+  it("点 context menu 关闭所有标签 → 弹应用内确认框；确认 → closePanel 清空", async () => {
     act(() => {
       useBrowserStore.setState({
         panelOpen: false,
@@ -361,14 +361,15 @@ describe("ActivityBar", () => {
         activeKey: "k1",
       });
     });
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    // macOS 上的 WKWebView 不实现 window.confirm（直接返回 false、不弹窗），钉成 false 模拟
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
     render(<ActivityBar position="right" onSettingsOpen={() => {}} />);
     const browserBtn = screen.getByTestId("activity-bar-item-browser");
     fireEvent.contextMenu(browserBtn.parentElement!);
     fireEvent.click(screen.getByTestId("activity-bar-browser-close-all"));
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(confirmSpy).toHaveBeenCalledTimes(1);
+    fireEvent.click(await screen.findByTestId("confirm-action-ok"));
+    await waitFor(() => expect(useBrowserStore.getState().tabs).toEqual([]));
+    expect(confirmSpy).not.toHaveBeenCalled();
     const s = useBrowserStore.getState();
     // closePanel：tabs 全清空
     expect(s.tabs).toEqual([]);
@@ -376,7 +377,7 @@ describe("ActivityBar", () => {
     confirmSpy.mockRestore();
   });
 
-  it("context menu 关闭所有标签 confirm 取消 → state 不变", async () => {
+  it("context menu 关闭所有标签，确认框点取消 → state 不变", async () => {
     act(() => {
       useBrowserStore.setState({
         panelOpen: false,
@@ -395,16 +396,16 @@ describe("ActivityBar", () => {
         activeKey: "k1",
       });
     });
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
     render(<ActivityBar position="right" onSettingsOpen={() => {}} />);
     const browserBtn = screen.getByTestId("activity-bar-item-browser");
     fireEvent.contextMenu(browserBtn.parentElement!);
     fireEvent.click(screen.getByTestId("activity-bar-browser-close-all"));
-    await Promise.resolve();
-    expect(confirmSpy).toHaveBeenCalledTimes(1);
+    fireEvent.click(await screen.findByTestId("confirm-action-cancel"));
+    await waitFor(() =>
+      expect(screen.queryByTestId("confirm-action-ok")).toBeNull(),
+    );
     // tabs 不变
     expect(useBrowserStore.getState().tabs).toHaveLength(1);
-    confirmSpy.mockRestore();
   });
 
   it("点设置按钮触发 onSettingsOpen prop", () => {

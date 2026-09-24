@@ -362,6 +362,17 @@ export async function installTauriMock(
       get: () => ({ ...snapshotCalls }),
       configurable: true,
     });
+    // 最后一次 session_snapshot_save 的完整内容（断言快照里记了什么）
+    Object.defineProperty(window, "__lastSnapshotSave", {
+      get: () => lastArgs.sessionSnapshotSave,
+      configurable: true,
+    });
+    // 所有 session_write 写进终端的内容（已解码成字符串，按调用顺序）
+    const sessionWrites: string[] = [];
+    Object.defineProperty(window, "__sessionWrites", {
+      get: () => [...sessionWrites],
+      configurable: true,
+    });
     Object.defineProperty(window, "__lastProjectInitArgs", {
       get: () => lastArgs.projectInit,
       configurable: true,
@@ -400,6 +411,10 @@ export async function installTauriMock(
         // === 已有命令 ===
         if (cmd === "session_open")
           return "00000000-0000-0000-0000-000000000001";
+        if (cmd === "session_write") {
+          sessionWrites.push(atob(args.bytesBase64 as string));
+          return null;
+        }
         if (cmd === "settings_get") {
           // 从 fixture 取所有字段（保证跟 AppSettings interface 完整对齐），
           // 用 settingsState 覆盖那些 spec 可改的 mutable 字段。

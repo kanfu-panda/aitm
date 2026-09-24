@@ -31,6 +31,7 @@ vi.mock("../lib/tauri", async (orig) => {
 });
 
 import { hasNewOutput, useTmuxStore } from "./tmux";
+import { useTabsStore } from "./tabs";
 
 function session(
   name: string,
@@ -173,6 +174,41 @@ describe("tmux store：新输出提示、新建、改名", () => {
     useTmuxStore.getState().markSeen("$a");
     const s = useTmuxStore.getState();
     expect(hasNewOutput(s.sessions[0], s.seen)).toBe(false);
+  });
+
+  it("应该_当会话正被_aitm_的标签接着时_刷新后不标新输出", async () => {
+    // 接入这个动作本身会让 tmux 重绘、更新活动时间；用户在里面打字也会。
+    // 这些都是"我自己正在看"的输出，不该提示
+    useTabsStore.setState({
+      tabs: [
+        {
+          id: "t1",
+          title: "tmux: mine",
+          sessionId: "sid-1",
+          auto_title: false,
+          tmuxSessionId: "$mine",
+        },
+      ],
+      activeId: "t1",
+      unreadByTab: {},
+    });
+    tmuxListSessionsMock.mockResolvedValue([
+      session("mine", 1, 500),
+      session("other", 1, 500),
+    ]);
+    await useTmuxStore.getState().refresh();
+    tmuxListSessionsMock.mockResolvedValue([
+      session("mine", 1, 900),
+      session("other", 1, 900),
+    ]);
+    await useTmuxStore.getState().refresh();
+
+    const s = useTmuxStore.getState();
+    const byName = (n: string) => s.sessions.find((x) => x.name === n)!;
+    expect(hasNewOutput(byName("mine"), s.seen)).toBe(false);
+    // 别处（其它终端）接着的会话照常提示
+    expect(hasNewOutput(byName("other"), s.seen)).toBe(true);
+    useTabsStore.setState({ tabs: [], activeId: null, unreadByTab: {} });
   });
 
   it("UT-S09 改名后 id 不变，已查看记录保留", async () => {

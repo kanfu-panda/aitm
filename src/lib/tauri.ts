@@ -587,6 +587,11 @@ export interface TabSnapshot {
    * 缺省（null / 旧 snapshot 没该字段） → restore 时 fallback INITIAL_GROUP_ID。
    */
   group_id: string | null;
+  /**
+   * 从 tmux 面板接入的会话 id；没接为 null。重启时会话还在就自动接回去。
+   * 旧 snapshot 没有这个字段（后端 serde default 为 null），所以是可选的。
+   */
+  tmux_session_id?: string | null;
 }
 
 export interface SessionSnapshot {

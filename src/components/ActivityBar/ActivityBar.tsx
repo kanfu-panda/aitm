@@ -13,6 +13,9 @@ import { PLACEHOLDER_BROWSER_BOUNDS } from "../../lib/browserOpenRequest";
 import { useSidebarStore } from "../../stores/sidebar";
 import { useFileEditorStore } from "../../stores/file-editor";
 import { ActivityBarItem } from "./ActivityBarItem";
+import ConfirmActionDialog, {
+  type ConfirmActionRequest,
+} from "../ConfirmActionDialog";
 import {
   BAR_HEIGHT_HORIZONTAL,
   BAR_WIDTH_VERTICAL,
@@ -65,6 +68,7 @@ export function ActivityBar({ position, onSettingsOpen }: ActivityBarProps) {
   const closeBrowserPanel = useBrowserStore((s) => s.closePanel);
 
   const [contextMenuOpen, setContextMenuOpen] = useState(false);
+  const [confirm, setConfirm] = useState<ConfirmActionRequest | null>(null);
 
   const isVertical = position === "left" || position === "right";
   const iconSize = isVertical ? ICON_SIZE_VERTICAL : ICON_SIZE_HORIZONTAL;
@@ -123,7 +127,7 @@ export function ActivityBar({ position, onSettingsOpen }: ActivityBarProps) {
   /**
    * 浏览器按钮右键 → context menu。
    * 单项 "关闭所有标签 (N)"，N=tabs.length；< 1 时禁用。
-   * click → toast 二次确认（用 confirm() 简化；不引第三方 toast 库）→ closePanel。
+   * click → 应用内确认框（ConfirmActionDialog）→ closePanel。
    */
   const handleBrowserContextMenu = (e: MouseEvent<HTMLDivElement>) => {
     e.preventDefault();
@@ -134,11 +138,16 @@ export function ActivityBar({ position, onSettingsOpen }: ActivityBarProps) {
   const handleCloseAllTabs = () => {
     setContextMenuOpen(false);
     if (browserTabsCount === 0) return;
-    // 二次确认：用浏览器原生 confirm（足够简单 + 走 OS 原生 modal，不引 dep）
-    const ok = window.confirm(
-      t("activityBar.browserContextConfirm", { count: browserTabsCount }),
-    );
-    if (ok) void closeBrowserPanel();
+    // 二次确认用应用内对话框：WKWebView 里 window.confirm 不弹窗、直接返回 false
+    setConfirm({
+      message: t("activityBar.browserContextConfirm", {
+        count: browserTabsCount,
+      }),
+      confirmLabel: t("activityBar.browserContextNoTabs", {
+        count: browserTabsCount,
+      }),
+      onConfirm: () => void closeBrowserPanel(),
+    });
   };
 
   // badge 仅在 panelOpen=false 且 tabs.length > 0 时显示（plan §5.4）
@@ -285,6 +294,7 @@ export function ActivityBar({ position, onSettingsOpen }: ActivityBarProps) {
           testId="activity-bar-item-settings"
         />
       </div>
+      <ConfirmActionDialog open={confirm} onClose={() => setConfirm(null)} />
     </nav>
   );
 }
