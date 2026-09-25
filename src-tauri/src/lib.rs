@@ -132,13 +132,25 @@ pub fn run_gui() {
         .manage(ipc::settings::SettingsState::new())
         .manage(ipc::ai::AiState::new(&settings))
         .manage(std::sync::Arc::new(crate::store::AitmDb::new()))
-        .manage(std::sync::Arc::new(ipc::system::SystemMonitorState::default()))
+        .manage(std::sync::Arc::new(
+            ipc::system::SystemMonitorState::default(),
+        ))
         .manage(std::sync::Arc::new(ipc::browser::BrowserState::default()))
         // v1.1.0 F5：目录树 fs watcher 句柄状态（notify debouncer）
         .manage(ipc::fs::FsWatcherState::new())
         // v0.9.0 H2：cwd 轮询兜底（macOS 默认 zsh 不发 OSC 7 时也能跟 cwd）
         .manage(std::sync::Arc::new(session::cwd_poller::CwdPoller::new()))
         .setup(move |app| {
+            // 存量安装的权限补救：旧版本落盘的配置（含明文 API 密钥）与对话库是
+            // 0644 / 0755，同组用户可读。写入路径上的收紧只在下次写同一文件时生效，
+            // 所以启动时整棵收紧一次；放后台跑，不拖慢启动，失败只记日志。
+            tauri::async_runtime::spawn_blocking(|| {
+                match store::paths::aitm_home().and_then(|home| fs_perms::tighten_tree(&home)) {
+                    Ok(0) => {}
+                    Ok(n) => tracing::info!("已收紧 {n} 个数据文件 / 目录的权限"),
+                    Err(e) => tracing::warn!("收紧数据目录权限失败：{e:#}"),
+                }
+            });
             // 启动期 spawn 系统资源监控定时器（1.5s 一次 emit `system:metrics`）。
             // 不依赖前端调 IPC——前端只订阅事件就行。
             let handle = app.handle().clone();
@@ -338,9 +350,7 @@ pub fn run_gui() {
             use tauri::{Emitter, Manager};
             match event {
                 tauri::RunEvent::ExitRequested { api, .. } => {
-                    if crate::ipc::app::QUIT_CONFIRMED
-                        .load(std::sync::atomic::Ordering::SeqCst)
-                    {
+                    if crate::ipc::app::QUIT_CONFIRMED.load(std::sync::atomic::Ordering::SeqCst) {
                         // 用户已确认退出（app_quit_confirmed 调过）→ 放行
                         return;
                     }

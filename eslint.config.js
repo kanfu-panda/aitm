@@ -17,6 +17,7 @@ export default [
         console: "readonly",
         // 浏览器 Web API
         HTMLDivElement: "readonly",
+        Element: "readonly",
         HTMLElement: "readonly",
         HTMLButtonElement: "readonly",
         HTMLInputElement: "readonly",

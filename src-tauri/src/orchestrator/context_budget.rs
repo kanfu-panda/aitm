@@ -52,9 +52,11 @@ fn estimate_block_tokens(b: &ContentBlock) -> usize {
 pub fn estimate_message_tokens(m: &Message) -> usize {
     match &m.content {
         MessageContent::Text(t) => estimate_text_tokens(t),
-        MessageContent::Blocks(blocks) => {
-            blocks.iter().map(estimate_block_tokens).sum::<usize>().max(1)
-        }
+        MessageContent::Blocks(blocks) => blocks
+            .iter()
+            .map(estimate_block_tokens)
+            .sum::<usize>()
+            .max(1),
     }
 }
 
@@ -249,7 +251,10 @@ mod tests {
         let filler = "x".repeat(400); // 每条 ~100 tokens
         let mut msgs = vec![user("首条问题请读很多文件")];
         for i in 0..8 {
-            msgs.push(assistant_tooluse(&format!("id{i}"), &format!("第{i}次{filler}")));
+            msgs.push(assistant_tooluse(
+                &format!("id{i}"),
+                &format!("第{i}次{filler}"),
+            ));
             msgs.push(tool_result(&format!("id{i}"), &format!("结果{i}{filler}")));
         }
         let before = estimate_messages_tokens(&msgs);
@@ -336,7 +341,10 @@ mod tests {
 
     #[test]
     fn budget_tokens_缺省与比例() {
-        assert_eq!(budget_tokens(None), (DEFAULT_CONTEXT_WINDOW as f64 * 0.7) as usize);
+        assert_eq!(
+            budget_tokens(None),
+            (DEFAULT_CONTEXT_WINDOW as f64 * 0.7) as usize
+        );
         assert_eq!(budget_tokens(Some(100_000)), 70_000);
     }
 

@@ -305,9 +305,7 @@ async fn run_tmux_output(args: Vec<String>) -> Result<String, String> {
         .map_err(|e| format!("执行 tmux 任务失败：{e}"))?;
 
     match out {
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            Err("本机未安装 tmux".to_string())
-        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err("本机未安装 tmux".to_string()),
         Err(e) => Err(format!("执行 tmux 失败：{e}")),
         Ok(o) if o.status.success() => Ok(String::from_utf8_lossy(&o.stdout).into_owned()),
         Ok(o) => {
@@ -706,7 +704,10 @@ mod tests {
     #[test]
     fn ut_b11_非法_id_返回错误() {
         for bad in ["", "   ", "$", "96", "$9a", "=work"] {
-            assert!(build_attach_command("tmux", bad, false).is_err(), "{bad:?} 应被拒");
+            assert!(
+                build_attach_command("tmux", bad, false).is_err(),
+                "{bad:?} 应被拒"
+            );
         }
     }
 
@@ -722,7 +723,9 @@ mod tests {
     #[test]
     fn ut_b13_其余无会话措辞同样被识别() {
         assert!(is_no_server_error("no sessions"));
-        assert!(is_no_server_error("error connecting to /tmp/tmux-501/default"));
+        assert!(is_no_server_error(
+            "error connecting to /tmp/tmux-501/default"
+        ));
         // 大小写不敏感
         assert!(is_no_server_error("No Server Running"));
     }
@@ -762,7 +765,9 @@ mod tests {
 
     #[test]
     fn ut_b24_缺失_locale_时会被补上() {
-        let _g = crate::test_env_lock::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _g = crate::test_env_lock::ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let saved: Vec<_> = ["LANG", "LC_CTYPE"]
             .iter()
             .map(|k| (*k, std::env::var(k).ok()))
@@ -847,7 +852,15 @@ mod tests {
     #[test]
     fn ut_b26_九字段行解析出_id_与_activity() {
         let out = line(&[
-            "work", "2", "1", "1700000000", "/tmp", "zsh", "t", "$96", "1700000500",
+            "work",
+            "2",
+            "1",
+            "1700000000",
+            "/tmp",
+            "zsh",
+            "t",
+            "$96",
+            "1700000500",
         ]);
         let s = &parse_sessions(&out)[0];
         assert_eq!(s.id, "$96");
@@ -904,7 +917,17 @@ mod tests {
         let with = new_session_args("proj", Some("/tmp"));
         assert_eq!(
             with,
-            ["new-session", "-d", "-P", "-F", "#{session_id}", "-s", "proj", "-c", "/tmp"]
+            [
+                "new-session",
+                "-d",
+                "-P",
+                "-F",
+                "#{session_id}",
+                "-s",
+                "proj",
+                "-c",
+                "/tmp"
+            ]
         );
         let without = new_session_args("proj", None);
         assert!(!without.iter().any(|a| a == "-c"));
@@ -928,7 +951,10 @@ mod tests {
     /// 也杀掉（第一版就这样互相踩，报 `can't find session`）。
     async fn cleanup_names(names: &[&str]) {
         if let Ok(list) = tmux_list_sessions().await {
-            for s in list.into_iter().filter(|s| names.contains(&s.name.as_str())) {
+            for s in list
+                .into_iter()
+                .filter(|s| names.contains(&s.name.as_str()))
+            {
                 let _ = tmux_kill_session(s.id).await;
             }
         }
@@ -950,15 +976,24 @@ mod tests {
 
         let result: Result<(), String> = async {
             let id = tmux_new_session(name.clone(), Some("/tmp".into())).await?;
-            ensure(id.starts_with('$'), format!("应返回 session_id，实际 {id:?}"))?;
+            ensure(
+                id.starts_with('$'),
+                format!("应返回 session_id，实际 {id:?}"),
+            )?;
 
             let list = tmux_list_sessions().await?;
-            let found = list.iter().find(|s| s.id == id).ok_or("列表里找不到新会话")?;
+            let found = list
+                .iter()
+                .find(|s| s.id == id)
+                .ok_or("列表里找不到新会话")?;
             ensure(found.name == name, format!("名字不符：{:?}", found.name))?;
 
             tmux_rename_session(id.clone(), renamed.clone()).await?;
             let list = tmux_list_sessions().await?;
-            let found = list.iter().find(|s| s.id == id).ok_or("改名后按 id 找不到")?;
+            let found = list
+                .iter()
+                .find(|s| s.id == id)
+                .ok_or("改名后按 id 找不到")?;
             ensure(found.name == renamed, "改名后 id 应不变、名字应更新".into())?;
 
             // 预览接口能跑通即可（新会话输出可能为空）
@@ -1012,7 +1047,13 @@ mod tests {
             // 活动时间按秒计，跨过一秒再产生输出
             tokio::time::sleep(std::time::Duration::from_millis(1_300)).await;
             let sent = tmux_command()
-                .args(["send-keys", "-t", &pane_target(&id)?, "echo aitm-activity", "Enter"])
+                .args([
+                    "send-keys",
+                    "-t",
+                    &pane_target(&id)?,
+                    "echo aitm-activity",
+                    "Enter",
+                ])
                 .status()
                 .map_err(|e| e.to_string())?;
             ensure(sent.success(), "send-keys 失败".into())?;
@@ -1052,11 +1093,17 @@ mod tests {
             // 还在。旧实现 `kill-session -t <前缀>` 会前缀匹配、把 `-long` 杀掉。
             let prefix = long.trim_end_matches(&format!("-long-{}", std::process::id()));
             let by_name = tmux_kill_session(prefix.to_string()).await;
-            ensure(by_name.is_err(), "按名字结束现在应被拒，而不是去前缀匹配".into())?;
+            ensure(
+                by_name.is_err(),
+                "按名字结束现在应被拒，而不是去前缀匹配".into(),
+            )?;
             // 不存在的 id 同样不能波及别人
             let _ = tmux_kill_session("$999999".into()).await;
             let list = tmux_list_sessions().await?;
-            ensure(list.iter().any(|s| s.id == long_id), format!("{long} 不应被波及"))?;
+            ensure(
+                list.iter().any(|s| s.id == long_id),
+                format!("{long} 不应被波及"),
+            )?;
             Ok(())
         }
         .await;
@@ -1067,7 +1114,11 @@ mod tests {
     // === 关标签时识别"这个标签接着哪个 tmux 会话" ===
 
     fn client(pid: u32, id: &str, name: &str) -> TmuxClient {
-        TmuxClient { pid, session_id: id.into(), session_name: name.into() }
+        TmuxClient {
+            pid,
+            session_id: id.into(),
+            session_name: name.into(),
+        }
     }
 
     #[test]
@@ -1276,6 +1327,8 @@ mod tests {
     async fn ut_b15_available_探测不报错也不_panic() {
         // 有无 tmux 都是合法结果（CI / 别人的机器上可能没装），
         // 所以这里断言的是"调用链跑得通且不返回错误"，不断言具体取值。
-        tmux_available().await.expect("探测 tmux 可用性不应返回错误");
+        tmux_available()
+            .await
+            .expect("探测 tmux 可用性不应返回错误");
     }
 }

@@ -48,6 +48,8 @@ function snapshotHistory(): AiMessage[] {
 export default function AiSidebar() {
   const open = useSidebarStore((s) => s.open);
   const toggle = useSidebarStore((s) => s.toggle);
+  // 没有配置任何 provider：对话不会被加载，头部的会话切换器只会一直停在"加载中"
+  const [noProviders, setNoProviders] = useState(false);
 
   // v0.4.1 T2：原侧栏关闭时显示的 ✦ toggle 已迁移到 ActivityBar；
   // 关闭态 AiSidebar 不再渲染任何 DOM 节点，由 ActivityBar 的 Sparkles 按钮触发开启。
@@ -59,17 +61,29 @@ export default function AiSidebar() {
   // 这里只占满 wrapper；border 由 wrapper 提供（让 SplitDivider 锚定边沿）。
   return (
     <aside className="flex h-full w-full min-w-0 flex-shrink-0 flex-col overflow-hidden bg-[var(--c-bg-elev-1)] text-[var(--c-text-base)]">
-      <SidebarHeader onCollapse={toggle} />
-      <SidebarBody />
+      <SidebarHeader onCollapse={toggle} noProviders={noProviders} />
+      <SidebarBody onNoProvidersChange={setNoProviders} />
     </aside>
   );
 }
 
-function SidebarHeader({ onCollapse }: { onCollapse: () => void }) {
+function SidebarHeader({
+  onCollapse,
+  noProviders,
+}: {
+  onCollapse: () => void;
+  noProviders: boolean;
+}) {
   const { t } = useTranslation();
   return (
     <header className="flex items-center gap-1 border-b border-[var(--c-border)] px-2 py-2">
-      <ConversationSwitcher />
+      {noProviders ? (
+        <span className="min-w-0 flex-1 truncate px-2 py-1 text-sm text-[var(--c-text-dim)]">
+          {t("activityBar.ai")}
+        </span>
+      ) : (
+        <ConversationSwitcher />
+      )}
       <button
         onClick={onCollapse}
         className="rounded p-1 text-[var(--c-text-dim)] hover:bg-[var(--c-bg-elev-2)] hover:text-[var(--c-text-base)]"
@@ -82,10 +96,18 @@ function SidebarHeader({ onCollapse }: { onCollapse: () => void }) {
   );
 }
 
-function SidebarBody() {
+function SidebarBody({
+  onNoProvidersChange,
+}: {
+  onNoProvidersChange: (noProviders: boolean) => void;
+}) {
   const { t } = useTranslation();
   const [providers, setProviders] = useState<ProviderEntry[]>([]);
   const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    onNoProvidersChange(!loading && providers.length === 0);
+  }, [loading, providers.length, onNoProvidersChange]);
 
   // model 现在 per-conversation 存 store —— 切对话时自动跟随
   const activeId = useChatStore((s) => s.activeId);
@@ -366,87 +388,95 @@ function ChatBody({ providerId, modelId }: { providerId: string; modelId: string
 
   // 订阅 AI 流事件 + 工具调用事件
   useEffect(() => {
-    let unTok: (() => void) | undefined;
-    let unDone: (() => void) | undefined;
-    let unErr: (() => void) | undefined;
-    let unToolReq: (() => void) | undefined;
-    let unToolStart: (() => void) | undefined;
-    let unToolFin: (() => void) | undefined;
+    // 订阅是依次 await 的：conversationId 很快从 "" 切到真实 id 时，清理可能早于
+    // 后几个订阅落定。迟到落定的发现已被清理就立即退订，否则会永久残留
+    const unsubs: Array<() => void> = [];
     let alive = true;
+    const keep = (un: () => void) => {
+      if (alive) unsubs.push(un);
+      else un();
+    };
 
     (async () => {
-      unTok = await onAiToken(conversationId, (text) => {
-        if (alive) useChatStore.getState().appendAssistantDelta(text);
-      });
-      unDone = await onAiDone(conversationId, (e) => {
-        if (!alive) return;
-        const s = useChatStore.getState();
-        // v1.3.0 反幻觉：后端检测到"声称完成但本轮没调对应工具"时会带上警告
-        s.finishAssistant(e.hallucination);
-        if (e.usage) s.setUsage(e.usage.input_tokens, e.usage.output_tokens);
-      });
-      unErr = await onAiError(conversationId, (e) => {
-        if (!alive) return;
-        useChatStore.getState().setError({ message: e.message, kind: e.kind });
-      });
+      keep(
+        await onAiToken(conversationId, (text) => {
+          if (alive) useChatStore.getState().appendAssistantDelta(text);
+        }),
+      );
+      keep(
+        await onAiDone(conversationId, (e) => {
+          if (!alive) return;
+          const s = useChatStore.getState();
+          // v1.3.0 反幻觉：后端检测到"声称完成但本轮没调对应工具"时会带上警告
+          s.finishAssistant(e.hallucination);
+          if (e.usage) s.setUsage(e.usage.input_tokens, e.usage.output_tokens);
+        }),
+      );
+      keep(
+        await onAiError(conversationId, (e) => {
+          if (!alive) return;
+          useChatStore.getState().setError({ message: e.message, kind: e.kind });
+        }),
+      );
       // tool_request：仅 high/destructive 风险触发；low 自动批准不进这里
-      unToolReq = await onAiToolRequest(conversationId, (e) => {
-        if (!alive) return;
-        useChatStore.getState().addToolCall({
-          kind: "tool_call",
-          call_id: e.call_id,
-          name: e.name,
-          args_preview: e.args_preview,
-          risk: e.risk,
-          risk_reason: e.risk_reason ?? undefined,
-          status: "awaiting_approval",
-          preview: e.preview ?? undefined,
-        });
-      });
-      // tool_started：low 风险首次出现也进这里（addToolCall 兜底插入）
-      unToolStart = await onAiToolStarted(conversationId, (e) => {
-        if (!alive) return;
-        // v0.7.0-A：匿名统计——只传 tool 名（如 "read_file"），**不**传 args / call_id
-        trackEvent("ai_tool_invoked", { name: e.name });
-        const store = useChatStore.getState();
-        const exists = store.messages.some(
-          (m) => m.kind === "tool_call" && m.call_id === e.call_id,
-        );
-        if (!exists) {
-          store.addToolCall({
+      keep(
+        await onAiToolRequest(conversationId, (e) => {
+          if (!alive) return;
+          useChatStore.getState().addToolCall({
             kind: "tool_call",
             call_id: e.call_id,
             name: e.name,
-            args_preview: "",
-            risk: "low",
-            status: "running",
+            args_preview: e.args_preview,
+            risk: e.risk,
+            risk_reason: e.risk_reason ?? undefined,
+            status: "awaiting_approval",
+            preview: e.preview ?? undefined,
           });
-        } else {
-          store.updateToolCall(e.call_id, { status: "running" });
-        }
-      });
-      unToolFin = await onAiToolFinished(conversationId, (e) => {
-        if (!alive) return;
-        useChatStore.getState().updateToolCall(e.call_id, {
-          status: e.is_error ? "error" : "done",
-          result: { content: e.content, is_error: e.is_error },
-          auto_approved_reason: e.auto_approved_reason ?? undefined,
-          // T-A3：工具耗时存进 entry，状态行展示（如 1.2s）
-          elapsed_ms: e.elapsed_ms,
-          // T-B4：finished 事件带 diff preview 时存进 entry，历史回看仍能渲染
-          ...(e.preview ? { preview: e.preview } : {}),
-        });
-      });
+        }),
+      );
+      // tool_started：low 风险首次出现也进这里（addToolCall 兜底插入）
+      keep(
+        await onAiToolStarted(conversationId, (e) => {
+          if (!alive) return;
+          // v0.7.0-A：匿名统计——只传 tool 名（如 "read_file"），**不**传 args / call_id
+          trackEvent("ai_tool_invoked", { name: e.name });
+          const store = useChatStore.getState();
+          const exists = store.messages.some(
+            (m) => m.kind === "tool_call" && m.call_id === e.call_id,
+          );
+          if (!exists) {
+            store.addToolCall({
+              kind: "tool_call",
+              call_id: e.call_id,
+              name: e.name,
+              args_preview: "",
+              risk: "low",
+              status: "running",
+            });
+          } else {
+            store.updateToolCall(e.call_id, { status: "running" });
+          }
+        }),
+      );
+      keep(
+        await onAiToolFinished(conversationId, (e) => {
+          if (!alive) return;
+          useChatStore.getState().updateToolCall(e.call_id, {
+            status: e.is_error ? "error" : "done",
+            result: { content: e.content, is_error: e.is_error },
+            auto_approved_reason: e.auto_approved_reason ?? undefined,
+            // T-A3：工具耗时存进 entry，状态行展示（如 1.2s）
+            elapsed_ms: e.elapsed_ms,
+            // T-B4：finished 事件带 diff preview 时存进 entry，历史回看仍能渲染
+            ...(e.preview ? { preview: e.preview } : {}),
+          });
+        }),
+      );
     })();
 
     return () => {
       alive = false;
-      unTok?.();
-      unDone?.();
-      unErr?.();
-      unToolReq?.();
-      unToolStart?.();
-      unToolFin?.();
+      unsubs.forEach((un) => un());
     };
   }, [conversationId]);
 

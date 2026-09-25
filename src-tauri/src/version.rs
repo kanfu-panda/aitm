@@ -20,8 +20,10 @@ mod tests {
         let parts: Vec<&str> = v.split('.').collect();
         assert_eq!(parts.len(), 3, "期望 MAJOR.MINOR.PATCH，实际 {v}");
         for part in parts {
-            assert!(part.chars().all(|c| c.is_ascii_digit() || c == '-'),
-                "semver 段含非数字：{part}");
+            assert!(
+                part.chars().all(|c| c.is_ascii_digit() || c == '-'),
+                "semver 段含非数字：{part}"
+            );
         }
     }
 }

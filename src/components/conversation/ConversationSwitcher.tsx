@@ -15,7 +15,7 @@ import ScopeBadge from "./ScopeBadge";
  * - trigger 标题前 + dropdown 头部显 ScopeBadge 标识当前作用域
  * - 每行：标题（28 字截断）+ 消息数 + × 删除（hover 显示）
  * - 底部 "+ 新对话" 项创建并切到
- * - 双击对话标题进入 inline 编辑；Enter 提交 / Escape 取消
+ * - 点行尾的 ✎（重命名）按钮进入 inline 编辑；Enter 提交 / Escape 取消
  *
  * 注：1F 设计决议（plan §1.1 G6）：chat store 一次只 load 一个 scope，
  * 跨 scope 切对话留 Phase 2 做。所以 dropdown 不需要分组——仅需头部

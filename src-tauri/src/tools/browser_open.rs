@@ -269,7 +269,10 @@ mod tests {
         // 无 AppHandle 仍会失败，但 reason 必须是"打开失败"而非"URL 解析失败"
         assert_eq!(body["ok"], json!(false));
         let reason = body["reason"].as_str().unwrap_or("");
-        assert!(!reason.contains("URL 解析失败"), "空串不该报 URL 错: {reason}");
+        assert!(
+            !reason.contains("URL 解析失败"),
+            "空串不该报 URL 错: {reason}"
+        );
     }
 
     #[tokio::test]

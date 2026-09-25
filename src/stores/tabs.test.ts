@@ -393,4 +393,32 @@ describe("tab 初始输入（tmux 接入通道）", () => {
     const tab = useTabsStore.getState().tabs.find((t) => t.id === id);
     expect(tab?.initialInput).toBeUndefined();
   });
+
+  describe("markTmuxSession：识别到手敲的 tmux 接入", () => {
+    it("应该_当标签跟随目录命名时_记下会话并把标题改成会话名", () => {
+      const id = useTabsStore.getState().addTab();
+      useTabsStore.getState().markTmuxSession(id, { id: "$3", name: "build" });
+      const t = useTabsStore.getState().tabs.find((x) => x.id === id)!;
+      expect(t.tmuxSessionId).toBe("$3");
+      expect(t.title).toBe("build");
+      // 之后 OSC 7 目录变化不再覆盖会话名
+      expect(t.auto_title).toBe(false);
+    });
+
+    it("应该_当标签是用户手动命名的时_只记会话不改标题", () => {
+      const id = useTabsStore.getState().addTab({ title: "我的" });
+      useTabsStore.getState().markTmuxSession(id, { id: "$3", name: "build" });
+      const t = useTabsStore.getState().tabs.find((x) => x.id === id)!;
+      expect(t.tmuxSessionId).toBe("$3");
+      expect(t.title).toBe("我的");
+    });
+
+    it("应该_当会话已记下时_不产生新状态（避免反复触发快照写盘）", () => {
+      const id = useTabsStore.getState().addTab();
+      useTabsStore.getState().markTmuxSession(id, { id: "$3", name: "build" });
+      const before = useTabsStore.getState();
+      useTabsStore.getState().markTmuxSession(id, { id: "$3", name: "build" });
+      expect(useTabsStore.getState()).toBe(before);
+    });
+  });
 });

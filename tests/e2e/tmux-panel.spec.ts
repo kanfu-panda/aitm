@@ -52,8 +52,13 @@ test("E2E-03 点击会话项新开一个标题含会话名的终端标签页", a
   await page.getByTestId("tmux-session-item-build-farm").click();
 
   await expect(page.getByRole("tab")).toHaveCount(2);
-  // 新标签页的标题由会话名拼出，是手动命名（不跟随 cwd 改写）
-  await expect(page.getByText("tmux: build-farm").first()).toBeVisible();
+  // 新标签页的标题就是会话名，前面有 tmux 图标与普通标签区分
+  const tmuxTab = page.getByRole("tab").filter({
+    has: page.getByTestId(/^tab-tmux-icon-/),
+  });
+  await expect(tmuxTab).toHaveCount(1);
+  await expect(tmuxTab).toHaveText(/build-farm/);
+  await expect(tmuxTab).toHaveAttribute("title", "tmux 会话：build-farm");
 });
 
 test("E2E-04 右键会话项弹出菜单，接管 / 中断 / 结束三项可见", async ({
@@ -96,6 +101,10 @@ test("E2E-05 新建会话 → 标签页 +1，且以输入的名字调用新建",
   await page.getByTestId("input-dialog-ok").click();
 
   await expect(page.getByRole("tab")).toHaveCount(2);
+  // 对话框关闭后键盘焦点落在新标签的终端上，可以直接打字。
+  // 注意：焦点被抢回「新建」按钮的问题只在 WKWebView 里出现，Chromium 下修复前这条
+  // 也能通过——它只防回退，真正的验证靠 InputDialog 单测 + 打包应用实测
+  await expect(page.locator(".xterm-helper-textarea:focus")).toHaveCount(1);
   await expect
     .poll(async () =>
       page.evaluate(
@@ -180,9 +189,7 @@ test("E2E-08 分屏时点击会话：新标签出现在当前焦点分屏里", a
 
   // 1.6.0 的缺陷：新标签只进了标签列表、不属于任何分屏，界面上一个都不多
   await expect(groups.nth(1).getByRole("tab")).toHaveCount(2);
-  await expect(
-    groups.nth(1).getByText("tmux: build-farm").first(),
-  ).toBeVisible();
+  await expect(groups.nth(1).getByTestId(/^tab-tmux-icon-/)).toHaveCount(1);
 });
 
 test("E2E-09 右键结束会话：弹应用内确认框，确认后调结束接口", async ({
@@ -234,15 +241,23 @@ test("E2E-10 面板接入后，快照里记下这个标签接的 tmux 会话", a
           const snap = (
             window as unknown as {
               __lastSnapshotSave?: {
-                tabs: { title: string; tmux_session_id?: string | null }[];
+                tabs: {
+                  title: string;
+                  tmux_session_id?: string | null;
+                  group_active?: boolean;
+                }[];
               };
             }
           ).__lastSnapshotSave;
-          return snap?.tabs.map((t) => t.tmux_session_id ?? null) ?? [];
+          return (
+            snap?.tabs.map((t) => [t.tmux_session_id ?? null, t.group_active]) ??
+            []
+          );
         }),
       { timeout: 5_000 },
     )
-    .toContain("$1");
+    // 新接入的标签是所在分屏选中的那个，快照里也要记下，重启时据此还原
+    .toContainEqual(["$1", true]);
 });
 
 test("E2E-11 重启恢复：会话还在的 tmux 标签自动接回，已结束的恢复成普通标签", async ({
@@ -280,7 +295,12 @@ test("E2E-11 重启恢复：会话还在的 tmux 标签自动接回，已结束�
   await page.goto("/");
 
   await expect(page.getByRole("tab")).toHaveCount(2, { timeout: 5_000 });
-  await expect(page.getByText("tmux: build-farm").first()).toBeVisible();
+  // 接回的标签：标题换成会话现在的名字（不再带 1.6.1 的「tmux: 」前缀），带 tmux 图标
+  const tmuxTab = page.getByRole("tab").filter({
+    has: page.getByTestId(/^tab-tmux-icon-/),
+  });
+  await expect(tmuxTab).toHaveCount(1);
+  await expect(tmuxTab).toHaveText(/^build-farm/);
   // 已结束的会话不再顶着 tmux 标题
   await expect(page.getByText("tmux: gone")).toHaveCount(0);
 
@@ -300,4 +320,59 @@ test("E2E-11 重启恢复：会话还在的 tmux 标签自动接回，已结束�
     (window as unknown as { __sessionWrites: string[] }).__sessionWrites.join(""),
   );
   expect(writes).not.toContain("$404");
+});
+
+test("E2E-12 重启恢复分屏：每个分屏选中原来的标签，焦点仍在原来的分屏", async ({
+  page,
+}) => {
+  await installTauriMock(page);
+  await page.addInitScript(() => {
+    const w = window as unknown as {
+      __setPaneLayout?: (l: unknown) => void;
+      __setSessionSnapshot?: (s: unknown) => void;
+    };
+    const leaf = (id: string) => ({
+      kind: "leaf",
+      group: { id, type: "terminal", tab_ids: [], active_tab_id: null },
+    });
+    w.__setPaneLayout?.({
+      kind: "split",
+      direction: "horizontal",
+      ratio: 0.5,
+      left: leaf("g-initial"),
+      right: leaf("g-right"),
+    });
+    const tab = (id: string, group: string, active: boolean) => ({
+      tab_id: id,
+      title: id,
+      cwd: "/proj",
+      unread: 0,
+      group_id: group,
+      group_active: active,
+    });
+    w.__setSessionSnapshot?.({
+      schema_version: 1,
+      saved_at_ms: 1_700_000_000_000,
+      tabs: [
+        tab("left-1", "g-initial", false),
+        tab("left-2", "g-initial", true),
+        tab("right-1", "g-right", false),
+        tab("right-2", "g-right", true),
+      ],
+      active_tab_id: "right-2",
+    });
+  });
+  await page.goto("/");
+
+  const groups = page.getByTestId("terminal-pane-group");
+  await expect(groups).toHaveCount(2, { timeout: 5_000 });
+  // 1.6.1 的问题：每个分屏都选中第一个标签，焦点总在左边
+  await expect(groups.nth(0).getByRole("tab", { selected: true })).toHaveText(
+    /left-2/,
+  );
+  await expect(groups.nth(1).getByRole("tab", { selected: true })).toHaveText(
+    /right-2/,
+  );
+  await expect(groups.nth(1)).toHaveAttribute("data-focused", "true");
+  await expect(groups.nth(0)).toHaveAttribute("data-focused", "false");
 });

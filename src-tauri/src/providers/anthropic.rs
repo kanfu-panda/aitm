@@ -59,14 +59,12 @@ pub struct AnthropicClient {
 }
 
 impl AnthropicClient {
-    pub fn new(cfg: AnthropicConfig) -> Self {
-        Self {
+    /// HTTP 客户端构造失败时返回错误（见 [`crate::providers::types::build_http_client`]）。
+    pub fn new(cfg: AnthropicConfig) -> Result<Self, ProviderError> {
+        Ok(Self {
             cfg,
-            http: Client::builder()
-                .timeout(std::time::Duration::from_secs(120))
-                .build()
-                .expect("reqwest client"),
-        }
+            http: crate::providers::types::build_http_client()?,
+        })
     }
 }
 
@@ -86,7 +84,10 @@ enum AnthropicEvent {
     #[serde(rename = "content_block_stop")]
     ContentBlockStop { index: u32 },
     #[serde(rename = "message_delta")]
-    MessageDelta { delta: AnthropicMessageDelta, usage: AnthropicUsage },
+    MessageDelta {
+        delta: AnthropicMessageDelta,
+        usage: AnthropicUsage,
+    },
     #[serde(rename = "message_stop")]
     MessageStop,
     #[serde(rename = "ping")]
@@ -202,7 +203,9 @@ impl LlmProvider for AnthropicClient {
 
         let chunks = sse.flat_map(move |item| {
             let chunks: Vec<ChatChunk> = match item {
-                Err(e) => vec![ChatChunk::Error { message: format!("{e}") }],
+                Err(e) => vec![ChatChunk::Error {
+                    message: format!("{e}"),
+                }],
                 Ok(event) => {
                     if event.event == "ping" || event.data.is_empty() {
                         vec![]
@@ -293,7 +296,10 @@ fn translate_event(
                 vec![]
             }
         }
-        AnthropicEvent::ContentBlockStart { index, content_block } => match content_block {
+        AnthropicEvent::ContentBlockStart {
+            index,
+            content_block,
+        } => match content_block {
             AnthropicContentBlock::Text { .. } => vec![],
             AnthropicContentBlock::ToolUse { id, name } => {
                 block_index_to_call_id.insert(index, id.clone());
@@ -335,7 +341,9 @@ fn translate_event(
         AnthropicEvent::MessageStop => vec![],
         AnthropicEvent::Ping => vec![],
         AnthropicEvent::Error { error } => {
-            vec![ChatChunk::Error { message: error.message }]
+            vec![ChatChunk::Error {
+                message: error.message,
+            }]
         }
     }
 }

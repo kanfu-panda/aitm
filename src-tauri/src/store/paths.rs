@@ -115,6 +115,9 @@ mod tests {
     #[test]
     fn uuid_to_bucket_id_用连字符格式() {
         let u = Uuid::parse_str("0193abf1-7c2e-4d8a-9f0c-e1a3b5c7d9e2").unwrap();
-        assert_eq!(uuid_to_bucket_id(&u), "0193abf1-7c2e-4d8a-9f0c-e1a3b5c7d9e2");
+        assert_eq!(
+            uuid_to_bucket_id(&u),
+            "0193abf1-7c2e-4d8a-9f0c-e1a3b5c7d9e2"
+        );
     }
 }

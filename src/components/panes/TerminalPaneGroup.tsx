@@ -41,7 +41,10 @@ import {
 import TerminalView from "../TerminalView";
 import TabMetadataIcons from "../TabMetadataIcons";
 import CloseTabConfirmDialog from "../CloseTabConfirmDialog";
-import { Bell } from "../icons";
+import ConfirmActionDialog, {
+  type ConfirmActionRequest,
+} from "../ConfirmActionDialog";
+import { Bell, SquareTerminal } from "../icons";
 import {
   useNotificationsStore,
   type NotificationLevel,
@@ -185,14 +188,46 @@ export function TerminalPaneGroup({ group }: Props) {
     : 0;
   const rightCount =
     contextMenu && ctxIdx >= 0 ? group.tab_ids.length - 1 - ctxIdx : 0;
-  // TODO(F1 增强)：批量关闭（closeOthers/closeRight/closeAll）目前对运行中命令
-  // 的 tab 不弹确认，直接强关。plan §F1 允许本批次先做单 tab 确认，批量场景的
-  // 统一确认弹窗留作后续增强。
-  const closeBatch = async (ids: string[]) => {
+  // 批量关闭的确认框（有运行中命令时）；null = 不显示
+  const [batchConfirm, setBatchConfirm] = useState<ConfirmActionRequest | null>(
+    null,
+  );
+  const closeAll = async (ids: string[]) => {
     // 顺序 await 避免 store race（closeTabInGroup 内部会改 group.tab_ids）
     for (const id of ids) {
       await closeTabInGroup(group.id, id);
     }
+  };
+  /**
+   * 批量关闭（关闭其他 / 右侧 / 全部）：与单个关闭一样，先查有没有运行中的命令，
+   * 有就弹一次确认，列出这些标签；确认后全部关，取消则一个都不关。
+   * 接着 tmux 的标签不算——关掉只断开连接，会话照常在后台跑。
+   */
+  const closeBatch = async (ids: string[]) => {
+    const running: string[] = [];
+    for (const id of ids) {
+      const tab = tabs.find((x) => x.id === id);
+      if (!tab?.sessionId) continue;
+      try {
+        if (await tmuxSessionOfTab(tab.sessionId)) continue;
+        if (await sessionHasRunningCommand(tab.sessionId)) running.push(tab.title);
+      } catch (e) {
+        // 检测失败按"没在跑"处理，与单个关闭的兜底一致，不把用户卡住
+        console.warn("批量关闭前检测运行中命令失败", e);
+      }
+    }
+    if (running.length === 0) {
+      await closeAll(ids);
+      return;
+    }
+    setBatchConfirm({
+      message: t("paneGroup.batchCloseRunning", {
+        count: running.length,
+        names: running.join("、"),
+      }),
+      confirmLabel: t("paneGroup.batchCloseConfirm"),
+      onConfirm: () => void closeAll(ids),
+    });
   };
   const handleCloseOthers = () => {
     if (!contextMenu) return;
@@ -275,37 +310,50 @@ export function TerminalPaneGroup({ group }: Props) {
         }
         data-testid="terminal-pane-group-tabbar"
       >
-        <SortableContext
-          items={group.tab_ids}
-          strategy={horizontalListSortingStrategy}
+        {/* 标签多到放不下时横向滚动；"+" 放在滚动区外，始终可见。
+            竖向滚轮转成横向（鼠标没有横向滚轮），触控板自带横向滚动时不插手 */}
+        <div
+          className="flex h-full min-w-0 flex-1 items-center overflow-x-auto overflow-y-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          data-testid="terminal-pane-group-tabstrip"
+          onWheel={(e) => {
+            if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
+              e.currentTarget.scrollBy({ left: e.deltaY });
+            }
+          }}
         >
-          {visibleTabs.map((t) => {
-            const isActive = t.id === activeTabId;
-            const unread = unreadByTab[t.id] ?? 0;
-            return (
-              <SortableTab
-                key={t.id}
-                tabId={t.id}
-                title={t.title}
-                isActive={isActive}
-                isFocused={isFocused}
-                unread={unread}
-                notifLevel={notifLevelByTab[t.id]?.level}
-                sessionId={t.sessionId}
-                onClick={() => handleTabClick(t.id)}
-                onClose={() => handleCloseTab(t.id)}
-                onContextMenu={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  setContextMenu({ tabId: t.id, x: e.clientX, y: e.clientY });
-                }}
-              />
-            );
-          })}
-        </SortableContext>
+          <SortableContext
+            items={group.tab_ids}
+            strategy={horizontalListSortingStrategy}
+          >
+            {visibleTabs.map((t) => {
+              const isActive = t.id === activeTabId;
+              const unread = unreadByTab[t.id] ?? 0;
+              return (
+                <SortableTab
+                  key={t.id}
+                  tabId={t.id}
+                  title={t.title}
+                  isActive={isActive}
+                  isFocused={isFocused}
+                  unread={unread}
+                  notifLevel={notifLevelByTab[t.id]?.level}
+                  sessionId={t.sessionId}
+                  tmuxSessionId={t.tmuxSessionId}
+                  onClick={() => handleTabClick(t.id)}
+                  onClose={() => handleCloseTab(t.id)}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setContextMenu({ tabId: t.id, x: e.clientX, y: e.clientY });
+                  }}
+                />
+              );
+            })}
+          </SortableContext>
+        </div>
         <button
           onClick={handleAddTab}
-          className="ml-1 flex h-6 w-6 items-center justify-center rounded text-base text-[var(--c-text-muted)] hover:bg-[var(--c-bg-elev-2)] hover:text-[var(--c-text-base)]"
+          className="ml-1 flex h-6 w-6 shrink-0 items-center justify-center rounded text-base text-[var(--c-text-muted)] hover:bg-[var(--c-bg-elev-2)] hover:text-[var(--c-text-base)]"
           aria-label={t("paneGroup.newTab")}
           title={t("paneGroup.newTabTitle")}
         >
@@ -415,6 +463,10 @@ export function TerminalPaneGroup({ group }: Props) {
           </button>
         </div>
       )}
+      <ConfirmActionDialog
+        open={batchConfirm}
+        onClose={() => setBatchConfirm(null)}
+      />
       {/* F1（v1.1.0 回归修复）：关闭有运行中命令的 tab 时的二次确认弹窗。 */}
       <CloseTabConfirmDialog
         pendingTabTitle={pendingClose?.title ?? null}
@@ -453,6 +505,8 @@ interface SortableTabProps {
   unread: number;
   notifLevel: NotificationLevel | undefined;
   sessionId: string | null;
+  /** 接着 tmux 会话时的会话 id：标签上显示 tmux 图标，与普通标签区分 */
+  tmuxSessionId?: string;
   onClick: () => void;
   onClose: () => void;
   onContextMenu: (e: React.MouseEvent) => void;
@@ -479,10 +533,12 @@ function SortableTab({
   unread,
   notifLevel,
   sessionId,
+  tmuxSessionId,
   onClick,
   onClose,
   onContextMenu,
 }: SortableTabProps) {
+  const { t } = useTranslation();
   const {
     attributes,
     listeners,
@@ -492,6 +548,12 @@ function SortableTab({
     isDragging,
   } = useSortable({ id: tabId });
   const setTitle = useTabsStore((s) => s.setTitle);
+  const elRef = useRef<HTMLDivElement | null>(null);
+
+  // 切到的标签可能在标签栏可视区之外（标签多、或刚新建在最右边），滚进来
+  useEffect(() => {
+    if (isActive) elRef.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [isActive]);
 
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(title);
@@ -527,13 +589,17 @@ function SortableTab({
 
   return (
     <div
-      ref={setNodeRef}
+      ref={(el) => {
+        setNodeRef(el);
+        elRef.current = el;
+      }}
       style={style}
       {...attributes}
       {...listeners}
       data-testid={`terminal-pane-group-tab-${tabId}`}
       role="tab"
       aria-selected={isActive}
+      title={tmuxSessionId ? t("tmux.tabTooltip", { name: title }) : undefined}
       onClick={() => {
         if (!editing) onClick();
       }}
@@ -557,6 +623,15 @@ function SortableTab({
             "bg-[var(--c-bg-elev-1)] text-[var(--c-text-muted)] hover:bg-[var(--c-bg-elev-2)] hover:text-[var(--c-text-base)]")
       }
     >
+      {tmuxSessionId && (
+        // 与活动栏 tmux 面板同一个图标，天蓝色（sky）
+        <SquareTerminal
+          size={12}
+          className="shrink-0 text-[var(--c-info)]"
+          aria-hidden
+          data-testid={`tab-tmux-icon-${tabId}`}
+        />
+      )}
       {editing ? (
         <input
           ref={inputRef}

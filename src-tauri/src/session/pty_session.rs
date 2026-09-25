@@ -10,16 +10,16 @@ use std::sync::{Arc, Mutex as StdMutex};
 use std::thread;
 
 use anyhow::{Context, Result};
-use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, PtySize};
+use portable_pty::{ChildKiller, CommandBuilder, PtySize, native_pty_system};
 use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
 #[cfg(unix)]
 use tempfile::TempDir;
-use tokio::sync::mpsc;
 use tokio::sync::Mutex;
+use tokio::sync::mpsc;
 
 #[cfg(unix)]
 use super::shell_hook;
-use super::{default_shell, SessionConfig, SessionId};
+use super::{SessionConfig, SessionId, default_shell};
 
 /// 每个 session 保留的输出 ring buffer 上限（字节）。
 /// 超过则从队首 drain 老数据，保证最多 64KB 常驻内存。
@@ -96,10 +96,7 @@ fn prepare_zsh_zdotdir(cmd: &mut CommandBuilder) -> Result<TempDir> {
     // 用户原 ZDOTDIR 优先；否则 dirs::home_dir()（跨平台抽象，比直接读 HOME 稳）
     let original_dotdir = std::env::var("ZDOTDIR")
         .ok()
-        .or_else(|| {
-            dirs::home_dir()
-                .and_then(|p| p.to_str().map(|s| s.to_string()))
-        })
+        .or_else(|| dirs::home_dir().and_then(|p| p.to_str().map(|s| s.to_string())))
         .unwrap_or_default();
 
     let tmp = TempDir::new().context("创建临时 ZDOTDIR 失败")?;
@@ -293,7 +290,10 @@ impl Session {
         drop(pair.slave);
 
         let writer = master_writer(pair.master.as_ref())?;
-        let mut reader = pair.master.try_clone_reader().context("拿不到 PTY reader")?;
+        let mut reader = pair
+            .master
+            .try_clone_reader()
+            .context("拿不到 PTY reader")?;
 
         let (tx, rx) = mpsc::unbounded_channel::<Vec<u8>>();
 
@@ -378,7 +378,8 @@ impl Session {
             true,
             ProcessRefreshKind::nothing().with_cwd(sysinfo::UpdateKind::Always),
         );
-        sys.process(pid).and_then(|p| p.cwd().map(|c| c.to_path_buf()))
+        sys.process(pid)
+            .and_then(|p| p.cwd().map(|c| c.to_path_buf()))
     }
 
     /// 挂断这个 PTY —— 终止跑在里面的 shell 子进程。
@@ -475,8 +476,11 @@ impl Session {
 }
 
 /// 把 data 追加到 ring buffer，超过 [`RING_BUFFER_CAPACITY`] 时从队首丢弃旧字节。
+///
+/// 锁中毒（持锁线程 panic）时照常取回数据继续用：缓冲区只是字节队列，不存在
+/// "写了一半的不变量"，为此让整个会话 panic 得不偿失。
 fn push_to_buffer(buf: &StdMutex<VecDeque<u8>>, data: &[u8]) {
-    let mut guard = buf.lock().expect("ring buffer 锁中毒");
+    let mut guard = buf.lock().unwrap_or_else(|e| e.into_inner());
     guard.extend(data.iter().copied());
     let len = guard.len();
     if len > RING_BUFFER_CAPACITY {
@@ -487,7 +491,7 @@ fn push_to_buffer(buf: &StdMutex<VecDeque<u8>>, data: &[u8]) {
 
 /// 拷贝 ring buffer 当前内容到一个 Vec（避免长时间持锁）。
 fn snapshot_buffer(buf: &StdMutex<VecDeque<u8>>) -> Vec<u8> {
-    let guard = buf.lock().expect("ring buffer 锁中毒");
+    let guard = buf.lock().unwrap_or_else(|e| e.into_inner());
     let (a, b) = guard.as_slices();
     let mut out = Vec::with_capacity(a.len() + b.len());
     out.extend_from_slice(a);
@@ -508,6 +512,22 @@ fn last_n_lines(text: &str, n: usize) -> String {
 #[cfg(test)]
 mod ring_buffer_tests {
     use super::*;
+
+    #[test]
+    fn 应该_当_ring_buffer_锁中毒时_追加与读取不再_panic() {
+        let buf = StdMutex::new(VecDeque::new());
+        let _ = std::thread::scope(|sc| {
+            sc.spawn(|| {
+                let _g = buf.lock().unwrap();
+                panic!("模拟持锁线程崩溃");
+            })
+            .join()
+        });
+        assert!(buf.is_poisoned());
+
+        push_to_buffer(&buf, b"hello");
+        assert_eq!(snapshot_buffer(&buf), b"hello".to_vec());
+    }
 
     fn fresh_buf() -> Arc<StdMutex<VecDeque<u8>>> {
         Arc::new(StdMutex::new(VecDeque::with_capacity(RING_BUFFER_CAPACITY)))
@@ -542,10 +562,7 @@ mod ring_buffer_tests {
     fn last_n_lines_返回尾部_n_行() {
         let text = "line1\nline2\nline3\nline4\nline5";
         assert_eq!(last_n_lines(text, 2), "line4\nline5");
-        assert_eq!(
-            last_n_lines(text, 100),
-            "line1\nline2\nline3\nline4\nline5"
-        );
+        assert_eq!(last_n_lines(text, 100), "line1\nline2\nline3\nline4\nline5");
         assert_eq!(last_n_lines(text, 0), "");
     }
 
@@ -567,7 +584,10 @@ mod shell_hook_inject_tests {
         let tmp = prepare_zsh_zdotdir(&mut cmd).unwrap();
 
         let zshrc = fs::read_to_string(tmp.path().join(".zshrc")).unwrap();
-        assert!(zshrc.contains("PROMPT_EOL_MARK=\"\""), "实际 zshrc:\n{zshrc}");
+        assert!(
+            zshrc.contains("PROMPT_EOL_MARK=\"\""),
+            "实际 zshrc:\n{zshrc}"
+        );
         // 确认 wrapper source 了用户原 .zshrc
         assert!(zshrc.contains("source"), "实际 zshrc:\n{zshrc}");
         assert!(zshrc.contains(".zshrc"), "实际 zshrc:\n{zshrc}");
@@ -762,10 +782,7 @@ mod utf8_locale_tests {
         ensure_utf8_locale(&mut cmd);
 
         let extras = extra_env(&cmd);
-        assert_eq!(
-            extras.get("LANG").map(String::as_str),
-            Some("en_US.UTF-8")
-        );
+        assert_eq!(extras.get("LANG").map(String::as_str), Some("en_US.UTF-8"));
         assert_eq!(extras.get("LC_CTYPE").map(String::as_str), Some("UTF-8"));
     }
 
@@ -782,15 +799,9 @@ mod utf8_locale_tests {
 
         let extras = extra_env(&cmd);
         // LANG 缺 → fallback
-        assert_eq!(
-            extras.get("LANG").map(String::as_str),
-            Some("en_US.UTF-8")
-        );
+        assert_eq!(extras.get("LANG").map(String::as_str), Some("en_US.UTF-8"));
         // LC_CTYPE 已设非空 → 不主动写入
-        assert!(
-            !extras.contains_key("LC_CTYPE"),
-            "已设 LC_CTYPE 不应被覆盖"
-        );
+        assert!(!extras.contains_key("LC_CTYPE"), "已设 LC_CTYPE 不应被覆盖");
     }
 
     #[test]
@@ -898,7 +909,9 @@ mod e2e_tests {
             ..Default::default()
         };
         let id = mgr.open(cfg).await.unwrap();
-        mgr.write(id, b"echo aitm-ring-buffer-marker\n").await.unwrap();
+        mgr.write(id, b"echo aitm-ring-buffer-marker\n")
+            .await
+            .unwrap();
         mgr.write(id, b"exit\n").await.unwrap();
 
         // 给 PTY 时间生产输出 + 读线程把数据塞 buffer

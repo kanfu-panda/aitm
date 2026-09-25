@@ -84,8 +84,8 @@ pub fn read(root_path: &Path) -> Result<Option<ProjectMarker>> {
     if !path.exists() {
         return Ok(None);
     }
-    let text = fs::read_to_string(&path)
-        .with_context(|| format!("读 marker 失败: {}", path.display()))?;
+    let text =
+        fs::read_to_string(&path).with_context(|| format!("读 marker 失败: {}", path.display()))?;
     let marker: ProjectMarker = serde_json::from_str(&text)
         .with_context(|| format!("解析 marker JSON 失败: {}", path.display()))?;
     Ok(Some(marker))
@@ -109,8 +109,7 @@ pub fn write(root_path: &Path, marker: &ProjectMarker) -> Result<()> {
             .with_context(|| format!("写 marker tmp 失败: {}", tmp.display()))?;
         f.sync_all().context("sync marker tmp 失败")?;
     }
-    fs::rename(&tmp, &path)
-        .with_context(|| format!("rename marker 失败: {}", path.display()))?;
+    fs::rename(&tmp, &path).with_context(|| format!("rename marker 失败: {}", path.display()))?;
     Ok(())
 }
 
@@ -122,8 +121,7 @@ pub fn write_gitignore(root_path: &Path) -> Result<()> {
     fs::create_dir_all(&dir).with_context(|| format!("创建 .aitm/ 失败: {}", dir.display()))?;
     let path = dir.join(".gitignore");
     let content = "# aitm 自动生成：本机本地数据，不入 git\ncache/\n*.tmp\n*.log\n";
-    fs::write(&path, content)
-        .with_context(|| format!("写 .gitignore 失败: {}", path.display()))?;
+    fs::write(&path, content).with_context(|| format!("写 .gitignore 失败: {}", path.display()))?;
     Ok(())
 }
 

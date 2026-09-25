@@ -17,7 +17,7 @@
 use std::sync::Arc;
 
 use aitm_lib::ipc::providers::classify_for_user;
-use aitm_lib::providers::registry::{rebuild_registry, ProviderRegistry, SharedRegistry};
+use aitm_lib::providers::registry::{ProviderRegistry, SharedRegistry, rebuild_registry};
 use aitm_lib::providers::types::*;
 use aitm_lib::settings::{AppSettings, ProviderConfig};
 use futures::StreamExt;
@@ -37,12 +37,18 @@ static ENV_LOCK: Mutex<()> = Mutex::const_new(());
 
 /// 6 家 provider 的 env keys（含 _API_KEY 和 _BASE_URL）。
 const ENV_KEYS: &[&str] = &[
-    "ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL",
-    "DEEPSEEK_API_KEY", "DEEPSEEK_BASE_URL",
-    "QWEN_API_KEY", "QWEN_BASE_URL",
-    "ZHIPU_API_KEY", "ZHIPU_BASE_URL",
-    "MOONSHOT_API_KEY", "MOONSHOT_BASE_URL",
-    "OPENAI_API_KEY", "OPENAI_BASE_URL",
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_BASE_URL",
+    "DEEPSEEK_API_KEY",
+    "DEEPSEEK_BASE_URL",
+    "QWEN_API_KEY",
+    "QWEN_BASE_URL",
+    "ZHIPU_API_KEY",
+    "ZHIPU_BASE_URL",
+    "MOONSHOT_API_KEY",
+    "MOONSHOT_BASE_URL",
+    "OPENAI_API_KEY",
+    "OPENAI_BASE_URL",
 ];
 
 /// 把 HOME 切临时目录 + 清空 provider env vars，跨 await 跑闭包，结束后还原。
@@ -171,9 +177,12 @@ data: [DONE]\n\n\
                 .collect();
             assert_eq!(text, "hello world");
             assert!(
-                chunks
-                    .iter()
-                    .any(|c| matches!(c, ChatChunk::Done { stop_reason: StopReason::EndTurn })),
+                chunks.iter().any(|c| matches!(
+                    c,
+                    ChatChunk::Done {
+                        stop_reason: StopReason::EndTurn
+                    }
+                )),
                 "应有 Done 且 stop_reason=EndTurn"
             );
         },
@@ -319,7 +328,11 @@ data: [DONE]\n\n\
                     _ => None,
                 })
                 .collect();
-            assert!(texts.len() >= 2, "应有 ≥2 个 TextDelta，实际 {}", texts.len());
+            assert!(
+                texts.len() >= 2,
+                "应有 ≥2 个 TextDelta，实际 {}",
+                texts.len()
+            );
             assert_eq!(
                 texts.iter().map(|s| s.as_str()).collect::<String>(),
                 "hello world"
@@ -327,9 +340,10 @@ data: [DONE]\n\n\
 
             // 1 个 Usage，input=10、output=5
             let usage = chunks.iter().find_map(|c| match c {
-                ChatChunk::Usage { input_tokens, output_tokens } => {
-                    Some((*input_tokens, *output_tokens))
-                }
+                ChatChunk::Usage {
+                    input_tokens,
+                    output_tokens,
+                } => Some((*input_tokens, *output_tokens)),
                 _ => None,
             });
             assert_eq!(usage, Some((10, 5)), "Usage chunk 解析错");
@@ -338,7 +352,9 @@ data: [DONE]\n\n\
             assert!(
                 chunks.iter().any(|c| matches!(
                     c,
-                    ChatChunk::Done { stop_reason: StopReason::EndTurn }
+                    ChatChunk::Done {
+                        stop_reason: StopReason::EndTurn
+                    }
                 )),
                 "应有 Done 且 stop_reason=EndTurn"
             );
@@ -346,4 +362,3 @@ data: [DONE]\n\n\
     )
     .await;
 }
-

@@ -21,6 +21,13 @@ if (typeof (globalThis as { ResizeObserver?: unknown }).ResizeObserver === "unde
     ResizeObserverMock;
 }
 
+// jsdom 没有布局，不实现 scrollIntoView / scrollBy；分屏标签栏切标签时会调用。
+// 给 noop，要断言调用的单测自己在 Element.prototype 上换成 vi.fn()。
+if (typeof Element !== "undefined") {
+  Element.prototype.scrollIntoView ??= function () {};
+  Element.prototype.scrollBy ??= function () {};
+}
+
 // v0.7.0-A：jsdom 不挂 Tauri IPC bridge，@aptabase/tauri 加载时会调 `window.__TAURI_IPC__`
 // → 没桩就抛 unhandled rejection 让 vitest 报 errors。给个 noop fake 让插桩调用静默通过。
 // 单测里要断言 aptabase 行为的（如 analytics.test.ts）用 vi.mock 显式覆盖即可。

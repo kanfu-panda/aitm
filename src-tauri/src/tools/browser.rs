@@ -221,9 +221,7 @@ impl Tool for BrowserSnapshotTool {
                 content: json,
                 is_error: false,
             }),
-            Ok(Err(_)) => Err(ToolError::Exec(
-                "snapshot oneshot 通道异常".to_string(),
-            )),
+            Ok(Err(_)) => Err(ToolError::Exec("snapshot oneshot 通道异常".to_string())),
             Err(_) => {
                 ctx.browser_state
                     .pending_snapshots
@@ -285,7 +283,9 @@ impl Tool for BrowserNavigateTool {
             Ok(p) => p,
             Err(e) => {
                 // 连 url 都没解析出 → 无 attempted_url 可填，returns Err
-                return Err(ToolError::InvalidArgs(format!("browser_navigate 参数: {e}")));
+                return Err(ToolError::InvalidArgs(format!(
+                    "browser_navigate 参数: {e}"
+                )));
             }
         };
         let attempted_url = parsed.url.clone();
@@ -374,7 +374,11 @@ impl Tool for BrowserNavigateTool {
             tab_id: tab_id.clone(),
             url: parsed.url.clone(),
         };
-        if let Err(e) = app.emit_to(tauri::EventTarget::webview("main"), "browser:url_changed", &payload) {
+        if let Err(e) = app.emit_to(
+            tauri::EventTarget::webview("main"),
+            "browser:url_changed",
+            &payload,
+        ) {
             tracing::warn!("AI 工具 emit browser:url_changed to main 失败: {e}");
         }
 
@@ -397,9 +401,11 @@ impl Tool for BrowserNavigateTool {
                     tab_id: tab_id.clone(),
                     url: snapshot.url.clone(),
                 };
-                if let Err(e) =
-                    app.emit_to(tauri::EventTarget::webview("main"), "browser:url_changed", &payload2)
-                {
+                if let Err(e) = app.emit_to(
+                    tauri::EventTarget::webview("main"),
+                    "browser:url_changed",
+                    &payload2,
+                ) {
                     tracing::warn!("AI 工具 emit 重定向后 url 失败: {e}");
                 }
             }
@@ -574,7 +580,11 @@ impl Tool for BrowserFillTool {
             .map_err(|e| ToolError::Exec(format!("fill eval 失败: {e}")))?;
 
         Ok(ToolResult {
-            content: format!("已填 ref={} value=<{}字符> (tab {tab_id})", parsed.r#ref, parsed.value.chars().count()),
+            content: format!(
+                "已填 ref={} value=<{}字符> (tab {tab_id})",
+                parsed.r#ref,
+                parsed.value.chars().count()
+            ),
             is_error: false,
         })
     }
@@ -636,7 +646,10 @@ impl Tool for BrowserEvalTool {
             .map_err(|e| ToolError::Exec(format!("eval 失败: {e}")))?;
 
         Ok(ToolResult {
-            content: format!("已 eval JS（{} 字符，tab {tab_id}）", parsed.script.chars().count()),
+            content: format!(
+                "已 eval JS（{} 字符，tab {tab_id}）",
+                parsed.script.chars().count()
+            ),
             is_error: false,
         })
     }
@@ -648,21 +661,44 @@ impl Tool for BrowserEvalTool {
 /// **动态执行 / 改 DOM**。
 const EVAL_DANGEROUS_MARKERS: &[&str] = &[
     // 存储
-    "localstorage", "sessionstorage", "indexeddb", "document.cookie",
+    "localstorage",
+    "sessionstorage",
+    "indexeddb",
+    "document.cookie",
     // 网络
-    "fetch(", "xmlhttprequest", "sendbeacon", "websocket", "eventsource",
+    "fetch(",
+    "xmlhttprequest",
+    "sendbeacon",
+    "websocket",
+    "eventsource",
     // 导航 / 开窗
     //
     // 注意**不列** `location.href`：赋值式导航（`location.href = 'x'`）已被上面的
     // 赋值号检测抓住，而单纯读取 `window.location.href` 是无副作用的查询，
     // 列进来会把它误判成危险（真机验证时踩到过）。
-    "location=", "location =", "location.replace",
-    "location.assign", "window.open", "history.push", "history.replace",
+    "location=",
+    "location =",
+    "location.replace",
+    "location.assign",
+    "window.open",
+    "history.push",
+    "history.replace",
     // 动态执行
-    "eval(", "function(", "settimeout(", "setinterval(", "import(",
+    "eval(",
+    "function(",
+    "settimeout(",
+    "setinterval(",
+    "import(",
     // 改 DOM / 提交
-    ".submit(", ".click(", "innerhtml", "outerhtml", "appendchild",
-    "removechild", "remove()", "setattribute", "document.write",
+    ".submit(",
+    ".click(",
+    "innerhtml",
+    "outerhtml",
+    "appendchild",
+    "removechild",
+    "remove()",
+    "setattribute",
+    "document.write",
 ];
 
 /// 判定一段 JS 是否属于**只读查询**（可降级到 HIGH，不必输"确认"）。
@@ -692,7 +728,9 @@ fn is_readonly_script(script: &str) -> bool {
 // ============================================================
 
 fn json_escape(s: &str) -> String {
-    s.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n")
+    s.replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
 }
 
 #[cfg(test)]
@@ -800,10 +838,12 @@ mod tests {
             .await
             .expect("应返 Ok(ToolResult) 而不是 Err");
         assert!(r.is_error, "scheme 拒绝应标 is_error=true");
-        let body: serde_json::Value =
-            serde_json::from_str(&r.content).expect("content 应是 JSON");
+        let body: serde_json::Value = serde_json::from_str(&r.content).expect("content 应是 JSON");
         assert_eq!(body["ok"], serde_json::json!(false), "ok 字段必须 false");
-        assert_eq!(body["attempted_url"], serde_json::json!("file:///etc/passwd"));
+        assert_eq!(
+            body["attempted_url"],
+            serde_json::json!("file:///etc/passwd")
+        );
         assert!(
             body["reason"]
                 .as_str()
@@ -823,10 +863,12 @@ mod tests {
             .await
             .expect("应返 Ok(ToolResult) 而不是 Err");
         assert!(r.is_error);
-        let body: serde_json::Value =
-            serde_json::from_str(&r.content).expect("content 应是 JSON");
+        let body: serde_json::Value = serde_json::from_str(&r.content).expect("content 应是 JSON");
         assert_eq!(body["ok"], serde_json::json!(false));
-        assert_eq!(body["attempted_url"], serde_json::json!("https://example.com"));
+        assert_eq!(
+            body["attempted_url"],
+            serde_json::json!("https://example.com")
+        );
         let reason = body["reason"].as_str().unwrap_or("");
         assert!(
             reason.contains("浏览器面板未打开") || reason.contains("无 active"),
@@ -843,17 +885,13 @@ mod tests {
             .await
             .expect("应返 Ok(ToolResult) 而不是 Err");
         assert!(r.is_error);
-        let body: serde_json::Value =
-            serde_json::from_str(&r.content).expect("content 应是 JSON");
+        let body: serde_json::Value = serde_json::from_str(&r.content).expect("content 应是 JSON");
         assert_eq!(body["ok"], serde_json::json!(false));
         assert_eq!(body["attempted_url"], serde_json::json!("not-a-valid-url"));
         let reason = body["reason"].as_str().unwrap_or("");
         // 注意：`not-a-valid-url` 在 tauri::Url 解析时可能报"relative URL without a base"
         // 因此 reason 关键字只断言"失败"路径走到了
-        assert!(
-            !reason.is_empty(),
-            "reason 不能空"
-        );
+        assert!(!reason.is_empty(), "reason 不能空");
     }
 
     #[tokio::test]
@@ -997,14 +1035,8 @@ mod tests {
 
     #[test]
     fn snapshot_risk_class_low() {
-        assert_eq!(
-            BrowserSnapshotTool.risk_class(&json!({})),
-            RiskClass::Low
-        );
-        assert_eq!(
-            BrowserNavigateTool.risk_class(&json!({})),
-            RiskClass::Low
-        );
+        assert_eq!(BrowserSnapshotTool.risk_class(&json!({})), RiskClass::Low);
+        assert_eq!(BrowserNavigateTool.risk_class(&json!({})), RiskClass::Low);
     }
 
     #[test]
@@ -1028,10 +1060,10 @@ mod tests {
             "document.title",
             "document.querySelectorAll('a').length",
             "document.body.innerText",
-            "window.location.href",           // 读 href（无赋值）算只读
+            "window.location.href", // 读 href（无赋值）算只读
             "document.querySelector('h1').textContent",
             "navigator.userAgent",
-            "a === b",                        // 比较号不算赋值
+            "a === b", // 比较号不算赋值
             "x !== y",
         ] {
             assert_eq!(
@@ -1046,7 +1078,7 @@ mod tests {
     #[test]
     fn eval_有副作用_仍_destructive() {
         for s in [
-            "location.href = 'https://evil.com'",     // 导航
+            "location.href = 'https://evil.com'",      // 导航
             "document.cookie",                         // 读 cookie 也算敏感
             "localStorage.getItem('token')",           // 存储
             "fetch('https://x.com', {method:'POST'})", // 网络
@@ -1096,11 +1128,12 @@ mod tests {
     #[test]
     fn build_navigate_success_body_已加载_带最终_url_和_title() {
         // 覆盖重定向场景：请求 github.com，落地到 github.com/login
-        let outcome = crate::ipc::browser::LoadWaitOutcome::Loaded(crate::ipc::browser::PageLoadState {
-            generation: 1,
-            url: "https://github.com/login".into(),
-            title: "Sign in to GitHub · GitHub".into(),
-        });
+        let outcome =
+            crate::ipc::browser::LoadWaitOutcome::Loaded(crate::ipc::browser::PageLoadState {
+                generation: 1,
+                url: "https://github.com/login".into(),
+                title: "Sign in to GitHub · GitHub".into(),
+            });
         let body = build_navigate_success_body("tab-1", "https://github.com", outcome);
         assert_eq!(body["ok"], json!(true));
         assert_eq!(body["loaded"], json!(true));
@@ -1111,11 +1144,12 @@ mod tests {
 
     #[test]
     fn build_navigate_success_body_已加载_但_url_为空_用请求时的_url_兜底() {
-        let outcome = crate::ipc::browser::LoadWaitOutcome::Loaded(crate::ipc::browser::PageLoadState {
-            generation: 1,
-            url: String::new(),
-            title: String::new(),
-        });
+        let outcome =
+            crate::ipc::browser::LoadWaitOutcome::Loaded(crate::ipc::browser::PageLoadState {
+                generation: 1,
+                url: String::new(),
+                title: String::new(),
+            });
         let body = build_navigate_success_body("tab-1", "https://example.com", outcome);
         assert_eq!(body["url"], json!("https://example.com"));
     }

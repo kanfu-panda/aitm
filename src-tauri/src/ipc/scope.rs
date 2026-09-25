@@ -175,10 +175,7 @@ fn unix_now() -> i64 {
 
 /// 解析 cwd → 作用域。前端 AiSidebar 挂载 / 切 tab 时调。
 #[tauri::command]
-pub async fn scope_resolve(
-    cwd: String,
-    db: State<'_, Arc<AitmDb>>,
-) -> Result<ScopeDto, String> {
+pub async fn scope_resolve(cwd: String, db: State<'_, Arc<AitmDb>>) -> Result<ScopeDto, String> {
     let db = db.inner().clone();
     tokio::task::spawn_blocking(move || scope_resolve_impl(&cwd, &db))
         .await
@@ -200,10 +197,7 @@ pub async fn project_init(
 
 /// 把 cwd 加入"永久忽略"名单。
 #[tauri::command]
-pub async fn mark_ignored(
-    cwd: String,
-    db: State<'_, Arc<AitmDb>>,
-) -> Result<(), String> {
+pub async fn mark_ignored(cwd: String, db: State<'_, Arc<AitmDb>>) -> Result<(), String> {
     let db = db.inner().clone();
     tokio::task::spawn_blocking(move || mark_ignored_impl(&cwd, &db))
         .await

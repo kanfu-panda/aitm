@@ -1,0 +1,29 @@
+# 提交前检查（pre-commit 框架，`pre-commit run` 只看本次暂存的文件）。
+#
+# 全部用本地命令（language: system），不从网络拉取钩子仓库。
+# 首次使用：安装 pre-commit（如 `uv tool install pre-commit`）后执行 `pre-commit install`。
+#
+# 这里只放几秒内能跑完的检查；clippy、单测、E2E 较慢，留在合并前的质量门里跑
+# （见 CLAUDE.md「质量门」）。
+repos:
+  - repo: local
+    hooks:
+      - id: eslint
+        name: eslint（前端 lint，0 warning）
+        entry: pnpm exec eslint --max-warnings=0
+        language: system
+        files: ^src/.*\.(ts|tsx)$
+      - id: typecheck
+        name: tsc（前端类型检查）
+        entry: pnpm typecheck
+        language: system
+        files: \.(ts|tsx)$
+        pass_filenames: false
+      - id: cargo-fmt
+        name: cargo fmt（Rust 格式）
+        # rustfmt 会顺着 mod 声明检查整个子树，按单文件查做不到，所以查整个 crate。
+        # 不通过时执行 `cd src-tauri && cargo fmt` 后重新暂存
+        entry: bash -c 'cd src-tauri && cargo fmt --check'
+        language: system
+        files: ^src-tauri/.*\.rs$
+        pass_filenames: false

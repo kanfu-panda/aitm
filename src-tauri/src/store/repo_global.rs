@@ -245,8 +245,7 @@ pub mod token_usage {
     /// 把 `OffsetDateTime` 格式化为 `YYYYMM`。抽出来便于单测注入固定时间。
     pub(crate) fn format_yyyymm(dt: OffsetDateTime) -> String {
         let fmt = format_description!("[year][month]");
-        dt.format(&fmt)
-            .expect("[year][month] 格式化必然成功")
+        dt.format(&fmt).expect("[year][month] 格式化必然成功")
     }
 }
 

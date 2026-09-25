@@ -473,7 +473,10 @@ mod tests {
         let events = p.feed(seq.as_bytes());
         assert!(events.is_empty(), "回显文本不应触发通知：{events:?}");
         let events = p.feed(b"\x1b]6969;aitm-done;0;abc12345\x07");
-        assert!(events.is_empty(), "sentinel 不应触发通知 / 响铃：{events:?}");
+        assert!(
+            events.is_empty(),
+            "sentinel 不应触发通知 / 响铃：{events:?}"
+        );
     }
 
     #[test]

@@ -187,7 +187,7 @@ pub fn auto_register(
     let dotenv = super::env::load_dotenv_map();
 
     if let Some(cfg) = resolve_anthropic_config(settings, &dotenv) {
-        reg.register(Arc::new(AnthropicClient::new(cfg)));
+        reg.register(Arc::new(AnthropicClient::new(cfg)?));
     }
 
     for preset in [
@@ -198,7 +198,7 @@ pub fn auto_register(
         Preset::OpenAIOfficial,
     ] {
         if let Some(cfg) = resolve_openai_compat_config(preset, settings, &dotenv) {
-            reg.register(Arc::new(OpenAICompatClient::new(cfg)));
+            reg.register(Arc::new(OpenAICompatClient::new(cfg)?));
         }
     }
     Ok(())
@@ -422,8 +422,7 @@ mod tests {
 
         // 直接验 helper：env 应胜出
         let dotenv = HashMap::new();
-        let resolved =
-            resolve_openai_compat_config(Preset::QwenDashScope, &s, &dotenv);
+        let resolved = resolve_openai_compat_config(Preset::QwenDashScope, &s, &dotenv);
 
         unsafe {
             if let Some(h) = original_home {

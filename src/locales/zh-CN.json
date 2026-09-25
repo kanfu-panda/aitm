@@ -29,6 +29,7 @@
   "quitDialog": {
     "title": "确认退出 aitm？",
     "description": "所有终端会话和未保存的文件编辑将会丢失。",
+    "descriptionWithTmux": "普通终端里运行的程序和未保存的文件编辑将会丢失；tmux 会话会在后台继续运行，下次启动 aitm 时自动接回。",
     "cancel": "取消",
     "confirm": "退出"
   },
@@ -540,7 +541,9 @@
   },
   "paneGroup": {
     "newTab": "新建标签",
-    "newTabTitle": "新建标签 (⌘T)"
+    "newTabTitle": "新建标签 (⌘T)",
+    "batchCloseRunning": "{{count}} 个标签里有正在运行的命令：{{names}}。全部关闭会终止这些命令。",
+    "batchCloseConfirm": "全部关闭"
   },
   "tmux": {
     "title": "tmux 会话",
@@ -574,6 +577,7 @@
     "previewReload": "刷新预览",
     "previewLoading": "正在读取…",
     "previewEmpty": "暂无输出",
-    "attachNoPane": "没有可以放新标签的分屏（当前分屏的标签数可能已达上限），请先关掉一些标签再试。"
+    "attachNoPane": "没有可以放新标签的分屏（当前分屏的标签数可能已达上限），请先关掉一些标签再试。",
+    "tabTooltip": "tmux 会话：{{name}}"
   }
 }

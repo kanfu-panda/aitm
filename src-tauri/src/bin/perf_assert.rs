@@ -39,7 +39,7 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 use aitm_lib::session::manager::SessionManager;
-use aitm_lib::session::{default_shell, SessionConfig};
+use aitm_lib::session::{SessionConfig, default_shell};
 
 /// `aitm --version` 的耗时预算。**不是**「冷启动到首屏」——见模块文档。
 const CLI_START_BUDGET_MS: u128 = 200;
@@ -60,8 +60,7 @@ const TABS: usize = 5;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
-    let only = std::env::args()
-        .find_map(|a| a.strip_prefix("--only=").map(str::to_string));
+    let only = std::env::args().find_map(|a| a.strip_prefix("--only=").map(str::to_string));
     let run_startup = only.as_deref().is_none_or(|o| o == "startup");
     let run_memory = only.as_deref().is_none_or(|o| o == "memory");
     let mut failed = false;

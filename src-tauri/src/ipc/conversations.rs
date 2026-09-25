@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use crate::ipc::scope::ScopeDto;
-use crate::store::{repo_project, AitmDb};
+use crate::store::{AitmDb, repo_project};
 
 /// 把 scope 转成对应的 db bucket id（项目 db 的目录名）。
 ///
@@ -207,11 +207,10 @@ pub fn conv_append_message_impl(
         let (id, seq) = repo_project::messages::append(conn, &cid, &kind, &payload_json)?;
         // append 内部已写过 created_at = now()，这里再 query 一次拿到准确值
         // 比"算 SystemTime"靠谱（避免事务跨秒边界）
-        let created_at: i64 = conn.query_row(
-            "SELECT created_at FROM messages WHERE id = ?1",
-            [id],
-            |r| r.get(0),
-        )?;
+        let created_at: i64 =
+            conn.query_row("SELECT created_at FROM messages WHERE id = ?1", [id], |r| {
+                r.get(0)
+            })?;
         Ok(MessageDto {
             id,
             seq,
@@ -313,9 +312,11 @@ pub async fn conv_set_model(
     model_id: String,
 ) -> Result<(), String> {
     let db = db.inner().clone();
-    tokio::task::spawn_blocking(move || conv_set_model_impl(&db, &scope, cid, provider_id, model_id))
-        .await
-        .map_err(|e| format!("spawn_blocking 失败: {e}"))?
+    tokio::task::spawn_blocking(move || {
+        conv_set_model_impl(&db, &scope, cid, provider_id, model_id)
+    })
+    .await
+    .map_err(|e| format!("spawn_blocking 失败: {e}"))?
 }
 
 #[tauri::command]
@@ -327,9 +328,11 @@ pub async fn conv_append_message(
     payload_json: String,
 ) -> Result<MessageDto, String> {
     let db = db.inner().clone();
-    tokio::task::spawn_blocking(move || conv_append_message_impl(&db, &scope, cid, kind, payload_json))
-        .await
-        .map_err(|e| format!("spawn_blocking 失败: {e}"))?
+    tokio::task::spawn_blocking(move || {
+        conv_append_message_impl(&db, &scope, cid, kind, payload_json)
+    })
+    .await
+    .map_err(|e| format!("spawn_blocking 失败: {e}"))?
 }
 
 #[tauri::command]

@@ -25,6 +25,8 @@ import {
 } from "../lib/xtermTextarea";
 import { altScrollSequence, shouldAltScroll } from "../lib/altScroll";
 import { computeScrollRestore, isScrolledUp } from "../lib/scrollLock";
+import { openSessionWithOutput } from "../lib/openSessionWithOutput";
+import { useTerminalFocusRequest } from "../lib/terminalFocus";
 
 /** v0.4.1 T5：将 settings.ui.theme_mode (auto/dark/light) 解析为实际深浅模式。
  *  auto 时读 matchMedia 当前态；dark/light 直接透传。SSR 安全：window 不在
@@ -357,17 +359,47 @@ export default function TerminalView({
     let unlistenExit: (() => void) | null = null;
     let resizeObs: ResizeObserver | null = null;
 
+    const writeOutput = (bytes: Uint8Array) => {
+      // v1.1.0 R8：滚动锁定（xterm.js issue #216 workaround）。
+      // xterm 的 write 会在异步 isUserScrolling 标记生效前把视口拽回底部，
+      // CC 忙时高频 write 导致用户滚上去立刻被拉回。这里写入前记住用户位置，
+      // 写完（write callback）后若用户本来滚离底部就 scrollToLine 拉回。
+      const before = term.buffer.active;
+      const wasScrolledUp = isScrolledUp(before);
+      const savedViewportY = before.viewportY;
+      term.write(bytes, () => {
+        const target = computeScrollRestore(
+          wasScrolledUp,
+          savedViewportY,
+          term.buffer.active,
+        );
+        if (target !== null) term.scrollToLine(target);
+      });
+      // v0.10.5 hotfix：删 PTY 输出触发 markUnread 那行（背景 tab 任何 PTY
+      // 输出都 +1 与 macOS Terminal 的"BEL/通知触发"语义不一致）。unread 现在
+      // 只由 notifications.ts emitNotification 触发。
+    };
+
     (async () => {
       let id = idRef.current;
       if (!id) {
         // v0.9.1 HR3-1：把上次会话 last_cwd 传给后端 PTY 启动目录。
         // null / undefined / 不存在的目录都由后端 [`resolve_initial_cwd`] 兜底到 HOME。
+        //
+        // 先订阅输出再开 PTY（见 openSessionWithOutput）：否则 shell 启动时打的
+        // 提示符可能赶在订阅建立前发完，终端从此空着。
         try {
-          id = await sessionOpen({
-            cols: term.cols,
-            rows: term.rows,
-            cwd: initialCwdRef.current ?? null,
-          });
+          const opened = await openSessionWithOutput(
+            () =>
+              sessionOpen({
+                cols: term.cols,
+                rows: term.rows,
+                cwd: initialCwdRef.current ?? null,
+              }),
+            writeOutput,
+          );
+          id = opened.id;
+          unlistenData = opened.unlisten;
         } catch (e) {
           // v0.10.5 #1：spawn 失败（PTY 资源耗尽 / macOS open file 限制 /
           // shell 路径无效 / fork 失败等）→ 渲染错误 banner，**不**留空 tab
@@ -383,6 +415,8 @@ export default function TerminalView({
           // 不 close 的话 PTY 被创建但 idRef 没写，第二遍 effect 又 sessionOpen
           // → 每个 tab leak 1 个 PTY，status bar "sessions" 翻倍。
           // 真机 维护者 反馈 6 tab 显示 12 sessions 就是这条 path。
+          unlistenData?.();
+          unlistenData = null;
           void sessionClose(id);
           return;
         }
@@ -401,26 +435,8 @@ export default function TerminalView({
         }
       }
 
-      unlistenData = await onSessionData(id, (bytes) => {
-        // v1.1.0 R8：滚动锁定（xterm.js issue #216 workaround）。
-        // xterm 的 write 会在异步 isUserScrolling 标记生效前把视口拽回底部，
-        // CC 忙时高频 write 导致用户滚上去立刻被拉回。这里写入前记住用户位置，
-        // 写完（write callback）后若用户本来滚离底部就 scrollToLine 拉回。
-        const before = term.buffer.active;
-        const wasScrolledUp = isScrolledUp(before);
-        const savedViewportY = before.viewportY;
-        term.write(bytes, () => {
-          const target = computeScrollRestore(
-            wasScrolledUp,
-            savedViewportY,
-            term.buffer.active,
-          );
-          if (target !== null) term.scrollToLine(target);
-        });
-        // v0.10.5 hotfix：删 PTY 输出触发 markUnread 那行（背景 tab 任何 PTY
-        // 输出都 +1 与 macOS Terminal 的"BEL/通知触发"语义不一致）。unread 现在
-        // 只由 notifications.ts emitNotification 触发。
-      });
+      // 已有会话（重挂载）走按 id 订阅；首次打开的在上面已经订阅好了
+      if (!unlistenData) unlistenData = await onSessionData(id, writeOutput);
       unlistenExit = await onSessionExit(id, () => onExitRef.current?.(id!));
 
       term.onData((d) => {
@@ -528,6 +544,8 @@ export default function TerminalView({
   useEffect(() => {
     if (isActive) termRef.current?.focus();
   }, [isActive]);
+  // 对话框关闭后等场景的显式聚焦请求（见 lib/terminalFocus）
+  useTerminalFocusRequest(isActive, () => termRef.current?.focus());
 
   return (
     <div className="relative h-full w-full bg-[var(--c-bg-base)]">

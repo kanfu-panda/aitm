@@ -76,11 +76,7 @@ impl SessionState {
     }
 
     /// 给 AI 工具用：跨所有 session 子串搜索，返回 (session_id 字符串, 行) 元组。
-    pub async fn search_recent(
-        &self,
-        query: &str,
-        max_results: usize,
-    ) -> Vec<(String, String)> {
+    pub async fn search_recent(&self, query: &str, max_results: usize) -> Vec<(String, String)> {
         self.mgr
             .search_recent(query, max_results)
             .await
@@ -112,7 +108,7 @@ fn parse_session_id(s: &str) -> Option<SessionId> {
 /// - 找不到 session（已关闭）时 cache 已被 session_close remove，不会再访问
 /// - 整个 loop 容错：单 session 刷新失败不影响其他
 pub async fn start_metadata_refresh_loop(state: Arc<SessionState>) {
-    use crate::session::metadata::{read_git_metadata, TabMetadata};
+    use crate::session::metadata::{TabMetadata, read_git_metadata};
     use crate::session::ports::list_listening_ports;
 
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(2));
@@ -247,8 +243,7 @@ pub async fn session_open(
             Ok(s) => s,
             Err(_) => return,
         };
-        let mut osc_parser =
-            crate::notifications::OscParser::new(id.to_string());
+        let mut osc_parser = crate::notifications::OscParser::new(id.to_string());
         // v0.9.0 T3：独立 OSC 7 解析器，喂同一份字节流抽取 cwd。
         let mut osc7_parser = crate::session::osc_parser::Osc7Parser::new();
         loop {
@@ -320,11 +315,7 @@ pub async fn session_write(
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(bytes_base64.as_bytes())
         .map_err(|e| format!("base64 解码失败: {e}"))?;
-    state
-        .mgr
-        .write(id, &bytes)
-        .await
-        .map_err(|e| e.to_string())
+    state.mgr.write(id, &bytes).await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -374,8 +365,8 @@ pub async fn tab_get_metadata(
 
 /// 读启动 snapshot；无 / 坏 → 返 None（让前端走默认路径）。
 #[tauri::command]
-pub fn session_snapshot_load(
-) -> Result<Option<crate::session::snapshot::SessionSnapshot>, String> {
+pub fn session_snapshot_load() -> Result<Option<crate::session::snapshot::SessionSnapshot>, String>
+{
     crate::session::snapshot::load_snapshot()
 }
 

@@ -3,6 +3,8 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { appQuitConfirmed, onAppConfirmQuitRequested } from "../lib/tauri";
 import { useBrowserModalGuard } from "../lib/useBrowserModalGuard";
+import { useTabsStore } from "../stores/tabs";
+import { detectHandTypedTmux } from "../lib/tmuxTabDetect";
 
 /**
  * v0.9.0 T4：关闭应用二次确认对话框。
@@ -25,6 +27,9 @@ import { useBrowserModalGuard } from "../lib/useBrowserModalGuard";
 export default function QuitConfirmDialog() {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
+  // 有接着 tmux 的标签时，"所有终端会话将丢失"不属实：tmux 会话在后台继续跑，
+  // 下次启动还会自动接回，文案要如实说
+  const hasTmuxTabs = useTabsStore((s) => s.tabs.some((x) => x.tmuxSessionId));
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
@@ -32,6 +37,9 @@ export default function QuitConfirmDialog() {
     onAppConfirmQuitRequested(() => {
       if (!alive) return;
       setOpen(true);
+      // 退出前识别一次手敲的 tmux 接入：文案才能如实说明，记下的会话也会随
+      // 最后一次快照落盘，下次启动自动接回
+      void detectHandTypedTmux();
     })
       .then((u) => {
         if (alive) unlisten = u;
@@ -78,7 +86,11 @@ export default function QuitConfirmDialog() {
             {t("quitDialog.title")}
           </Dialog.Title>
           <Dialog.Description className="mt-2 text-sm text-[var(--c-text-muted)]">
-            {t("quitDialog.description")}
+            {t(
+              hasTmuxTabs
+                ? "quitDialog.descriptionWithTmux"
+                : "quitDialog.description",
+            )}
           </Dialog.Description>
           <div className="mt-5 flex justify-end gap-2">
             <button

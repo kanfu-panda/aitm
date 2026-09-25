@@ -34,6 +34,9 @@ src-tauri/target/
 .vite/
 *.local
 
+# 覆盖率报告（pnpm test:coverage / cargo llvm-cov 生成）
+coverage/
+
 # TypeScript 编译产物
 *.tsbuildinfo
 vite.config.d.ts

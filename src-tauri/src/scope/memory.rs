@@ -334,10 +334,7 @@ mod tests {
         // 截到的内容前缀必须是若干个完整 "中"
         // 4096 / 3 = 1365.33 → 1365 个 "中" = 4095 字节（4096 不是 boundary）
         // 实际向下找的 boundary 应是 4095（1365 chars）
-        assert!(
-            truncated.starts_with("中中中"),
-            "前缀应是完整中文字符"
-        );
+        assert!(truncated.starts_with("中中中"), "前缀应是完整中文字符");
         // 包含截断标记
         assert!(truncated.contains("已截断"));
         assert!(truncated.contains(&6000.to_string()));

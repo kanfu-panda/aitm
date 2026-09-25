@@ -24,7 +24,7 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
-use notify_debouncer_full::{new_debouncer, DebounceEventResult, Debouncer, FileIdMap};
+use notify_debouncer_full::{DebounceEventResult, Debouncer, FileIdMap, new_debouncer};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
 
@@ -66,8 +66,8 @@ pub struct TreeNode {
 /// 子项排序：dir 在前 file 在后；同类按 name 升序。
 #[tauri::command]
 pub fn fs_tree(path: String, max_depth: u32) -> Result<TreeNode, String> {
-    let canonical = std::fs::canonicalize(&path)
-        .map_err(|e| format!("路径无法 canonicalize：{path}：{e}"))?;
+    let canonical =
+        std::fs::canonicalize(&path).map_err(|e| format!("路径无法 canonicalize：{path}：{e}"))?;
     let meta = std::fs::metadata(&canonical)
         .map_err(|e| format!("读不到 metadata：{}：{e}", canonical.display()))?;
     if !meta.is_dir() {
@@ -155,8 +155,8 @@ fn read_children(dir: &Path, child_depth: u32) -> Vec<TreeNode> {
 /// - UTF-8 用 lossy 解码，兼容 latin1 等
 #[tauri::command]
 pub fn fs_read_text(path: String, max_bytes: u32) -> Result<String, String> {
-    let canonical = std::fs::canonicalize(&path)
-        .map_err(|e| format!("路径无法 canonicalize：{path}：{e}"))?;
+    let canonical =
+        std::fs::canonicalize(&path).map_err(|e| format!("路径无法 canonicalize：{path}：{e}"))?;
     let meta = std::fs::metadata(&canonical)
         .map_err(|e| format!("读不到 metadata：{}：{e}", canonical.display()))?;
     if !meta.is_file() {
@@ -189,12 +189,30 @@ pub fn fs_read_text(path: String, max_bytes: u32) -> Result<String, String> {
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum PreviewResult {
-    Markdown { content: String, truncated: bool },
-    Code { content: String, language: String, truncated: bool },
-    Text { content: String, truncated: bool },
-    Image { mime: String, base64: String },
-    Binary { reason: String },
-    TooLarge { size: u64, max_size: u64 },
+    Markdown {
+        content: String,
+        truncated: bool,
+    },
+    Code {
+        content: String,
+        language: String,
+        truncated: bool,
+    },
+    Text {
+        content: String,
+        truncated: bool,
+    },
+    Image {
+        mime: String,
+        base64: String,
+    },
+    Binary {
+        reason: String,
+    },
+    TooLarge {
+        size: u64,
+        max_size: u64,
+    },
 }
 
 /// 文本类（markdown/code/text）最大读取字节数：1 MB。
@@ -271,8 +289,8 @@ fn to_base64(bytes: &[u8]) -> String {
 /// 全部失败路径返 Err（前端显示"读取失败"红框）。
 #[tauri::command]
 pub fn fs_read_preview(path: String) -> Result<PreviewResult, String> {
-    let canonical = std::fs::canonicalize(&path)
-        .map_err(|e| format!("路径无法 canonicalize：{path}：{e}"))?;
+    let canonical =
+        std::fs::canonicalize(&path).map_err(|e| format!("路径无法 canonicalize：{path}：{e}"))?;
     let meta = std::fs::metadata(&canonical)
         .map_err(|e| format!("读不到 metadata：{}：{e}", canonical.display()))?;
     if !meta.is_file() {
@@ -280,10 +298,7 @@ pub fn fs_read_preview(path: String) -> Result<PreviewResult, String> {
     }
 
     let size = meta.len();
-    let ext = canonical
-        .extension()
-        .and_then(|s| s.to_str())
-        .unwrap_or("");
+    let ext = canonical.extension().and_then(|s| s.to_str()).unwrap_or("");
 
     // === 图片分支 ===
     if let Some(mime) = ext_to_image_mime(ext) {
@@ -358,8 +373,13 @@ pub fn fs_read_preview(path: String) -> Result<PreviewResult, String> {
 ///   path 前缀做字符串匹配，跟实际 inode 无关）。
 /// - **不创父目录**：父目录缺失时让 `tokio::fs::write` 自然返 IO 错误透传到 UI
 ///   （T5c 调用方是已经打开过的文件，父目录必存在；新建文件不在 T5c 范围）。
-/// - **不做原子写**（tempfile + rename）：T5c 规模文本编辑场景下原子写收益不大；
-///   未来若发现保存中崩溃丢内容的反馈再补。
+///
+/// **原子写**：先写同目录下的临时文件并 `fsync`，再 `rename` 覆盖目标。原地截断重写
+/// 在写到一半时崩溃会留下半截甚至空文件；rename 在同一文件系统内是原子的，要么是
+/// 旧内容、要么是新内容。
+/// - 原文件的权限位会复制到新文件（可执行脚本保存后仍可执行）
+/// - 目标是符号链接时写到它指向的文件，链接本身保留；指向的文件同样过黑名单
+/// - 失败时删掉临时文件，原文件不动
 #[tauri::command]
 pub async fn file_write(path: String, content: String) -> Result<(), String> {
     let p = std::path::PathBuf::from(&path);
@@ -369,9 +389,57 @@ pub async fn file_write(path: String, content: String) -> Result<(), String> {
     if is_blacklisted_path(&p) {
         return Err(format!("禁止写入系统目录：{path}"));
     }
-    tokio::fs::write(&p, content.as_bytes())
+    tokio::task::spawn_blocking(move || atomic_write(&p, content.as_bytes()))
         .await
-        .map_err(|e| format!("写文件失败：{}：{e}", p.display()))
+        .map_err(|e| format!("写文件任务异常：{e}"))?
+}
+
+/// [`file_write`] 的同步实现（跑在 blocking 线程）。
+fn atomic_write(path: &std::path::Path, bytes: &[u8]) -> Result<(), String> {
+    use std::io::Write;
+
+    let err = |e: std::io::Error| format!("写文件失败：{}：{e}", path.display());
+    let existing = std::fs::symlink_metadata(path).ok();
+    // 符号链接：rename 会把链接替换成普通文件，所以改写它指向的文件
+    let target = match &existing {
+        Some(m) if m.file_type().is_symlink() => {
+            let t = std::fs::canonicalize(path).map_err(err)?;
+            if is_blacklisted_path(&t) {
+                return Err(format!("禁止写入系统目录：{}", t.display()));
+            }
+            t
+        }
+        _ => path.to_path_buf(),
+    };
+    let dir = target
+        .parent()
+        .ok_or_else(|| format!("无效路径：{}", target.display()))?;
+    let name = target
+        .file_name()
+        .ok_or_else(|| format!("无效路径：{}", target.display()))?
+        .to_string_lossy();
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or_default();
+    let tmp = dir.join(format!(
+        ".{name}.aitm-save-{}-{nonce}.tmp",
+        std::process::id()
+    ));
+
+    let write_tmp = || -> std::io::Result<()> {
+        let mut f = std::fs::File::create(&tmp)?;
+        f.write_all(bytes)?;
+        f.sync_all()?;
+        if let Ok(meta) = std::fs::metadata(&target) {
+            std::fs::set_permissions(&tmp, meta.permissions())?;
+        }
+        std::fs::rename(&tmp, &target)
+    };
+    write_tmp().map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        err(e)
+    })
 }
 
 /// 系统目录黑名单：写入这些前缀的路径一律拒绝。
@@ -584,8 +652,8 @@ pub struct DiskUsage {
 pub fn fs_disk_usage(path: String) -> Result<DiskUsage, String> {
     use sysinfo::Disks;
 
-    let canonical = std::fs::canonicalize(&path)
-        .map_err(|e| format!("路径无法 canonicalize：{path}：{e}"))?;
+    let canonical =
+        std::fs::canonicalize(&path).map_err(|e| format!("路径无法 canonicalize：{path}：{e}"))?;
 
     let disks = Disks::new_with_refreshed_list();
 
@@ -595,9 +663,7 @@ pub fn fs_disk_usage(path: String) -> Result<DiskUsage, String> {
         .filter(|d| canonical.starts_with(d.mount_point()))
         .max_by_key(|d| d.mount_point().as_os_str().len());
 
-    let disk = best.ok_or_else(|| {
-        format!("找不到 {} 对应的磁盘分区", canonical.display())
-    })?;
+    let disk = best.ok_or_else(|| format!("找不到 {} 对应的磁盘分区", canonical.display()))?;
 
     let total_bytes = disk.total_space();
     let free_bytes = disk.available_space();
@@ -683,7 +749,10 @@ fn path_has_skipped_component(path: &Path) -> bool {
 ///
 /// debounce 窗口 400ms：足够合并一次 `mv`（等价 remove+create 两个事件）、
 /// 一次编辑器保存（可能触发多次 modify），又不会让用户感觉刷新延迟明显。
-fn start_watcher<F>(watch_path: &Path, on_batch: F) -> Result<Debouncer<RecommendedWatcher, FileIdMap>, String>
+fn start_watcher<F>(
+    watch_path: &Path,
+    on_batch: F,
+) -> Result<Debouncer<RecommendedWatcher, FileIdMap>, String>
 where
     F: Fn(Vec<String>) + Send + 'static,
 {
@@ -747,11 +816,9 @@ pub fn fs_watch_start(
     let app_for_handler = app.clone();
     let debouncer = start_watcher(&watch_path, move |paths| {
         let payload = FsChangedPayload { paths };
-        if let Err(e) = app_for_handler.emit_to(
-            tauri::EventTarget::webview("main"),
-            "fs:changed",
-            &payload,
-        ) {
+        if let Err(e) =
+            app_for_handler.emit_to(tauri::EventTarget::webview("main"), "fs:changed", &payload)
+        {
             tracing::warn!("emit fs:changed 失败: {e}");
         }
     })?;
@@ -825,7 +892,10 @@ mod tests {
         let tmp = make_sample_tree();
         let node = fs_tree(tmp.path().to_string_lossy().into_owned(), 0).unwrap();
         assert_eq!(node.kind, "dir");
-        assert!(node.children.is_none(), "max_depth=0 应 children=None 触发懒加载");
+        assert!(
+            node.children.is_none(),
+            "max_depth=0 应 children=None 触发懒加载"
+        );
     }
 
     #[test]
@@ -835,7 +905,10 @@ mod tests {
         let kids = node.children.as_ref().unwrap();
         let names: Vec<&str> = kids.iter().map(|n| n.name.as_str()).collect();
         assert!(!names.contains(&".git"), "应跳过 .git，实际：{names:?}");
-        assert!(!names.contains(&"node_modules"), "应跳过 node_modules，实际：{names:?}");
+        assert!(
+            !names.contains(&"node_modules"),
+            "应跳过 node_modules，实际：{names:?}"
+        );
         // 未在跳过名单的隐藏文件 .env 应显示
         assert!(names.contains(&".env"), "应显示 .env，实际：{names:?}");
     }
@@ -850,7 +923,11 @@ mod tests {
         // file 内 name asc（ASCII，'.' < 'C'）：.env < Cargo.toml
         let names: Vec<&str> = kids.iter().map(|n| n.name.as_str()).collect();
         let kinds: Vec<&str> = kids.iter().map(|n| n.kind.as_str()).collect();
-        assert_eq!(kinds, vec!["dir", "dir", "file", "file"], "实际 kinds：{kinds:?} names: {names:?}");
+        assert_eq!(
+            kinds,
+            vec!["dir", "dir", "file", "file"],
+            "实际 kinds：{kinds:?} names: {names:?}"
+        );
         assert_eq!(names, vec!["docs", "src", ".env", "Cargo.toml"]);
     }
 
@@ -1146,6 +1223,90 @@ mod tests {
         assert_eq!(got, "hello aitm");
     }
 
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn 应该_保存时经临时文件改名替换而不是原地截断重写() {
+        use std::os::unix::fs::MetadataExt;
+        let tmp = TempDir::new().unwrap();
+        let f = tmp.path().join("a.txt");
+        std::fs::write(&f, "旧内容").unwrap();
+        let ino_before = std::fs::metadata(&f).unwrap().ino();
+
+        file_write(f.to_string_lossy().into(), "新内容".into())
+            .await
+            .unwrap();
+
+        assert_eq!(std::fs::read_to_string(&f).unwrap(), "新内容");
+        // 原地截断重写 inode 不变；换成新 inode 说明走的是临时文件 + rename，
+        // 写到一半崩溃时原文件完好
+        assert_ne!(std::fs::metadata(&f).unwrap().ino(), ino_before);
+        // 不留临时文件
+        let names: Vec<_> = std::fs::read_dir(tmp.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(names, vec![std::ffi::OsString::from("a.txt")]);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn 应该_保存后保留原文件的权限位() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = TempDir::new().unwrap();
+        let f = tmp.path().join("run.sh");
+        std::fs::write(&f, "echo 1").unwrap();
+        std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        file_write(f.to_string_lossy().into(), "echo 2".into())
+            .await
+            .unwrap();
+
+        let mode = std::fs::metadata(&f).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o755);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn 应该_保存符号链接时写到目标文件且链接本身保留() {
+        let tmp = TempDir::new().unwrap();
+        let target = tmp.path().join("real.txt");
+        let link = tmp.path().join("link.txt");
+        std::fs::write(&target, "旧").unwrap();
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        file_write(link.to_string_lossy().into(), "新".into())
+            .await
+            .unwrap();
+
+        assert!(
+            std::fs::symlink_metadata(&link)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "新");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn 应该_当写入失败时_原文件内容不变且不留临时文件() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().join("ro");
+        std::fs::create_dir(&dir).unwrap();
+        let f = dir.join("a.txt");
+        std::fs::write(&f, "原内容").unwrap();
+        // 目录只读：建不了临时文件，保存必须失败，且不能动原文件
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o555)).unwrap();
+
+        let res = file_write(f.to_string_lossy().into(), "新内容".into()).await;
+
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(res.is_err());
+        assert_eq!(std::fs::read_to_string(&f).unwrap(), "原内容");
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
+    }
+
     #[tokio::test]
     async fn file_write_相对路径_拒() {
         let r = file_write("relative/path.txt".to_string(), "x".to_string()).await;
@@ -1277,7 +1438,11 @@ mod tests {
             .expect("git init failed");
         if !init.status.success() {
             // git 1.x 可能不支持 -b；回退用 master + 改名
-            Command::new("git").args(["init"]).current_dir(p).output().unwrap();
+            Command::new("git")
+                .args(["init"])
+                .current_dir(p)
+                .output()
+                .unwrap();
             Command::new("git")
                 .args(["checkout", "-b", "main"])
                 .current_dir(p)
@@ -1315,7 +1480,11 @@ mod tests {
             .output()
             .unwrap();
         std::fs::write(p.join("a"), "x").unwrap();
-        Command::new("git").args(["add", "a"]).current_dir(p).output().unwrap();
+        Command::new("git")
+            .args(["add", "a"])
+            .current_dir(p)
+            .output()
+            .unwrap();
         Command::new("git")
             .args(["commit", "-m", "x"])
             .env("GIT_AUTHOR_NAME", "t")
@@ -1347,18 +1516,34 @@ mod tests {
     fn is_blacklisted_path_单元_覆盖() {
         // 命中
         assert!(is_blacklisted_path(std::path::Path::new("/etc/passwd")));
-        assert!(is_blacklisted_path(std::path::Path::new("/System/Library/CoreServices")));
-        assert!(is_blacklisted_path(std::path::Path::new("/usr/local/bin/ls")));
-        assert!(is_blacklisted_path(std::path::Path::new("/Library/System/x")));
-        assert!(is_blacklisted_path(std::path::Path::new(r"C:\Windows\System32\foo.dll")));
-        assert!(is_blacklisted_path(std::path::Path::new(r"c:\WINDOWS\System32\foo.dll")));
-        assert!(is_blacklisted_path(std::path::Path::new(r"C:\Program Files\aitm.exe")));
+        assert!(is_blacklisted_path(std::path::Path::new(
+            "/System/Library/CoreServices"
+        )));
+        assert!(is_blacklisted_path(std::path::Path::new(
+            "/usr/local/bin/ls"
+        )));
+        assert!(is_blacklisted_path(std::path::Path::new(
+            "/Library/System/x"
+        )));
+        assert!(is_blacklisted_path(std::path::Path::new(
+            r"C:\Windows\System32\foo.dll"
+        )));
+        assert!(is_blacklisted_path(std::path::Path::new(
+            r"c:\WINDOWS\System32\foo.dll"
+        )));
+        assert!(is_blacklisted_path(std::path::Path::new(
+            r"C:\Program Files\aitm.exe"
+        )));
         assert!(is_blacklisted_path(std::path::Path::new(
             r"C:\Program Files (x86)\aitm.exe"
         )));
         // 放行
-        assert!(!is_blacklisted_path(std::path::Path::new("/Users/leo/code/aitm/a.txt")));
-        assert!(!is_blacklisted_path(std::path::Path::new("/home/leo/a.txt")));
+        assert!(!is_blacklisted_path(std::path::Path::new(
+            "/Users/leo/code/aitm/a.txt"
+        )));
+        assert!(!is_blacklisted_path(std::path::Path::new(
+            "/home/leo/a.txt"
+        )));
         assert!(!is_blacklisted_path(std::path::Path::new("/tmp/x.txt")));
         // `/Library/...` 不带 `System` 不在黑名单（用户 Library 比如 ~/Library 已经是 /Users/x/Library）
         assert!(!is_blacklisted_path(std::path::Path::new(
@@ -1389,9 +1574,7 @@ mod tests {
 
     #[test]
     fn path_has_skipped_component_正常路径不命中() {
-        assert!(!path_has_skipped_component(Path::new(
-            "/repo/src/main.rs"
-        )));
+        assert!(!path_has_skipped_component(Path::new("/repo/src/main.rs")));
         assert!(!path_has_skipped_component(Path::new("/repo/README.md")));
         // 隐藏文件但不在名单里（.env）不应被跳过
         assert!(!path_has_skipped_component(Path::new("/repo/.env")));

@@ -70,7 +70,8 @@ const BROWSER_HINT: &str = r"(?i)(网页|浏览器|页面|网站|网址|链接|�
 /// 文件领域伴随词。
 const FILE_HINT: &str = r"(?i)(文件|目录|文件夹|脚本|配置|代码|内容|路径|README|\.md|\.txt|\.json|\.toml|\.ya?ml|\.rs|\.tsx?|\.jsx?|\.py|\.sh)";
 /// 命令领域伴随词。
-const COMMAND_HINT: &str = r"(?i)(命令|指令|脚本|终端|shell|npm|pnpm|yarn|git|cargo|brew|pip|python|node|make|docker)";
+const COMMAND_HINT: &str =
+    r"(?i)(命令|指令|脚本|终端|shell|npm|pnpm|yarn|git|cargo|brew|pip|python|node|make|docker)";
 
 /// 强触发：完成式**紧挨**动词即判定，不需要伴随词。
 ///
@@ -452,10 +453,10 @@ mod tests {
     #[test]
     fn 弱触发缺伴随词不报警() {
         for t in [
-            "已打开侧栏",           // 打开的不是网页
-            "已切换到深色主题",     // 切的是主题
+            "已打开侧栏",             // 打开的不是网页
+            "已切换到深色主题",       // 切的是主题
             "已创建一个新的终端 tab", // 建的不是文件
-            "已更新你的偏好设置",   // 改的不是文件
+            "已更新你的偏好设置",     // 改的不是文件
         ] {
             assert_eq!(missing_of(t, &[]), None, "弱触发缺伴随词不该报警：{t}");
         }

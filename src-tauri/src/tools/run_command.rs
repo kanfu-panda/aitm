@@ -41,7 +41,7 @@
 
 use async_trait::async_trait;
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::ansi::strip_for_llm;
 use super::{RiskClass, Tool, ToolContext, ToolError, ToolResult};
@@ -89,12 +89,9 @@ fn resolve_session_id(arg: Option<&str>, ctx: &ToolContext) -> Result<String, To
     let trimmed = arg.unwrap_or("").trim();
     let needs_fallback = matches!(trimmed, "" | "current" | "default" | "active" | "main");
     if needs_fallback {
-        return ctx
-            .active_session_id
-            .clone()
-            .ok_or_else(|| ToolError::SessionNotFound(
-                "无活跃 tab —— 用户需要先打开一个终端 tab".into(),
-            ));
+        return ctx.active_session_id.clone().ok_or_else(|| {
+            ToolError::SessionNotFound("无活跃 tab —— 用户需要先打开一个终端 tab".into())
+        });
     }
     Ok(trimmed.to_string())
 }
@@ -184,11 +181,7 @@ fn build_content(output: &str, outcome: CmdOutcome, truncated: bool) -> String {
 /// 轮询而非事件订阅：ring buffer 存的就是 PTY 原始字节，`recent_output` 已是现成
 /// 通道；走事件要给 forward task 加待匹配 ID 注册表 + oneshot 回调，为一个工具引入
 /// 跨模块状态不划算（YAGNI）。间隔从 50ms 指数退避到 500ms，短命令低延迟、长命令低开销。
-async fn wait_for_sentinel(
-    ctx: &ToolContext,
-    session_id: &str,
-    req_id: &str,
-) -> CmdOutcome {
+async fn wait_for_sentinel(ctx: &ToolContext, session_id: &str, req_id: &str) -> CmdOutcome {
     let deadline = std::time::Instant::now() + MAX_WAIT;
     let mut interval = POLL_MIN;
     loop {
@@ -491,7 +484,7 @@ mod tests {
     /// session_id 不传时回退到 ctx.active_session_id；ctx 也没有 → SessionNotFound。
     #[tokio::test]
     async fn 缺_session_id_无_active_则_session_not_found() {
-        let ctx = make_ctx();  // active_session_id = None
+        let ctx = make_ctx(); // active_session_id = None
         let r = RunCommandTool.execute(json!({ "cmd": "ls" }), &ctx).await;
         assert!(
             matches!(r, Err(ToolError::SessionNotFound(_))),
@@ -545,7 +538,10 @@ mod tests {
     #[test]
     fn risk_class_缺_cmd_默认_high() {
         assert_eq!(RunCommandTool.risk_class(&json!({})), RiskClass::High);
-        assert_eq!(RunCommandTool.risk_class(&json!({"cmd": ""})), RiskClass::High);
+        assert_eq!(
+            RunCommandTool.risk_class(&json!({"cmd": ""})),
+            RiskClass::High
+        );
     }
 
     /// session_id 改为 optional 后只 cmd 是 required。
@@ -782,11 +778,7 @@ mod pty_e2e_tests {
             .execute(json!({ "cmd": "false" }), &ctx)
             .await
             .unwrap();
-        assert!(
-            r.content.contains("[退出码: 1]"),
-            "实际：{}",
-            r.content
-        );
+        assert!(r.content.contains("[退出码: 1]"), "实际：{}", r.content);
     }
 
     #[tokio::test]

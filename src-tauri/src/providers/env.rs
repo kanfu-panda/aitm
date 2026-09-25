@@ -85,6 +85,16 @@ mod tests {
         let masked = mask_api_key("sk-1234567890abcdef");
         // 19 字符长度的 key
         assert_eq!(masked.chars().take(3).collect::<String>(), "sk-");
-        assert_eq!(masked.chars().rev().take(4).collect::<String>().chars().rev().collect::<String>(), "cdef");
+        assert_eq!(
+            masked
+                .chars()
+                .rev()
+                .take(4)
+                .collect::<String>()
+                .chars()
+                .rev()
+                .collect::<String>(),
+            "cdef"
+        );
     }
 }

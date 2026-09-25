@@ -1,5 +1,7 @@
 import { create } from "zustand";
 
+import type { NotificationReceivedPayload } from "../lib/tauri";
+
 /**
  * 通知状态环颜色（v0.5.0-A，plan §1.2）。
  *
@@ -17,14 +19,11 @@ export interface TabNotificationState {
   lastTimestampMs: number;
 }
 
-/** 后端 emit "notification:received" 的 payload；session_id 转 tabId 由订阅方做 */
-export interface NotificationEvent {
-  session_id: string;
-  level: NotificationLevel;
-  message: string;
-  source: "ai_tool_loop" | "osc_9" | "osc_99" | "osc_777" | "bell";
-  timestamp_ms: number;
-}
+/**
+ * 后端 emit "notification:received" 的 payload；session_id 转 tabId 由订阅方做。
+ * 与 `lib/tauri.ts` 的 IPC 类型是同一个东西，只维护那一份，避免两处手写漂移。
+ */
+export type NotificationEvent = NotificationReceivedPayload;
 
 /** 优先级 helper（plan §7 决策 1：waiting > error > done > running） */
 export function priority(level: NotificationLevel | null): number {

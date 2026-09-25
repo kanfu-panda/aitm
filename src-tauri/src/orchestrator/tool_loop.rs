@@ -395,7 +395,8 @@ pub async fn run_tool_loop(
             temperature: initial.temperature,
         };
 
-        let turn = match collect_one_turn(provider.as_ref(), req, sink.as_ref(), &cid, retry).await {
+        let turn = match collect_one_turn(provider.as_ref(), req, sink.as_ref(), &cid, retry).await
+        {
             Ok(t) => t,
             Err(e) => {
                 let msg = e.to_string();
@@ -750,17 +751,16 @@ async fn run_readonly_batch(
     if batch.is_empty() {
         return;
     }
-    let done: Vec<(usize, ToolResult)> = futures::stream::iter(batch.iter().copied().map(|i| {
-        async move {
+    let done: Vec<(usize, ToolResult)> =
+        futures::stream::iter(batch.iter().copied().map(|i| async move {
             (
                 i,
                 handle_one_tool_call(&calls[i], tools, ctx, handle, sink, cid).await,
             )
-        }
-    }))
-    .buffer_unordered(MAX_PARALLEL_TOOLS)
-    .collect()
-    .await;
+        }))
+        .buffer_unordered(MAX_PARALLEL_TOOLS)
+        .collect()
+        .await;
     for (i, r) in done {
         slots[i] = Some(r);
     }
@@ -1123,8 +1123,7 @@ async fn summarize_and_done(
     called_tools: &[String],
 ) {
     // C1：收尾同样先裁剪——这是最容易溢出的一步（重发全量历史 + 收尾指令）。
-    let base_system =
-        "已达工具调用上限（10 步）。请直接总结你做了什么、当前状态、是否完成用户任务。不要再调工具。";
+    let base_system = "已达工具调用上限（10 步）。请直接总结你做了什么、当前状态、是否完成用户任务。不要再调工具。";
     let system_tokens = context_budget::estimate_text_tokens(base_system);
     let plan = context_budget::plan_trim(
         &conv,
@@ -1133,7 +1132,10 @@ async fn summarize_and_done(
         context_budget::KEEP_RECENT_GROUPS,
     );
     let system = if plan.dropped > 0 {
-        format!("{base_system}\n\n{}", context_budget::elision_note(plan.dropped))
+        format!(
+            "{base_system}\n\n{}",
+            context_budget::elision_note(plan.dropped)
+        )
     } else {
         base_system.to_string()
     };
@@ -1467,7 +1469,11 @@ mod tests {
         assert_eq!(started[0].name, "read_file");
         let finished = sink.tool_finished.lock().unwrap();
         assert_eq!(finished.len(), 1);
-        assert!(!finished[0].is_error, "read_file 应成功: {}", finished[0].content);
+        assert!(
+            !finished[0].is_error,
+            "read_file 应成功: {}",
+            finished[0].content
+        );
         assert!(finished[0].content.contains("world"));
         // done 一次
         assert_eq!(sink.done.lock().unwrap().len(), 1);
@@ -1540,7 +1546,10 @@ mod tests {
 
         let reqs = sink.tool_requests.lock().unwrap();
         assert_eq!(reqs.len(), 1);
-        assert!(matches!(reqs[0].risk, RiskClass::High | RiskClass::Destructive));
+        assert!(matches!(
+            reqs[0].risk,
+            RiskClass::High | RiskClass::Destructive
+        ));
         // 用户拒绝 → tool_started 不应触发，tool_finished is_error=true
         assert!(sink.tool_started.lock().unwrap().is_empty());
         let fin = sink.tool_finished.lock().unwrap();
@@ -1621,7 +1630,10 @@ mod tests {
                 },
                 ChatChunk::ToolUseArgsDelta {
                     call_id: "tu1".into(),
-                    json_partial: format!(r#"{{"session_id":"s","cmd":{}}}"#, serde_json::Value::String(cmd.to_string())),
+                    json_partial: format!(
+                        r#"{{"session_id":"s","cmd":{}}}"#,
+                        serde_json::Value::String(cmd.to_string())
+                    ),
                 },
                 ChatChunk::ToolUseEnd {
                     call_id: "tu1".into(),
@@ -2086,11 +2098,7 @@ mod tests {
                 is_error: false,
             })
         }
-        async fn preview(
-            &self,
-            _a: &serde_json::Value,
-            _c: &ToolContext,
-        ) -> Option<ToolPreview> {
+        async fn preview(&self, _a: &serde_json::Value, _c: &ToolContext) -> Option<ToolPreview> {
             Some(ToolPreview {
                 kind: "diff".into(),
                 path: "hello.txt".into(),
@@ -2127,11 +2135,7 @@ mod tests {
                 is_error: false,
             })
         }
-        async fn preview(
-            &self,
-            _a: &serde_json::Value,
-            _c: &ToolContext,
-        ) -> Option<ToolPreview> {
+        async fn preview(&self, _a: &serde_json::Value, _c: &ToolContext) -> Option<ToolPreview> {
             panic!("preview 故意 panic");
         }
     }
@@ -2369,9 +2373,7 @@ mod tests {
             &self,
             _req: ChatRequest,
         ) -> Result<BoxStream<'static, ChatChunk>, ProviderError> {
-            let n = self
-                .calls
-                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let n = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             if n < self.fail_first_n {
                 return Err(if self.retryable {
                     ProviderError::Timeout
@@ -2892,7 +2894,13 @@ mod tests {
     }
 
     /// 只读工具 registry + 并发观测量。
-    fn readonly_registry(delay_ms: u64) -> (Arc<ToolRegistry>, Arc<AtomicUsize>, Arc<StdMutex<Vec<String>>>) {
+    fn readonly_registry(
+        delay_ms: u64,
+    ) -> (
+        Arc<ToolRegistry>,
+        Arc<AtomicUsize>,
+        Arc<StdMutex<Vec<String>>>,
+    ) {
         let peak = Arc::new(AtomicUsize::new(0));
         let log = Arc::new(StdMutex::new(Vec::new()));
         let tool = SlowReadTool {
@@ -2929,7 +2937,11 @@ mod tests {
         .await;
         let elapsed = started.elapsed();
 
-        assert_eq!(peak.load(AtomicOrdering::SeqCst), 3, "3 个只读工具应同时在跑");
+        assert_eq!(
+            peak.load(AtomicOrdering::SeqCst),
+            3,
+            "3 个只读工具应同时在跑"
+        );
         assert!(
             elapsed < Duration::from_millis(200),
             "并发执行总耗时应远小于串行 240ms，实际 {elapsed:?}"
@@ -2943,9 +2955,21 @@ mod tests {
         // 让先发的调用睡得更久，保证"完成顺序" != "原顺序"，这样顺序回填才被真检验。
         let provider = provider_batch(&[
             // 先发的睡最久 → 完成顺序 c,b,a，与原顺序完全相反
-            ("tu1", "read_file", serde_json::json!({"tag":"a","sleep_ms":90})),
-            ("tu2", "read_file", serde_json::json!({"tag":"b","sleep_ms":50})),
-            ("tu3", "read_file", serde_json::json!({"tag":"c","sleep_ms":10})),
+            (
+                "tu1",
+                "read_file",
+                serde_json::json!({"tag":"a","sleep_ms":90}),
+            ),
+            (
+                "tu2",
+                "read_file",
+                serde_json::json!({"tag":"b","sleep_ms":50}),
+            ),
+            (
+                "tu3",
+                "read_file",
+                serde_json::json!({"tag":"c","sleep_ms":10}),
+            ),
         ]);
         let sink = Arc::new(MockSink::default());
         let (tools, _peak, log) = readonly_registry(20);

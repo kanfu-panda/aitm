@@ -647,8 +647,11 @@ export default function App() {
       // 每个 tab 知道自己属于哪个 group 后存进 snapshot.group_id，重启时
       // handleRestore 按 group_id 把新 tab id 加进对应 group，恢复分屏视图。
       const groupByTab = new Map<string, string>();
+      // 各分屏当时选中的标签：重启时还原，否则每个分屏都落到第一个标签
+      const groupActiveTabs = new Set<string>();
       collectAllGroups(usePaneLayoutStore.getState().root).forEach((g) => {
         g.tab_ids.forEach((tid) => groupByTab.set(tid, g.id));
+        if (g.active_tab_id) groupActiveTabs.add(g.active_tab_id);
       });
       const snap: SessionSnapshot = {
         schema_version: 1,
@@ -662,6 +665,7 @@ export default function App() {
           unread: unread[t.id] ?? 0,
           group_id: groupByTab.get(t.id) ?? null,
           tmux_session_id: t.tmuxSessionId ?? null,
+          group_active: groupActiveTabs.has(t.id),
         })),
         active_tab_id: state.activeId,
         // v1.4.0：浏览器 tab 一起存。空白页不值得跨重启带着走，过滤掉。

@@ -23,26 +23,40 @@ import { useBrowserStore } from "../stores/browser";
  * 已经有 tab 时直接返回 —— 启动流程被跑两次（StrictMode 双调用、settings
  * 重新加载）时不会把 tab 翻倍。
  */
+/** 一个要在恢复时接回的 tmux 标签。 */
+export interface TmuxReattach {
+  /** 接入命令（不含换行） */
+  command: string;
+  /** 会话此刻的名字，用作标签标题（应用关闭期间可能被改过名） */
+  name: string;
+}
+
 /**
  * 找出快照里哪些标签要在恢复时接回 tmux：记着会话 id、且该会话此刻仍然存在的。
  *
- * 返回 旧 tab_id → 接入命令（不含换行）。会话已被结束的不在结果里，由
+ * 返回 旧 tab_id → 接入信息。会话已被结束的不在结果里，由
  * [`restoreSnapshotTabs`] 恢复成普通标签。查询 tmux 失败（没装、服务端没起）时
  * 返回空表——恢复流程不能因为 tmux 出问题而中断。
  */
 export async function resolveTmuxReattach(
   snapshot: SessionSnapshot,
-): Promise<Map<string, string>> {
+): Promise<Map<string, TmuxReattach>> {
   const wanted = snapshot.tabs.filter((t) => t.tmux_session_id);
-  const reattach = new Map<string, string>();
+  const reattach = new Map<string, TmuxReattach>();
   if (wanted.length === 0) return reattach;
   try {
-    const alive = new Set((await tmuxListSessions()).map((s) => s.id));
+    const nameById = new Map(
+      (await tmuxListSessions()).map((s) => [s.id, s.name] as const),
+    );
     for (const t of wanted) {
       const id = t.tmux_session_id as string;
-      if (!alive.has(id)) continue;
+      const name = nameById.get(id);
+      if (name === undefined) continue;
       // 共享接入：不踢掉别处正连着的客户端
-      reattach.set(t.tab_id, await tmuxAttachCommand(id, false));
+      reattach.set(t.tab_id, {
+        command: await tmuxAttachCommand(id, false),
+        name,
+      });
     }
   } catch (e) {
     console.warn("[restore] 查询 tmux 会话失败，tmux 标签按普通标签恢复", e);
@@ -54,7 +68,7 @@ export async function resolveTmuxReattach(
 export function restoreSnapshotTabs(
   snapshot: SessionSnapshot,
   /** [`resolveTmuxReattach`] 的结果；不传则全部按普通标签恢复。 */
-  tmuxReattach: Map<string, string> = new Map(),
+  tmuxReattach: Map<string, TmuxReattach> = new Map(),
 ): void {
   // v1.4.0：浏览器 tab 独立恢复——终端没有 tab 不代表浏览器也没有，两者
   // 谁空谁不恢复，不能互相拖累（老 snapshot 没这个字段时是空数组，no-op）。
@@ -77,14 +91,15 @@ export function restoreSnapshotTabs(
     // TerminalView 会在第一帧把 initialCwd 锁进 ref。晚一步写的 cwd 追不上，
     // PTY 就起在家目录而不是上次的目录（实测抓到的回归）。
     const lastCwd = t.cwd ?? undefined;
-    const attachCmd = tmuxReattach.get(t.tab_id);
-    if (attachCmd !== undefined && t.tmux_session_id) {
-      // 会话还在：和面板接入走同一条路，PTY 起来后写入接入命令
+    const reattach = tmuxReattach.get(t.tab_id);
+    if (reattach !== undefined && t.tmux_session_id) {
+      // 会话还在：和面板接入走同一条路，PTY 起来后写入接入命令。
+      // 标题取会话此刻的名字，和面板接入的标签保持一致
       newIds.push(
         addTab({
-          title: t.title,
+          title: reattach.name,
           lastCwd,
-          initialInput: `${attachCmd}\n`,
+          initialInput: `${reattach.command}\n`,
           tmuxSessionId: t.tmux_session_id,
         }),
       );
@@ -133,5 +148,23 @@ export function restoreSnapshotTabs(
       t.group_id && groupIdSet.has(t.group_id) ? t.group_id : fallbackGroupId;
     if (!targetId) return;
     layoutStore.addTabToGroup(targetId, newId);
+    // addTabToGroup 让分屏默认选中第一个标签；快照记着当时选中的是哪个就还原它
+    if (t.group_active) layoutStore.setActiveTabInGroup(targetId, newId);
   });
+
+  // 焦点分屏 = 当前标签所在的分屏（切分屏焦点时全局当前标签会跟着切过去，两者一致）。
+  // 布局本身不持久化焦点，不还原的话重启后焦点总在第一个分屏，与当前标签错开
+  const activeIdx = snapshot.tabs.findIndex(
+    (t) => t.tab_id === snapshot.active_tab_id,
+  );
+  const activeNewId = activeIdx >= 0 ? newIds[activeIdx] : undefined;
+  if (activeNewId) {
+    const focused = collectAllGroups(usePaneLayoutStore.getState().root).find(
+      (g) => g.tab_ids.includes(activeNewId),
+    );
+    if (focused) {
+      layoutStore.setActiveTabInGroup(focused.id, activeNewId);
+      layoutStore.setActiveGroup(focused.id);
+    }
+  }
 }

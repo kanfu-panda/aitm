@@ -1,8 +1,8 @@
 //! Anthropic provider 集成测试（wiremock 模拟 API）。
 
+use aitm_lib::providers::LlmProvider;
 use aitm_lib::providers::anthropic::{AnthropicClient, AnthropicConfig};
 use aitm_lib::providers::types::*;
-use aitm_lib::providers::LlmProvider;
 use futures::StreamExt;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -34,7 +34,7 @@ event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n\
 
     let mut cfg = AnthropicConfig::new("test", "sk-x");
     cfg.base_url = mock.uri();
-    let client = AnthropicClient::new(cfg);
+    let client = AnthropicClient::new(cfg).unwrap();
 
     let req = ChatRequest {
         model: "claude-opus-4-7".into(),
@@ -91,7 +91,7 @@ event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n\
 
     let mut cfg = AnthropicConfig::new("test", "sk-x");
     cfg.base_url = mock.uri();
-    let client = AnthropicClient::new(cfg);
+    let client = AnthropicClient::new(cfg).unwrap();
 
     let req = ChatRequest {
         model: "claude-opus-4-7".into(),
@@ -110,7 +110,11 @@ event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n\
     let chunks: Vec<ChatChunk> = stream.collect().await;
 
     // 应有 ToolUseStart, 多个 ArgsDelta, ToolUseEnd
-    assert!(chunks.iter().any(|c| matches!(c, ChatChunk::ToolUseStart { name, .. } if name == "echo")));
+    assert!(
+        chunks
+            .iter()
+            .any(|c| matches!(c, ChatChunk::ToolUseStart { name, .. } if name == "echo"))
+    );
     let args: String = chunks
         .iter()
         .filter_map(|c| match c {
@@ -119,10 +123,17 @@ event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n\
         })
         .collect();
     assert_eq!(args, r#"{"a":1}"#);
-    assert!(chunks.iter().any(|c| matches!(c, ChatChunk::ToolUseEnd { .. })));
-    assert!(chunks
-        .iter()
-        .any(|c| matches!(c, ChatChunk::Done { stop_reason: StopReason::ToolUse })));
+    assert!(
+        chunks
+            .iter()
+            .any(|c| matches!(c, ChatChunk::ToolUseEnd { .. }))
+    );
+    assert!(chunks.iter().any(|c| matches!(
+        c,
+        ChatChunk::Done {
+            stop_reason: StopReason::ToolUse
+        }
+    )));
 }
 
 #[tokio::test]
@@ -136,7 +147,7 @@ async fn anthropic_401_鉴权失败() {
 
     let mut cfg = AnthropicConfig::new("test", "bad-key");
     cfg.base_url = mock.uri();
-    let client = AnthropicClient::new(cfg);
+    let client = AnthropicClient::new(cfg).unwrap();
 
     let req = ChatRequest {
         model: "x".into(),

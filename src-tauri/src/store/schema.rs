@@ -157,7 +157,12 @@ mod tests {
         let conn = open_in_memory();
         migrate_global(&conn).unwrap();
 
-        for table in ["app_state", "projects", "ignored_paths", "token_usage_monthly"] {
+        for table in [
+            "app_state",
+            "projects",
+            "ignored_paths",
+            "token_usage_monthly",
+        ] {
             let cnt: i64 = conn
                 .query_row(
                     "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",

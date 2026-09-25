@@ -26,7 +26,14 @@ pnpm typecheck   # 0 error
 pnpm lint        # 0 error
 pnpm test        # vitest 全绿
 pnpm exec playwright test   # E2E 全绿
+
+# 覆盖率（前后端行覆盖率都 ≥ 85%）
+pnpm test:coverage   # vitest.config.ts 设了门槛，不达标命令即失败
+cd src-tauri && cargo llvm-cov -p aitm --summary-only --fail-under-lines 85
 ```
+
+提交前钩子由 `.pre-commit-config.yaml` 定义（eslint、tsc、cargo fmt），需要本机装有
+pre-commit。rustfmt 按 `mod` 声明检查整个 crate，改了任何 `.rs` 文件都会检查全部 Rust 代码。
 
 ### 3. 性能宪章（不可退）
 

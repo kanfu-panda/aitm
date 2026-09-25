@@ -28,14 +28,12 @@ pub struct OpenAICompatClient {
 }
 
 impl OpenAICompatClient {
-    pub fn new(cfg: OpenAICompatConfig) -> Self {
-        Self {
+    /// HTTP 客户端构造失败时返回错误（见 [`crate::providers::types::build_http_client`]）。
+    pub fn new(cfg: OpenAICompatConfig) -> Result<Self, ProviderError> {
+        Ok(Self {
             cfg,
-            http: Client::builder()
-                .timeout(std::time::Duration::from_secs(120))
-                .build()
-                .expect("reqwest client"),
-        }
+            http: crate::providers::types::build_http_client()?,
+        })
     }
 }
 
@@ -148,7 +146,9 @@ impl LlmProvider for OpenAICompatClient {
         let chunks = sse.flat_map(move |item| {
             let mut out: Vec<ChatChunk> = Vec::new();
             match item {
-                Err(e) => out.push(ChatChunk::Error { message: format!("{e}") }),
+                Err(e) => out.push(ChatChunk::Error {
+                    message: format!("{e}"),
+                }),
                 Ok(event) => {
                     let data = event.data;
                     if data == "[DONE]" {
@@ -255,14 +255,19 @@ fn build_request_body(req: &ChatRequest) -> serde_json::Value {
         "temperature": req.temperature,
     });
     if !req.tools.is_empty() {
-        body["tools"] = json!(req.tools.iter().map(|t| json!({
-            "type": "function",
-            "function": {
-                "name": t.name,
-                "description": t.description,
-                "parameters": t.input_schema,
-            }
-        })).collect::<Vec<_>>());
+        body["tools"] = json!(
+            req.tools
+                .iter()
+                .map(|t| json!({
+                    "type": "function",
+                    "function": {
+                        "name": t.name,
+                        "description": t.description,
+                        "parameters": t.input_schema,
+                    }
+                }))
+                .collect::<Vec<_>>()
+        );
     }
     body
 }
@@ -289,21 +294,23 @@ fn append_message(out: &mut Vec<serde_json::Value>, m: &Message) {
             // OpenAI 接受 content 为字符串或 null；空文本时给空串避免有些后端拒绝
             msg["content"] = json!(text);
             if !tool_uses.is_empty() {
-                msg["tool_calls"] = json!(tool_uses
-                    .iter()
-                    .map(|tu| {
-                        let args_str = serde_json::to_string(&tu.input)
-                            .unwrap_or_else(|_| "{}".to_string());
-                        json!({
-                            "id": tu.id,
-                            "type": "function",
-                            "function": {
-                                "name": tu.name,
-                                "arguments": args_str,
-                            }
+                msg["tool_calls"] = json!(
+                    tool_uses
+                        .iter()
+                        .map(|tu| {
+                            let args_str = serde_json::to_string(&tu.input)
+                                .unwrap_or_else(|_| "{}".to_string());
+                            json!({
+                                "id": tu.id,
+                                "type": "function",
+                                "function": {
+                                    "name": tu.name,
+                                    "arguments": args_str,
+                                }
+                            })
                         })
-                    })
-                    .collect::<Vec<_>>());
+                        .collect::<Vec<_>>()
+                );
             }
             out.push(msg);
         }
@@ -312,7 +319,12 @@ fn append_message(out: &mut Vec<serde_json::Value>, m: &Message) {
             match &m.content {
                 MessageContent::Blocks(blocks) => {
                     for b in blocks {
-                        if let ContentBlock::ToolResult { tool_use_id, content, .. } = b {
+                        if let ContentBlock::ToolResult {
+                            tool_use_id,
+                            content,
+                            ..
+                        } = b
+                        {
                             out.push(json!({
                                 "role": "tool",
                                 "tool_call_id": tool_use_id,
@@ -468,7 +480,9 @@ mod tests {
             messages: vec![Message {
                 role: Role::Assistant,
                 content: MessageContent::Blocks(vec![
-                    ContentBlock::Text { text: "我来读文件".into() },
+                    ContentBlock::Text {
+                        text: "我来读文件".into(),
+                    },
                     ContentBlock::ToolUse {
                         id: "call_1".into(),
                         name: "read_file".into(),
@@ -489,7 +503,8 @@ mod tests {
         assert_eq!(m["tool_calls"][0]["type"], "function");
         assert_eq!(m["tool_calls"][0]["function"]["name"], "read_file");
         // 关键：arguments 是字符串而非对象（很多 OpenAI 兼容后端会因此拒绝）
-        let args = m["tool_calls"][0]["function"]["arguments"].as_str()
+        let args = m["tool_calls"][0]["function"]["arguments"]
+            .as_str()
             .expect("arguments 必须是字符串");
         let parsed: serde_json::Value = serde_json::from_str(args).unwrap();
         assert_eq!(parsed["path"], "README.md");
@@ -530,8 +545,10 @@ mod tests {
         assert_eq!(msgs[0]["tool_call_id"], "call_1");
         assert_eq!(msgs[0]["content"], "文件内容");
         // 关键：不允许出现 type 字段（Anthropic 风格的 tool_result 会让 Qwen 400）
-        assert!(msgs[0].get("type").is_none(),
-            "OpenAI 协议下 tool 消息不应有 type 字段");
+        assert!(
+            msgs[0].get("type").is_none(),
+            "OpenAI 协议下 tool 消息不应有 type 字段"
+        );
 
         assert_eq!(msgs[1]["tool_call_id"], "call_2");
         assert_eq!(msgs[1]["content"], "另一个工具结果");
@@ -545,8 +562,12 @@ mod tests {
             messages: vec![Message {
                 role: Role::User,
                 content: MessageContent::Blocks(vec![
-                    ContentBlock::Text { text: "你好".into() },
-                    ContentBlock::Text { text: "世界".into() },
+                    ContentBlock::Text {
+                        text: "你好".into(),
+                    },
+                    ContentBlock::Text {
+                        text: "世界".into(),
+                    },
                 ]),
             }],
             tools: vec![],

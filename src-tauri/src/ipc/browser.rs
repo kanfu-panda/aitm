@@ -39,10 +39,10 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use tauri::{
-    webview::PageLoadEvent, AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Url,
-    Webview, WebviewUrl,
+    AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Url, Webview, WebviewUrl,
+    webview::PageLoadEvent,
 };
-use tokio::sync::{oneshot, watch, Mutex};
+use tokio::sync::{Mutex, oneshot, watch};
 
 /// 内嵌浏览器后端状态。仅持有当前**未 suspend** 的 webview handle。
 ///
@@ -243,9 +243,7 @@ fn make_tab_id() -> String {
 ///
 /// 改用 `app.windows()` / `get_window("main")` 拿底层 [`tauri::Window`]，
 /// 不受 multi-webview 状态影响。
-fn pick_main_window<R: tauri::Runtime>(
-    app: &AppHandle<R>,
-) -> Result<tauri::Window<R>, String> {
+fn pick_main_window<R: tauri::Runtime>(app: &AppHandle<R>) -> Result<tauri::Window<R>, String> {
     // 优先尝试 "main"；找不到就拿第一个。
     if let Some(w) = app.get_window("main") {
         return Ok(w);
@@ -441,7 +439,8 @@ pub async fn browser_navigate(
         let wv = map
             .get(&tab_id)
             .ok_or_else(|| format!("tab {tab_id} 不存在或已 suspend"))?;
-        wv.navigate(parsed).map_err(|e| format!("navigate 失败: {e}"))?;
+        wv.navigate(parsed)
+            .map_err(|e| format!("navigate 失败: {e}"))?;
     }
     // v0.5.8 / v0.5.9：navigate 异步，emit 给**主 webview** 让前端同步 URL 栏。
     // 用 emit_to 显式指 "main"，避免 emit() 广播到 child webview 时主 webview
@@ -450,7 +449,11 @@ pub async fn browser_navigate(
         tab_id: tab_id.clone(),
         url: url.clone(),
     };
-    if let Err(e) = app.emit_to(tauri::EventTarget::webview("main"), "browser:url_changed", &payload) {
+    if let Err(e) = app.emit_to(
+        tauri::EventTarget::webview("main"),
+        "browser:url_changed",
+        &payload,
+    ) {
         tracing::warn!("emit browser:url_changed to main 失败: {e}");
     }
     Ok(())
@@ -1376,30 +1379,70 @@ mod tests {
     #[test]
     fn bounds_日志_首次必打_相同值不重复打() {
         let mut logged = HashMap::new();
-        assert!(bounds_log_changed(&mut logged, "t1", (0.0, 30.0, 370.0, 500.0)));
+        assert!(bounds_log_changed(
+            &mut logged,
+            "t1",
+            (0.0, 30.0, 370.0, 500.0)
+        ));
         // 前端 scroll 监听会用完全相同的值反复上报 → 不该刷屏
-        assert!(!bounds_log_changed(&mut logged, "t1", (0.0, 30.0, 370.0, 500.0)));
-        assert!(!bounds_log_changed(&mut logged, "t1", (0.0, 30.0, 370.0, 500.0)));
+        assert!(!bounds_log_changed(
+            &mut logged,
+            "t1",
+            (0.0, 30.0, 370.0, 500.0)
+        ));
+        assert!(!bounds_log_changed(
+            &mut logged,
+            "t1",
+            (0.0, 30.0, 370.0, 500.0)
+        ));
     }
 
     #[test]
     fn bounds_日志_尺寸变化必打_拖窄面板不会被去重吞掉() {
         let mut logged = HashMap::new();
-        assert!(bounds_log_changed(&mut logged, "t1", (0.0, 30.0, 800.0, 600.0)));
+        assert!(bounds_log_changed(
+            &mut logged,
+            "t1",
+            (0.0, 30.0, 800.0, 600.0)
+        ));
         // 面板被拖窄：宽度变了，必须留下日志，否则排查时看不到真实尺寸
-        assert!(bounds_log_changed(&mut logged, "t1", (0.0, 30.0, 370.0, 600.0)));
+        assert!(bounds_log_changed(
+            &mut logged,
+            "t1",
+            (0.0, 30.0, 370.0, 600.0)
+        ));
         // 只有 x 变（面板左右平移）同样要打
-        assert!(bounds_log_changed(&mut logged, "t1", (12.0, 30.0, 370.0, 600.0)));
+        assert!(bounds_log_changed(
+            &mut logged,
+            "t1",
+            (12.0, 30.0, 370.0, 600.0)
+        ));
     }
 
     #[test]
     fn bounds_日志_按_tab_独立记账() {
         let mut logged = HashMap::new();
-        assert!(bounds_log_changed(&mut logged, "t1", (0.0, 0.0, 370.0, 500.0)));
+        assert!(bounds_log_changed(
+            &mut logged,
+            "t1",
+            (0.0, 0.0, 370.0, 500.0)
+        ));
         // 另一个 tab 即使数值相同也是首次 → 要打
-        assert!(bounds_log_changed(&mut logged, "t2", (0.0, 0.0, 370.0, 500.0)));
-        assert!(!bounds_log_changed(&mut logged, "t2", (0.0, 0.0, 370.0, 500.0)));
-        assert!(!bounds_log_changed(&mut logged, "t1", (0.0, 0.0, 370.0, 500.0)));
+        assert!(bounds_log_changed(
+            &mut logged,
+            "t2",
+            (0.0, 0.0, 370.0, 500.0)
+        ));
+        assert!(!bounds_log_changed(
+            &mut logged,
+            "t2",
+            (0.0, 0.0, 370.0, 500.0)
+        ));
+        assert!(!bounds_log_changed(
+            &mut logged,
+            "t1",
+            (0.0, 0.0, 370.0, 500.0)
+        ));
     }
 
     #[tokio::test]
@@ -1628,7 +1671,11 @@ mod tests {
             request_id: "open-2".to_string(),
             url: None,
         };
-        assert!(serde_json::to_string(&ev2).unwrap().contains("\"url\":null"));
+        assert!(
+            serde_json::to_string(&ev2)
+                .unwrap()
+                .contains("\"url\":null")
+        );
     }
 
     #[tokio::test]
@@ -1774,7 +1821,11 @@ mod tests {
     async fn wait_for_page_load_晚到的_finished_也能等到() {
         let state = Arc::new(BrowserState::default());
         let (tx, _rx) = watch::channel(PageLoadState::default());
-        state.load_state.lock().await.insert("tab-1".into(), tx.clone());
+        state
+            .load_state
+            .lock()
+            .await
+            .insert("tab-1".into(), tx.clone());
 
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(30)).await;
@@ -1794,7 +1845,11 @@ mod tests {
         // 不能把纯 title 更新误判成"加载完成"。
         let state = Arc::new(BrowserState::default());
         let (tx, _rx) = watch::channel(PageLoadState::default());
-        state.load_state.lock().await.insert("tab-1".into(), tx.clone());
+        state
+            .load_state
+            .lock()
+            .await
+            .insert("tab-1".into(), tx.clone());
 
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(20)).await;
@@ -1817,7 +1872,11 @@ mod tests {
             url: "https://old.example".into(),
             title: "旧页面".into(),
         });
-        state.load_state.lock().await.insert("tab-1".into(), tx.clone());
+        state
+            .load_state
+            .lock()
+            .await
+            .insert("tab-1".into(), tx.clone());
 
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(20)).await;
@@ -1878,7 +1937,10 @@ mod tests {
             resolve_active_tab(Some("已被关掉的-tab"), &ids),
             ActiveTabResolution::Ambiguous(3)
         );
-        assert_eq!(resolve_active_tab(None, &ids), ActiveTabResolution::Ambiguous(3));
+        assert_eq!(
+            resolve_active_tab(None, &ids),
+            ActiveTabResolution::Ambiguous(3)
+        );
     }
 
     #[test]

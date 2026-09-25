@@ -131,7 +131,10 @@ mod tests {
         }
 
         let text = String::from_utf8_lossy(&received);
-        assert!(text.contains("hello-aitm"), "期望看到 echo 输出，实际收到：{text:?}");
+        assert!(
+            text.contains("hello-aitm"),
+            "期望看到 echo 输出，实际收到：{text:?}"
+        );
     }
 
     #[cfg(unix)]
@@ -152,7 +155,9 @@ mod tests {
         // resize 到 100x40
         mgr.resize(id, 100, 40).await.unwrap();
         // 让子 shell 报告
-        mgr.write(id, b"tput cols; tput lines; exit\n").await.unwrap();
+        mgr.write(id, b"tput cols; tput lines; exit\n")
+            .await
+            .unwrap();
 
         let mut received = Vec::new();
         let timeout = tokio::time::Instant::now() + Duration::from_secs(3);

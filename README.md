@@ -108,9 +108,13 @@ cd src-tauri && cargo test -p aitm
 cargo clippy --all-targets -- -D warnings
 cd .. && pnpm typecheck && pnpm lint && pnpm test
 pnpm exec playwright test
+
+# Coverage (line coverage must stay at or above 85%)
+pnpm test:coverage
+cd src-tauri && cargo llvm-cov -p aitm --summary-only --fail-under-lines 85
 ```
 
-All gates must pass before merging to `main`.
+All gates must pass before merging to `main`. Install [pre-commit](https://pre-commit.com) and run `pre-commit install` to get eslint, type checking and `cargo fmt` on every commit.
 
 ---
 

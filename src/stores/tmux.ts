@@ -9,6 +9,7 @@ import {
   type TmuxSession,
 } from "../lib/tauri";
 import { useTabsStore } from "./tabs";
+import { detectHandTypedTmux } from "../lib/tmuxTabDetect";
 
 /**
  * tmux 会话管理器状态。
@@ -132,6 +133,25 @@ export const useTmuxStore = create<TmuxState>((set, get) => ({
           return;
         }
         const sessions = await tmuxListSessions();
+        // 有会话接着客户端、却没有哪个标签记着它：可能是在标签里手敲的接入，查一遍。
+        // 只在这类会话的客户端数与上次刷新不同时才查——会话在别的终端里一直接着时，
+        // 面板每 3 秒刷新都去 fork 进程识别是浪费；手敲接入会让客户端数变化
+        const known = new Set(
+          useTabsStore.getState().tabs.map((t) => t.tmuxSessionId),
+        );
+        const prevAttached = new Map(
+          get().sessions.map((s) => [s.id, s.attached] as const),
+        );
+        if (
+          sessions.some(
+            (s) =>
+              s.attached > 0 &&
+              !known.has(s.id) &&
+              prevAttached.get(s.id) !== s.attached,
+          )
+        ) {
+          void detectHandTypedTmux();
+        }
         set((st) => ({
           available: true,
           sessions,
@@ -168,7 +188,16 @@ export const useTmuxStore = create<TmuxState>((set, get) => ({
   },
 
   renameSession: async (id, name) => {
+    const oldName = get().sessions.find((x) => x.id === id)?.name;
     await tmuxRenameSession(id, name);
+    // 接着这个会话的标签标题就是会话名，改名后跟着变；标题已被用户手动改成
+    // 别的名字的不动（判断依据：标题不等于旧会话名）
+    if (oldName !== undefined) {
+      const { tabs, setTitle } = useTabsStore.getState();
+      for (const t of tabs) {
+        if (t.tmuxSessionId === id && t.title === oldName) setTitle(t.id, name);
+      }
+    }
     await get().refresh();
   },
 

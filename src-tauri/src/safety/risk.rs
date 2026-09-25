@@ -44,7 +44,10 @@ static DESTRUCTIVE_PATTERNS: Lazy<Vec<(Regex, &'static str)>> = Lazy::new(|| {
             "chmod 开放写权限",
         ),
         // 递归改 owner
-        (Regex::new(r"\bchown\s+-R\b").unwrap(), "chown -R 递归改 owner"),
+        (
+            Regex::new(r"\bchown\s+-R\b").unwrap(),
+            "chown -R 递归改 owner",
+        ),
         // git 强推
         (
             Regex::new(r"\bgit\s+push\s+(.*--force\b|.*-f\b)").unwrap(),
@@ -94,14 +97,50 @@ static DESTRUCTIVE_PATTERNS: Lazy<Vec<(Regex, &'static str)>> = Lazy::new(|| {
 /// 仍需通过元字符防御才能最终归 LOW。
 static LOW_SINGLE_PREFIXES: &[&str] = &[
     // 只读 shell
-    "ls", "pwd", "whoami", "date", "uptime", "uname", "hostname", "id", "echo", "printf", "true",
-    "false", "which", "type", "env",
+    "ls",
+    "pwd",
+    "whoami",
+    "date",
+    "uptime",
+    "uname",
+    "hostname",
+    "id",
+    "echo",
+    "printf",
+    "true",
+    "false",
+    "which",
+    "type",
+    "env",
     // 文件读
-    "cat", "less", "more", "head", "tail", "file", "stat", "wc", "md5sum", "sha256sum",
+    "cat",
+    "less",
+    "more",
+    "head",
+    "tail",
+    "file",
+    "stat",
+    "wc",
+    "md5sum",
+    "sha256sum",
     // 搜索
-    "grep", "egrep", "fgrep", "find", "rg", "ag", "locate",
+    "grep",
+    "egrep",
+    "fgrep",
+    "find",
+    "rg",
+    "ag",
+    "locate",
     // 进程信息
-    "ps", "top", "lsof", "netstat", "ss", "dig", "nslookup", "ifconfig", "ip",
+    "ps",
+    "top",
+    "lsof",
+    "netstat",
+    "ss",
+    "dig",
+    "nslookup",
+    "ifconfig",
+    "ip",
 ];
 
 /// LOW 双 token 前缀表（如 `git status`）。命令的前两个 token 拼起来命中即可。
@@ -219,7 +258,11 @@ mod tests {
         assert_eq!(classify_risk("sudo apt update"), RiskClass::Destructive);
         let r = classify("sudo rm -rf /tmp/foo");
         assert_eq!(r.risk, RiskClass::Destructive);
-        assert!(r.reason.contains("sudo"), "reason 应说明 sudo: {}", r.reason);
+        assert!(
+            r.reason.contains("sudo"),
+            "reason 应说明 sudo: {}",
+            r.reason
+        );
     }
 
     #[test]
@@ -229,8 +272,14 @@ mod tests {
 
     #[test]
     fn chmod_777_归_destructive() {
-        assert_eq!(classify_risk("chmod 777 secret.txt"), RiskClass::Destructive);
-        assert_eq!(classify_risk("chmod -R 777 /var/www"), RiskClass::Destructive);
+        assert_eq!(
+            classify_risk("chmod 777 secret.txt"),
+            RiskClass::Destructive
+        );
+        assert_eq!(
+            classify_risk("chmod -R 777 /var/www"),
+            RiskClass::Destructive
+        );
         assert_eq!(classify_risk("chmod 666 db.sqlite"), RiskClass::Destructive);
         assert_eq!(classify_risk("chmod a+w foo"), RiskClass::Destructive);
     }
@@ -338,7 +387,10 @@ mod tests {
             classify_risk("docker rm container-id"),
             RiskClass::Destructive
         );
-        assert_eq!(classify_risk("docker rmi image:tag"), RiskClass::Destructive);
+        assert_eq!(
+            classify_risk("docker rmi image:tag"),
+            RiskClass::Destructive
+        );
         assert_eq!(
             classify_risk("docker system prune -af"),
             RiskClass::Destructive
@@ -390,7 +442,10 @@ mod tests {
             classify_risk("echo x > /var/log/foo"),
             RiskClass::Destructive
         );
-        assert_eq!(classify_risk("echo x >/usr/local/bar"), RiskClass::Destructive);
+        assert_eq!(
+            classify_risk("echo x >/usr/local/bar"),
+            RiskClass::Destructive
+        );
     }
 
     #[test]
@@ -416,7 +471,12 @@ mod tests {
     fn sudoku_不被_sudo_误判() {
         // \b 锚定防止 sudoku 这种长单词被命中
         let r = classify("sudoku --solve puzzle.txt");
-        assert_ne!(r.risk, RiskClass::Destructive, "sudoku 不该当 sudo: {:?}", r);
+        assert_ne!(
+            r.risk,
+            RiskClass::Destructive,
+            "sudoku 不该当 sudo: {:?}",
+            r
+        );
     }
 
     // ===== LOW 正例 =====
@@ -442,8 +502,19 @@ mod tests {
     #[test]
     fn 只读_shell_归_low() {
         for cmd in &[
-            "pwd", "whoami", "date", "uptime", "uname -a", "hostname", "id", "echo hi",
-            "true", "false", "which node", "type ls", "env",
+            "pwd",
+            "whoami",
+            "date",
+            "uptime",
+            "uname -a",
+            "hostname",
+            "id",
+            "echo hi",
+            "true",
+            "false",
+            "which node",
+            "type ls",
+            "env",
         ] {
             assert_eq!(classify_risk(cmd), RiskClass::Low, "应 LOW: {cmd}");
         }
@@ -627,14 +698,8 @@ mod tests {
 
     #[test]
     fn sql_drop_大小写不敏感() {
-        assert_eq!(
-            classify_risk("DROP TABLE users"),
-            RiskClass::Destructive
-        );
-        assert_eq!(
-            classify_risk("Drop Database x"),
-            RiskClass::Destructive
-        );
+        assert_eq!(classify_risk("DROP TABLE users"), RiskClass::Destructive);
+        assert_eq!(classify_risk("Drop Database x"), RiskClass::Destructive);
     }
 
     #[test]

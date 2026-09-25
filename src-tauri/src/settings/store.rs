@@ -163,11 +163,9 @@ mod tests {
                 .unwrap()
                 .filter_map(|e| e.ok())
                 .collect();
-            let has_backup = entries.iter().any(|e| {
-                e.file_name()
-                    .to_string_lossy()
-                    .contains(".broken-")
-            });
+            let has_backup = entries
+                .iter()
+                .any(|e| e.file_name().to_string_lossy().contains(".broken-"));
             assert!(has_backup, "应有 .broken-* 备份文件");
         });
     }

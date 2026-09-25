@@ -18,10 +18,7 @@ pub fn is_blacklisted(cmd: &str) -> Option<&'static str> {
                 "rm -rf / 删根",
             ),
             // dd if=foo of=/dev/disk1
-            (
-                Regex::new(r"\bdd\s+.*\bof=/dev/").unwrap(),
-                "dd 写设备文件",
-            ),
+            (Regex::new(r"\bdd\s+.*\bof=/dev/").unwrap(), "dd 写设备文件"),
             // mkfs.* / mkfs（不应误拦 mkdir）
             (Regex::new(r"\bmkfs(\.|\s)").unwrap(), "mkfs 格式化"),
             // fork bomb :(){:|:&};:  注意 shell 元字符要转义

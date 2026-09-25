@@ -6,13 +6,13 @@
 use async_trait::async_trait;
 use futures::stream::BoxStream;
 
-pub mod types;
-pub mod sse;
 pub mod anthropic;
+pub mod env;
 pub mod openai_compat;
 pub mod presets;
-pub mod env;
 pub mod registry;
+pub mod sse;
+pub mod types;
 
 pub use types::*;
 

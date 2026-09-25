@@ -47,3 +47,34 @@ pub struct NotificationEvent {
     pub source: NotificationSource,
     pub timestamp_ms: u64,
 }
+
+#[cfg(test)]
+mod wire_format_tests {
+    use super::*;
+
+    /// 前端 `lib/tauri.ts` 的 `NotificationSource` 按这里的字面量手写，改动任一边
+    /// 都要同步另一边（1.6.1 之前前端一直写成 `osc_9`，与这里对不上）。
+    #[test]
+    fn 应该_通知来源序列化成前端约定的字面量() {
+        let names: Vec<String> = [
+            NotificationSource::AiToolLoop,
+            NotificationSource::Osc9,
+            NotificationSource::Osc99,
+            NotificationSource::Osc777,
+            NotificationSource::Bell,
+        ]
+        .iter()
+        .map(|s| serde_json::to_string(s).unwrap())
+        .collect();
+        assert_eq!(
+            names,
+            [
+                r#""ai_tool_loop""#,
+                r#""osc9""#,
+                r#""osc99""#,
+                r#""osc777""#,
+                r#""bell""#
+            ]
+        );
+    }
+}
