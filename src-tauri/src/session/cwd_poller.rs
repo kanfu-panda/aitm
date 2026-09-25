@@ -61,17 +61,20 @@ impl CwdPoller {
 
     /// 注册一个 PTY session 的 shell PID。
     ///
-    /// 立即查一次当前 cwd 作为 baseline（避免首个 tick 误 emit"从空字符串
-    /// 变成实际路径"的假变化）。session 关闭时调 [`Self::unregister`]。
+    /// baseline 记为空：下一次 tick 会把 shell 的初始目录当作一次变化上报。前端靠这第一条
+    /// 事件得知新标签在哪个目录（标签标题、文件树根等）；不发 OSC 7 的 shell（macOS 默认
+    /// zsh）以前要等用户 cd 过一次才有。session 关闭时调 [`Self::unregister`]。
+    ///
+    /// 本类型各处取锁在锁中毒时都照常取回数据：表里只是 session → (pid, cwd) 的
+    /// 快照，下一次轮询就会刷新，没有必要因此让调用方 panic。
     pub fn register(&self, session_id: String, pid: u32) {
-        let cwd = read_pid_cwd(pid).unwrap_or_default();
-        let mut map = self.tracked.lock().expect("CwdPoller 锁中毒");
-        map.insert(session_id, (pid, cwd));
+        let mut map = self.tracked.lock().unwrap_or_else(|e| e.into_inner());
+        map.insert(session_id, (pid, String::new()));
     }
 
     /// 移除已关闭 session 的跟踪条目。幂等（不存在时 noop）。
     pub fn unregister(&self, session_id: &str) {
-        let mut map = self.tracked.lock().expect("CwdPoller 锁中毒");
+        let mut map = self.tracked.lock().unwrap_or_else(|e| e.into_inner());
         map.remove(session_id);
     }
 
@@ -91,17 +94,12 @@ impl CwdPoller {
                 tick.tick().await;
                 let updates = this.tick_once(&mut sys);
                 for (session_id, cwd) in updates {
-                    let payload = PtyCwdChangedEvent {
-                        session_id,
-                        cwd,
-                    };
+                    let payload = PtyCwdChangedEvent { session_id, cwd };
                     // 显式 emit_to(main webview)：避免广播到 browser 子 webview
                     // （跟 OSC 7 路径同样处理）
-                    if let Err(e) = app.emit_to(
-                        EventTarget::webview("main"),
-                        "pty:cwd-changed",
-                        &payload,
-                    ) {
+                    if let Err(e) =
+                        app.emit_to(EventTarget::webview("main"), "pty:cwd-changed", &payload)
+                    {
                         // app 关闭时 emit 会持续失败 → break 退出 task
                         tracing::warn!("emit pty:cwd-changed (poller) 失败: {e}");
                         return;
@@ -118,7 +116,7 @@ impl CwdPoller {
     ///
     /// 副作用：变化时**就地更新** baseline 到新 cwd（避免下次 tick 又重报）。
     pub fn tick_once(&self, sys: &mut System) -> Vec<(String, String)> {
-        let mut map = self.tracked.lock().expect("CwdPoller 锁中毒");
+        let mut map = self.tracked.lock().unwrap_or_else(|e| e.into_inner());
         if map.is_empty() {
             return Vec::new();
         }
@@ -127,10 +125,8 @@ impl CwdPoller {
         // 实测 macOS 上传 `[p, p]` 会让后续 `sys.process(p).cwd()` 返 None；
         // 用 HashSet 去重避免该坑。多 session 共享 shell PID 是合法场景：
         // 极端情况下重复打开同一 PID 的 session、或测试场景）
-        let unique_pids: std::collections::HashSet<Pid> = map
-            .values()
-            .map(|(pid, _)| Pid::from_u32(*pid))
-            .collect();
+        let unique_pids: std::collections::HashSet<Pid> =
+            map.values().map(|(pid, _)| Pid::from_u32(*pid)).collect();
         let pids: Vec<Pid> = unique_pids.into_iter().collect();
         sys.refresh_processes_specifics(
             ProcessesToUpdate::Some(&pids),
@@ -156,7 +152,7 @@ impl CwdPoller {
     /// 测试 / 诊断辅助：当前已注册的 session 数量。
     #[cfg(test)]
     pub fn tracked_count(&self) -> usize {
-        self.tracked.lock().expect("CwdPoller 锁中毒").len()
+        self.tracked.lock().unwrap_or_else(|e| e.into_inner()).len()
     }
 }
 
@@ -170,6 +166,8 @@ impl Default for CwdPoller {
 ///
 /// macOS / Linux：sysinfo 借 proc API 拿到 cwd 路径。
 /// Windows：sysinfo 不支持 Process::cwd → 返 None（这层等于禁用）。
+/// 只有测试用它核对轮询结果；运行时的读取都在 [`CwdPoller::tick_once`] 里批量完成。
+#[cfg(test)]
 fn read_pid_cwd(pid: u32) -> Option<String> {
     let mut sys = System::new();
     let pid = Pid::from_u32(pid);
@@ -185,6 +183,31 @@ fn read_pid_cwd(pid: u32) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 让 `tracked` 锁中毒：持锁的线程 panic。
+    fn poison(p: &CwdPoller) {
+        let _ = std::thread::scope(|sc| {
+            sc.spawn(|| {
+                let _g = p.tracked.lock().unwrap();
+                panic!("模拟持锁线程崩溃");
+            })
+            .join()
+        });
+        assert!(p.tracked.is_poisoned());
+    }
+
+    #[test]
+    fn 应该_当锁中毒时_注册注销与轮询不再_panic() {
+        let p = CwdPoller::new();
+        poison(&p);
+
+        p.register("s1".into(), std::process::id());
+        assert_eq!(p.tracked_count(), 1);
+        let mut sys = System::new();
+        let _ = p.tick_once(&mut sys);
+        p.unregister("s1");
+        assert_eq!(p.tracked_count(), 0);
+    }
 
     /// 用当前测试进程自身的 PID 作为 mock：它一定存在 + 有 cwd。
     fn self_pid() -> u32 {
@@ -216,23 +239,30 @@ mod tests {
         assert!(cwd.is_some(), "Unix 平台 sysinfo 应能拿到自身 cwd");
         let cwd = cwd.unwrap();
         // cwd 必为绝对路径
-        assert!(
-            cwd.starts_with('/'),
-            "cwd 应是绝对路径，实际：{cwd}"
-        );
+        assert!(cwd.starts_with('/'), "cwd 应是绝对路径，实际：{cwd}");
     }
 
-    /// 首次 tick：baseline 已经在 register 时录上，cwd 没变 → 不 emit。
+    /// 注册后的首次轮询要上报初始目录。macOS 默认 zsh 不发
+    /// OSC 7，以前初始目录从不上报，新标签的标题一直是「新标签」，直到用户 cd 过一次。
+    /// 之后目录没变就不再上报。
     #[cfg(unix)]
     #[test]
-    fn tick_once_无变化_不返回更新() {
+    fn 应该_在注册后的首次轮询上报初始目录_之后无变化不再上报() {
         let poller = CwdPoller::new();
         poller.register("s1".to_string(), self_pid());
         let mut sys = System::new();
         let updates = poller.tick_once(&mut sys);
+        assert_eq!(
+            updates.len(),
+            1,
+            "首次轮询应上报初始目录，实际：{updates:?}"
+        );
+        assert_eq!(updates[0].0, "s1");
+        assert_eq!(Some(updates[0].1.clone()), read_pid_cwd(self_pid()));
+        let updates2 = poller.tick_once(&mut sys);
         assert!(
-            updates.is_empty(),
-            "register 已录 baseline，相同 cwd 不应产出更新，实际：{updates:?}"
+            updates2.is_empty(),
+            "目录没变不应再上报，实际：{updates2:?}"
         );
     }
 
@@ -274,12 +304,14 @@ mod tests {
         poller.register("a".to_string(), self_pid());
         poller.register("b".to_string(), self_pid());
         assert_eq!(poller.tracked_count(), 2);
+        let mut sys = System::new();
+        // 首次 tick 两个都上报初始目录，先消化掉
+        assert_eq!(poller.tick_once(&mut sys).len(), 2);
         // 只改 "a" 的 baseline
         {
             let mut map = poller.tracked.lock().unwrap();
             map.get_mut("a").unwrap().1 = "/fake".to_string();
         }
-        let mut sys = System::new();
         let updates = poller.tick_once(&mut sys);
         assert_eq!(updates.len(), 1, "只有 a 应 emit");
         assert_eq!(updates[0].0, "a");

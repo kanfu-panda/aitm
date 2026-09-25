@@ -56,7 +56,8 @@ export interface Tab {
    *
    * 两个用途：随快照落盘，重启时会话还在就自动接回去；面板刷新时，被 aitm 自己的
    * 标签接着的会话不标"新输出"（接入本身就会让 tmux 重绘、刷新活动时间）。
-   * 只记录经面板接入的；在标签里手敲 `tmux attach` 不会被记下。
+   * 经面板接入的在建标签时记下；在标签里手敲 `tmux attach` 的由
+   * [`detectHandTypedTmux`] 事后识别再记下（见 `markTmuxSession`）。
    */
   tmuxSessionId?: string;
 }
@@ -98,6 +99,12 @@ interface TabsState {
   setTitle: (tabId: TabId, title: string) => void;
   /** v0.9.0 T3：切换 tab 的 `auto_title` 标志。 */
   setAutoTitle: (tabId: TabId, autoTitle: boolean) => void;
+  /**
+   * 记下标签里接着的 tmux 会话（手敲 `tmux attach` 被识别出来时用）。
+   * 标题还在跟随目录的改成会话名，与面板接入的标签一致；用户手动命名过的不动。
+   * 已记下同一会话时不产生新状态——每次状态变化都会排一次快照写盘。
+   */
+  markTmuxSession: (tabId: TabId, ref: { id: string; name: string }) => void;
   /**
    * v0.9.0 T3：后端 OSC 7 解析出新 cwd 时调用。
    * - 更新 `cwd` 字段
@@ -254,6 +261,19 @@ export const useTabsStore = create<TabsState>((set, get) => ({
         return { ...t, auto_title: autoTitle };
       }),
     })),
+
+  markTmuxSession: (tabId, ref) => {
+    const tab = get().tabs.find((t) => t.id === tabId);
+    if (!tab || tab.tmuxSessionId === ref.id) return;
+    set((s) => ({
+      tabs: s.tabs.map((t) => {
+        if (t.id !== tabId) return t;
+        return t.auto_title
+          ? { ...t, tmuxSessionId: ref.id, title: ref.name, auto_title: false }
+          : { ...t, tmuxSessionId: ref.id };
+      }),
+    }));
+  },
 
   applyCwdChange: (sessionId, cwd) =>
     set((s) => ({

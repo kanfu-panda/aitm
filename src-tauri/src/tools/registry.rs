@@ -8,9 +8,9 @@ use std::sync::Arc;
 
 use crate::providers::types::ToolDef;
 
+use super::Tool;
 use super::browser::{
-    BrowserClickTool, BrowserEvalTool, BrowserFillTool, BrowserNavigateTool,
-    BrowserSnapshotTool,
+    BrowserClickTool, BrowserEvalTool, BrowserFillTool, BrowserNavigateTool, BrowserSnapshotTool,
 };
 use super::browser_open::BrowserOpenTool;
 use super::edit_file::EditFileTool;
@@ -21,7 +21,6 @@ use super::read_file::ReadFileTool;
 use super::run_command::RunCommandTool;
 use super::terminal_history::{GetTerminalHistoryTool, SearchHistoryTool};
 use super::write_file::WriteFileTool;
-use super::Tool;
 
 pub struct ToolRegistry {
     tools: HashMap<String, Arc<dyn Tool>>,

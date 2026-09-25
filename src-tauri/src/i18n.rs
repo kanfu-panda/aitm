@@ -30,12 +30,18 @@ use std::collections::HashMap;
 /// 启动期一次性 parse JSON；后续 `t()` 调用纯 HashMap lookup（O(1)）。
 static MENU_I18N: Lazy<HashMap<&'static str, HashMap<String, String>>> = Lazy::new(|| {
     let mut m = HashMap::new();
-    m.insert("en", parse_menu_json(include_str!("../locales/menu.en.json")));
+    m.insert(
+        "en",
+        parse_menu_json(include_str!("../locales/menu.en.json")),
+    );
     m.insert(
         "zh-CN",
         parse_menu_json(include_str!("../locales/menu.zh-CN.json")),
     );
-    m.insert("ja", parse_menu_json(include_str!("../locales/menu.ja.json")));
+    m.insert(
+        "ja",
+        parse_menu_json(include_str!("../locales/menu.ja.json")),
+    );
     m
 });
 
@@ -147,10 +153,7 @@ mod tests {
                 missing_ja.push(key.clone());
             }
         }
-        assert!(
-            missing_zh.is_empty(),
-            "zh-CN 缺以下 key：{missing_zh:?}"
-        );
+        assert!(missing_zh.is_empty(), "zh-CN 缺以下 key：{missing_zh:?}");
         assert!(missing_ja.is_empty(), "ja 缺以下 key：{missing_ja:?}");
     }
 

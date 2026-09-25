@@ -34,11 +34,7 @@ pub fn list_listening_ports(shell_pid: u32) -> Vec<u16> {
 /// 重复一份避免跨模块 visibility 改动；逻辑很短）。
 fn collect_descendant_pids(shell_pid: u32) -> HashSet<u32> {
     let mut sys = System::new();
-    sys.refresh_processes_specifics(
-        ProcessesToUpdate::All,
-        true,
-        ProcessRefreshKind::nothing(),
-    );
+    sys.refresh_processes_specifics(ProcessesToUpdate::All, true, ProcessRefreshKind::nothing());
 
     let mut pid_to_parent: std::collections::HashMap<u32, Option<u32>> =
         std::collections::HashMap::new();

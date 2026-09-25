@@ -126,12 +126,7 @@ impl Tool for ListFilesTool {
 /// 收集上限 = MAX_ENTRIES + 1，便于上层判断是否截断。
 const COLLECT_CAP: usize = MAX_ENTRIES + 1;
 
-fn walk(
-    path: &std::path::Path,
-    base: &std::path::Path,
-    max_depth: u32,
-    out: &mut Vec<String>,
-) {
+fn walk(path: &std::path::Path, base: &std::path::Path, max_depth: u32, out: &mut Vec<String>) {
     if max_depth == 0 || out.len() >= COLLECT_CAP {
         return;
     }
@@ -240,10 +235,7 @@ mod tests {
         let ctx = make_ctx(dir.path().to_path_buf());
 
         let r = ListFilesTool
-            .execute(
-                json!({ "dir": outside.path().to_string_lossy() }),
-                &ctx,
-            )
+            .execute(json!({ "dir": outside.path().to_string_lossy() }), &ctx)
             .await;
         assert!(matches!(r, Err(ToolError::Blocked { .. })));
     }

@@ -12,9 +12,7 @@ use std::sync::Mutex as StdMutex;
 
 use tempfile::TempDir;
 
-use aitm_lib::ipc::scope::{
-    ScopeDto, mark_ignored_impl, project_init_impl, scope_resolve_impl,
-};
+use aitm_lib::ipc::scope::{ScopeDto, mark_ignored_impl, project_init_impl, scope_resolve_impl};
 use aitm_lib::scope::marker;
 use aitm_lib::store::{AitmDb, repo_global};
 
@@ -74,17 +72,13 @@ fn scope_resolve_有_marker_返回_project() {
     with_home(|_| {
         let proj = TempDir::new().unwrap();
         // 先 init 一个项目
-        let init = project_init_impl(
-            &proj.path().to_string_lossy(),
-            "demo",
-            &AitmDb::new(),
-        )
-        .expect("init 应成功");
+        let init = project_init_impl(&proj.path().to_string_lossy(), "demo", &AitmDb::new())
+            .expect("init 应成功");
 
         // 再 resolve（用同一个 home env，不同 db 实例都 ok 因为读盘）
         let db2 = AitmDb::new();
-        let scope = scope_resolve_impl(&proj.path().to_string_lossy(), &db2)
-            .expect("resolve 应成功");
+        let scope =
+            scope_resolve_impl(&proj.path().to_string_lossy(), &db2).expect("resolve 应成功");
         match scope {
             ScopeDto::Project { uuid, root_path } => {
                 assert_eq!(uuid, init.uuid, "resolve 出的 UUID 应等于 init 返回的");
@@ -119,12 +113,8 @@ fn project_init_创建_marker_文件_和_注册到_global_projects() {
         let proj = TempDir::new().unwrap();
         let db = AitmDb::new();
 
-        let result = project_init_impl(
-            &proj.path().to_string_lossy(),
-            "my-project",
-            &db,
-        )
-        .expect("init 应成功");
+        let result = project_init_impl(&proj.path().to_string_lossy(), "my-project", &db)
+            .expect("init 应成功");
 
         // 1. 返回值字段
         assert_eq!(result.name, "my-project");
@@ -157,7 +147,11 @@ fn project_init_创建_marker_文件_和_注册到_global_projects() {
             .join("projects")
             .join(&result.uuid)
             .join("data.db");
-        assert!(db_path.exists(), "项目 db 应被懒创建: {}", db_path.display());
+        assert!(
+            db_path.exists(),
+            "项目 db 应被懒创建: {}",
+            db_path.display()
+        );
     });
 }
 
@@ -186,19 +180,14 @@ fn project_init_子目录_resolve_仍能找到项目() {
     // spec §A6 场景：项目根在 /foo，cwd 在 /foo/sub/deep 也应识别同一项目
     with_home(|_| {
         let proj = TempDir::new().unwrap();
-        let init = project_init_impl(
-            &proj.path().to_string_lossy(),
-            "deep-test",
-            &AitmDb::new(),
-        )
-        .expect("init 应成功");
+        let init = project_init_impl(&proj.path().to_string_lossy(), "deep-test", &AitmDb::new())
+            .expect("init 应成功");
 
         let deep = proj.path().join("sub").join("deep");
         fs::create_dir_all(&deep).unwrap();
 
         let db2 = AitmDb::new();
-        let scope = scope_resolve_impl(&deep.to_string_lossy(), &db2)
-            .expect("resolve 应成功");
+        let scope = scope_resolve_impl(&deep.to_string_lossy(), &db2).expect("resolve 应成功");
         match scope {
             ScopeDto::Project { uuid, .. } => {
                 assert_eq!(uuid, init.uuid, "子目录 resolve 应找到根的 UUID");
@@ -248,9 +237,7 @@ fn mark_ignored_重复调用_幂等() {
         mark_ignored_impl(&cwd_str, &db).unwrap();
         mark_ignored_impl(&cwd_str, &db).unwrap();
 
-        let list: Vec<String> = db
-            .with_global(repo_global::ignored_paths::list)
-            .unwrap();
+        let list: Vec<String> = db.with_global(repo_global::ignored_paths::list).unwrap();
         // 只应有一条记录（INSERT OR IGNORE 去重）
         let canon = canon_str(cwd.path());
         let count = list.iter().filter(|p| **p == canon).count();

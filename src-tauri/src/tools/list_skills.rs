@@ -171,16 +171,28 @@ mod tests {
 
     fn sample() -> Vec<SkillMeta> {
         vec![
-            meta("writing-expert", "资深写作专家。写技术文 / 公众号 / 博客。Triggers：写文章 / 起草"),
-            meta("risk-expert", "风险评估与控制专家。覆盖技术 / 业务 / 法律合规。Triggers：风险 / risk"),
-            meta("lark-base", "飞书多维表格（Base）操作：建表、字段、记录、视图"),
+            meta(
+                "writing-expert",
+                "资深写作专家。写技术文 / 公众号 / 博客。Triggers：写文章 / 起草",
+            ),
+            meta(
+                "risk-expert",
+                "风险评估与控制专家。覆盖技术 / 业务 / 法律合规。Triggers：风险 / risk",
+            ),
+            meta(
+                "lark-base",
+                "飞书多维表格（Base）操作：建表、字段、记录、视图",
+            ),
             meta("nodesc", ""),
         ]
     }
 
     /// 取一行「：」之后的简介字符数。
     fn desc_chars(line: &str) -> usize {
-        line.chars().skip_while(|c| *c != '：').count().saturating_sub(1)
+        line.chars()
+            .skip_while(|c| *c != '：')
+            .count()
+            .saturating_sub(1)
     }
 
     fn ctx_at(cwd: PathBuf) -> ToolContext {
@@ -211,7 +223,10 @@ mod tests {
     #[test]
     fn 按中文关键词命中() {
         let got = render(&sample(), Some("飞书"));
-        assert!(got.contains("- `lark-base`："), "中文关键词应命中简介，实得：\n{got}");
+        assert!(
+            got.contains("- `lark-base`："),
+            "中文关键词应命中简介，实得：\n{got}"
+        );
         assert!(!got.contains("- `writing-expert`："), "不相关的不该出现");
         assert!(got.contains("命中 1 个 skill"), "应报命中数");
         assert!(got.contains("共 4 个可用"), "应报总数");
@@ -220,10 +235,16 @@ mod tests {
     #[test]
     fn 按英文关键词命中_大小写不敏感() {
         let upper = render(&sample(), Some("RISK"));
-        assert!(upper.contains("- `risk-expert`："), "大写关键词应命中，实得：\n{upper}");
+        assert!(
+            upper.contains("- `risk-expert`："),
+            "大写关键词应命中，实得：\n{upper}"
+        );
         // 表头会回显关键词原文，所以只比命中的条目行
         let hits = |s: &str| -> Vec<String> {
-            s.lines().filter(|l| l.starts_with("- `")).map(str::to_string).collect()
+            s.lines()
+                .filter(|l| l.starts_with("- `"))
+                .map(str::to_string)
+                .collect()
         };
         let lower = render(&sample(), Some("risk"));
         assert_eq!(hits(&upper), hits(&lower), "大小写不该影响命中结果");
@@ -241,7 +262,11 @@ mod tests {
         let long = meta("long-one", &"描".repeat(500));
         let got = render(&[long], Some("long"));
         let line = got.lines().find(|l| l.starts_with("- `long-one`")).unwrap();
-        assert_eq!(desc_chars(line), DESC_MAX_CHARS + 1, "简介应截到 200 字符 + 省略号");
+        assert_eq!(
+            desc_chars(line),
+            DESC_MAX_CHARS + 1,
+            "简介应截到 200 字符 + 省略号"
+        );
         assert!(line.ends_with('…'));
     }
 
@@ -271,7 +296,10 @@ mod tests {
         let listed = got.lines().filter(|l| l.starts_with("- `")).count();
         assert_eq!(listed, MAX_RESULTS, "最多列 20 条");
         assert!(got.contains("命中 35 个 skill"), "命中总数仍要报给 AI");
-        assert!(got.contains("还有 15 条未列出"), "应注明未列出的条数，实得：\n{got}");
+        assert!(
+            got.contains("还有 15 条未列出"),
+            "应注明未列出的条数，实得：\n{got}"
+        );
     }
 
     #[test]
@@ -405,7 +433,11 @@ mod tests {
             .await
             .unwrap();
         assert!(!r.is_error);
-        assert!(r.content.contains("aitm-test-p8-search"), "实得：\n{}", r.content);
+        assert!(
+            r.content.contains("aitm-test-p8-search"),
+            "实得：\n{}",
+            r.content
+        );
         assert!(
             !r.content.contains("# 正文不该出现在搜索结果里"),
             "🔴 搜索结果只有名字 + 简介，正文走 load_skill"

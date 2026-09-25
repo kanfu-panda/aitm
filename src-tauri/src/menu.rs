@@ -45,8 +45,8 @@ pub fn build_menu<R: Runtime>(app: &AppHandle<R>, lang: &str) -> tauri::Result<M
 
     // 自定义"关于"项而非 PredefinedMenuItem::about：系统面板只能显示静态
     // metadata，装不下"检查更新"按钮。这里改为打开应用内设置的"关于"页。
-    let about_item = MenuItemBuilder::with_id("open-about", i18n::t(lang, "menu.app.about"))
-        .build(app)?;
+    let about_item =
+        MenuItemBuilder::with_id("open-about", i18n::t(lang, "menu.app.about")).build(app)?;
 
     let app_submenu = SubmenuBuilder::new(app, i18n::t(lang, "menu.app.title"))
         .item(&about_item)
@@ -61,10 +61,9 @@ pub fn build_menu<R: Runtime>(app: &AppHandle<R>, lang: &str) -> tauri::Result<M
         .build()?;
 
     // ---- File submenu ----
-    let close_tab_item =
-        MenuItemBuilder::with_id("close-tab", i18n::t(lang, "menu.file.closeTab"))
-            .accelerator("Cmd+W")
-            .build(app)?;
+    let close_tab_item = MenuItemBuilder::with_id("close-tab", i18n::t(lang, "menu.file.closeTab"))
+        .accelerator("Cmd+W")
+        .build(app)?;
     let file_submenu = SubmenuBuilder::new(app, i18n::t(lang, "menu.file.title"))
         .item(&close_tab_item)
         .build()?;
@@ -84,18 +83,14 @@ pub fn build_menu<R: Runtime>(app: &AppHandle<R>, lang: &str) -> tauri::Result<M
         .build()?;
 
     // ---- View submenu（v0.10.6 T4 接 font action handler；T1 占位放 menu item）----
-    let font_increase_item = MenuItemBuilder::with_id(
-        "font-increase",
-        i18n::t(lang, "menu.view.fontIncrease"),
-    )
-    .accelerator("Cmd+=")
-    .build(app)?;
-    let font_decrease_item = MenuItemBuilder::with_id(
-        "font-decrease",
-        i18n::t(lang, "menu.view.fontDecrease"),
-    )
-    .accelerator("Cmd+-")
-    .build(app)?;
+    let font_increase_item =
+        MenuItemBuilder::with_id("font-increase", i18n::t(lang, "menu.view.fontIncrease"))
+            .accelerator("Cmd+=")
+            .build(app)?;
+    let font_decrease_item =
+        MenuItemBuilder::with_id("font-decrease", i18n::t(lang, "menu.view.fontDecrease"))
+            .accelerator("Cmd+-")
+            .build(app)?;
     let font_reset_item =
         MenuItemBuilder::with_id("font-reset", i18n::t(lang, "menu.view.fontReset"))
             .accelerator("Cmd+0")
@@ -192,10 +187,7 @@ mod tests {
         for lang in ["en", "zh-CN", "ja"] {
             for key in keys {
                 let v = i18n::t(lang, key);
-                assert_ne!(
-                    v, key,
-                    "lang={lang} key={key} 漏译（返回了 raw key）"
-                );
+                assert_ne!(v, key, "lang={lang} key={key} 漏译（返回了 raw key）");
                 assert!(!v.is_empty(), "lang={lang} key={key} 为空字符串");
             }
         }

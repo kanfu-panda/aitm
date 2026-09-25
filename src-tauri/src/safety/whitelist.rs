@@ -51,9 +51,7 @@ impl CompiledWhitelist {
 /// 含危险元字符的 cmd 直接不走白名单（防注入式绕过）。
 ///
 /// 注意：`|` 单独 contains 会被 `||` 命中两次，但都返回 true，逻辑没问题。
-const SHELL_METACHARS: &[&str] = &[
-    ";", "&&", "||", "|", "`", "$(", ">", "<",
-];
+const SHELL_METACHARS: &[&str] = &[";", "&&", "||", "|", "`", "$(", ">", "<"];
 
 fn has_shell_metachar(cmd: &str) -> bool {
     SHELL_METACHARS.iter().any(|m| cmd.contains(m))
@@ -293,10 +291,7 @@ mod tests {
         // 失败列表里有 [invalid 这条
         assert_eq!(errors.len(), 1, "应有 1 条编译失败：{:?}", errors);
         assert_eq!(errors[0].0, "[invalid");
-        assert!(
-            !errors[0].1.is_empty(),
-            "失败应有 error message"
-        );
+        assert!(!errors[0].1.is_empty(), "失败应有 error message");
 
         // 其他两条仍然能匹配
         assert_eq!(is_whitelisted(&compiled, "ls -la"), Some("ls *"));

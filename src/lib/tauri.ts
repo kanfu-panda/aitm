@@ -49,17 +49,25 @@ export async function sessionCurrentCwd(
   return await invoke<string | null>("session_current_cwd", { id });
 }
 
+/** 订阅所有 session 的输出 chunk（回调带会话 id）。返回 unlisten。 */
+export async function onAnySessionData(
+  cb: (sessionId: SessionId, bytes: Uint8Array) => void,
+): Promise<UnlistenFn> {
+  return await listen<SessionDataEvent>("session:data", (e) => {
+    const bin = atob(e.payload.bytes_base64);
+    const arr = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    cb(e.payload.session_id, arr);
+  });
+}
+
 /** 订阅某 session 的输出 chunk。返回 unlisten。 */
 export async function onSessionData(
   targetId: SessionId,
   cb: (bytes: Uint8Array) => void,
 ): Promise<UnlistenFn> {
-  return await listen<SessionDataEvent>("session:data", (e) => {
-    if (e.payload.session_id !== targetId) return;
-    const bin = atob(e.payload.bytes_base64);
-    const arr = new Uint8Array(bin.length);
-    for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
-    cb(arr);
+  return await onAnySessionData((sessionId, bytes) => {
+    if (sessionId === targetId) cb(bytes);
   });
 }
 
@@ -532,11 +540,23 @@ export async function onProvidersChanged(cb: () => void): Promise<UnlistenFn> {
 
 // === v0.5.0-A 通知系统 ===
 
+/**
+ * 通知来源。取值必须与后端 `NotificationSource` 的 serde 输出一致
+ * （`rename_all = "snake_case"`：`Osc9` → `"osc9"`，数字前**没有**下划线）。
+ */
+export type NotificationSource =
+  | "ai_tool_loop"
+  | "osc9"
+  | "osc99"
+  | "osc777"
+  | "bell";
+
+/** 后端 emit "notification:received" 的 payload；session_id 转 tabId 由订阅方做 */
 export interface NotificationReceivedPayload {
   session_id: string;
   level: "running" | "waiting" | "done" | "error";
   message: string;
-  source: "ai_tool_loop" | "osc_9" | "osc_99" | "osc_777" | "bell";
+  source: NotificationSource;
   timestamp_ms: number;
 }
 
@@ -592,6 +612,12 @@ export interface TabSnapshot {
    * 旧 snapshot 没有这个字段（后端 serde default 为 null），所以是可选的。
    */
   tmux_session_id?: string | null;
+  /**
+   * 是否是所在分屏当时选中的标签。重启时据此还原每个分屏各自选中哪个，
+   * 否则都会落到分屏的第一个标签上。旧 snapshot 没有这个字段（后端 serde
+   * default 为 false）。
+   */
+  group_active?: boolean;
 }
 
 export interface SessionSnapshot {

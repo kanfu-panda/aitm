@@ -202,7 +202,10 @@ fn end_fields(payload: &str) -> Option<(i32, u64)> {
     let (Some(code), Some(seq), None) = (fields.next(), fields.next(), fields.next()) else {
         return None;
     };
-    Some((code.trim().parse::<i32>().ok()?, seq.trim().parse::<u64>().ok()?))
+    Some((
+        code.trim().parse::<i32>().ok()?,
+        seq.trim().parse::<u64>().ok()?,
+    ))
 }
 
 /// 找出「我们刚写进去的那条命令」对应的钩子序号。
@@ -269,7 +272,10 @@ pub fn is_posix_shell(shell: &str) -> bool {
         .unwrap_or(shell)
         .to_ascii_lowercase();
     let base = base.strip_suffix(".exe").unwrap_or(&base);
-    matches!(base, "sh" | "bash" | "zsh" | "dash" | "ksh" | "mksh" | "ash")
+    matches!(
+        base,
+        "sh" | "bash" | "zsh" | "dash" | "ksh" | "mksh" | "ash"
+    )
 }
 
 /// 去掉 PTY 回显里带 sentinel 的那些行（喂给 LLM 前的清理）。
@@ -320,8 +326,14 @@ mod tests {
     fn 包装后含私有_osc_码与请求_id() {
         let w = wrap_command("ls -la", "deadbeef");
         assert!(w.contains("eval 'ls -la'"), "实际：{w}");
-        assert!(w.contains("\\033]6969;aitm-done;%s;deadbeef\\007"), "实际：{w}");
-        assert!(w.contains("\"$?\""), "必须取 $? 而不是 printf 自己的退出码：{w}");
+        assert!(
+            w.contains("\\033]6969;aitm-done;%s;deadbeef\\007"),
+            "实际：{w}"
+        );
+        assert!(
+            w.contains("\"$?\""),
+            "必须取 $? 而不是 printf 自己的退出码：{w}"
+        );
     }
 
     #[test]
@@ -394,7 +406,10 @@ mod tests {
     #[test]
     fn 字段数不对_不解析() {
         // 少一段
-        assert_eq!(scan_exit_code("\x1b]6969;aitm-done;0\x07", "abc12345"), None);
+        assert_eq!(
+            scan_exit_code("\x1b]6969;aitm-done;0\x07", "abc12345"),
+            None
+        );
         // 多一段
         assert_eq!(
             scan_exit_code("\x1b]6969;aitm-done;0;abc12345;x\x07", "abc12345"),

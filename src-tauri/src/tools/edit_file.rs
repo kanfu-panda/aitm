@@ -278,10 +278,7 @@ mod tests {
             .await;
         assert!(matches!(r, Err(ToolError::Blocked { .. })));
         // 未被改动
-        assert_eq!(
-            std::fs::read_to_string(&abs_outside).unwrap(),
-            "top secret"
-        );
+        assert_eq!(std::fs::read_to_string(&abs_outside).unwrap(), "top secret");
     }
 
     #[tokio::test]

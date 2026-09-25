@@ -19,10 +19,10 @@ use regex::Regex;
 /// - DCS / PM / APC: 都是 ESC + P/^/_ + ... + ST
 static ANSI_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(concat!(
-        r"\x1b\[[0-9;?<=>!]*[ -/]*[@-~]",                  // CSI
-        r"|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)",             // OSC
-        r"|\x1b[PX^_][^\x1b]*(?:\x1b\\|\x07)",             // DCS / PM / APC
-        r"|\x1b[@-Z\\-_]",                                  // 单字符 ESC
+        r"\x1b\[[0-9;?<=>!]*[ -/]*[@-~]",      // CSI
+        r"|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)", // OSC
+        r"|\x1b[PX^_][^\x1b]*(?:\x1b\\|\x07)", // DCS / PM / APC
+        r"|\x1b[@-Z\\-_]",                     // 单字符 ESC
     ))
     .expect("ANSI regex 必须能编译")
 });

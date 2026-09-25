@@ -13,9 +13,7 @@ use super::ProviderError;
 pub fn sse_from_response(
     resp: Response,
 ) -> impl Stream<Item = Result<eventsource_stream::Event, ProviderError>> {
-    let bytes_stream = resp
-        .bytes_stream()
-        .map_err(ProviderError::Http);
+    let bytes_stream = resp.bytes_stream().map_err(ProviderError::Http);
     bytes_stream
         .eventsource()
         .map_err(|e| ProviderError::Protocol(format!("SSE 解析: {e}")))

@@ -15,6 +15,7 @@ pub mod paths;
 pub mod repo_global;
 pub mod repo_project;
 pub mod schema;
+pub mod write_queue;
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -89,8 +90,8 @@ impl Default for AitmDb {
 fn open_and_migrate_global() -> Result<Connection> {
     let path = paths::global_db_path()?;
     ensure_parent_dir(&path)?;
-    let conn = Connection::open(&path)
-        .with_context(|| format!("打开全局 db 失败: {}", path.display()))?;
+    let conn =
+        Connection::open(&path).with_context(|| format!("打开全局 db 失败: {}", path.display()))?;
     schema::migrate_global(&conn)?;
     Ok(conn)
 }
@@ -98,8 +99,8 @@ fn open_and_migrate_global() -> Result<Connection> {
 fn open_and_migrate_project(bucket_id: &str) -> Result<Connection> {
     let path = paths::project_db_path(bucket_id)?;
     ensure_parent_dir(&path)?;
-    let conn = Connection::open(&path)
-        .with_context(|| format!("打开项目 db 失败: {}", path.display()))?;
+    let conn =
+        Connection::open(&path).with_context(|| format!("打开项目 db 失败: {}", path.display()))?;
     schema::migrate_project(&conn)?;
     Ok(conn)
 }
@@ -172,12 +173,11 @@ mod tests {
         with_home(|tmp| {
             let db = AitmDb::new();
             db.with_global(|conn| {
-                let cnt: i64 = conn
-                    .query_row(
-                        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='projects'",
-                        [],
-                        |r| r.get(0),
-                    )?;
+                let cnt: i64 = conn.query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='projects'",
+                    [],
+                    |r| r.get(0),
+                )?;
                 assert_eq!(cnt, 1);
                 Ok(())
             })
@@ -197,11 +197,12 @@ mod tests {
             })
             .unwrap();
 
-            assert!(tmp
-                .join("projects")
-                .join("test-bucket")
-                .join("data.db")
-                .exists());
+            assert!(
+                tmp.join("projects")
+                    .join("test-bucket")
+                    .join("data.db")
+                    .exists()
+            );
         });
     }
 

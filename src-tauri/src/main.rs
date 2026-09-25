@@ -4,7 +4,7 @@
 use std::env;
 
 fn main() {
-    // CLI 子命令路由（spec §14：aitm init / aitm doctor 等）
+    // CLI 子命令路由（spec §14）。目前只有 init；未实现的子命令不预留空壳入口
     let args: Vec<String> = env::args().collect();
     match args.get(1).map(String::as_str) {
         Some("init") => {
@@ -13,10 +13,6 @@ fn main() {
             let rest: Vec<String> = args.iter().skip(2).cloned().collect();
             let code = aitm_lib::cli::run_init(&rest);
             std::process::exit(code);
-        }
-        Some("doctor") => {
-            eprintln!("aitm doctor: 尚未实现");
-            std::process::exit(2);
         }
         Some("--version") | Some("-V") => {
             println!("aitm {}", env!("CARGO_PKG_VERSION"));

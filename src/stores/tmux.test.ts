@@ -14,6 +14,7 @@ const tmuxKillSessionMock = vi.fn();
 const tmuxInterruptSessionMock = vi.fn();
 const tmuxNewSessionMock = vi.fn();
 const tmuxRenameSessionMock = vi.fn();
+const tmuxSessionOfTabMock = vi.fn();
 
 vi.mock("../lib/tauri", async (orig) => {
   const real = await orig<typeof import("../lib/tauri")>();
@@ -27,6 +28,7 @@ vi.mock("../lib/tauri", async (orig) => {
       tmuxNewSessionMock(name, cwd),
     tmuxRenameSession: (id: string, name: string) =>
       tmuxRenameSessionMock(id, name),
+    tmuxSessionOfTab: (id: string) => tmuxSessionOfTabMock(id),
   };
 });
 
@@ -223,6 +225,98 @@ describe("tmux store：新输出提示、新建、改名", () => {
     expect(s.sessions[0].name).toBe("new");
     expect(s.seen["$7"]).toBe(500);
     expect(hasNewOutput(s.sessions[0], s.seen)).toBe(false);
+  });
+
+  it("应该_当面板改名成功时_同步已打开的该会话标签标题", async () => {
+    tmuxListSessionsMock.mockResolvedValue([session("old", 1, 500, "$7")]);
+    await useTmuxStore.getState().refresh();
+    const { addTab, setTitle } = useTabsStore.getState();
+    const follow = addTab({ title: "old", tmuxSessionId: "$7" });
+    // 用户手动起过名字的标签不该被覆盖
+    const custom = addTab({ title: "old", tmuxSessionId: "$7" });
+    setTitle(custom, "我的构建机");
+    const unrelated = addTab({ title: "old" });
+    tmuxRenameSessionMock.mockResolvedValue(undefined);
+    tmuxListSessionsMock.mockResolvedValue([session("new", 1, 500, "$7")]);
+
+    await useTmuxStore.getState().renameSession("$7", "new");
+
+    const title = (id: string) =>
+      useTabsStore.getState().tabs.find((t) => t.id === id)!.title;
+    expect(title(follow)).toBe("new");
+    expect(title(custom)).toBe("我的构建机");
+    expect(title(unrelated)).toBe("old");
+    useTabsStore.setState({ tabs: [], activeId: null, unreadByTab: {} });
+  });
+
+  it("应该_当改名失败时_不改标签标题", async () => {
+    tmuxListSessionsMock.mockResolvedValue([session("old", 1, 500, "$7")]);
+    await useTmuxStore.getState().refresh();
+    const id = useTabsStore
+      .getState()
+      .addTab({ title: "old", tmuxSessionId: "$7" });
+    tmuxRenameSessionMock.mockRejectedValue(new Error("duplicate session"));
+
+    await expect(
+      useTmuxStore.getState().renameSession("$7", "new"),
+    ).rejects.toThrow();
+
+    expect(useTabsStore.getState().tabs.find((t) => t.id === id)!.title).toBe(
+      "old",
+    );
+    useTabsStore.setState({ tabs: [], activeId: null, unreadByTab: {} });
+  });
+
+  it("应该_当有会话被_aitm_之外未知的客户端接着时_查一遍标签里有没有手敲的接入", async () => {
+    tmuxAvailableMock.mockResolvedValue(true);
+    tmuxSessionOfTabMock.mockResolvedValue({ id: "$5", name: "farm" });
+    const id = useTabsStore.getState().addTab();
+    useTabsStore.getState().setSessionId(id, "s-1");
+    tmuxListSessionsMock.mockResolvedValue([session("farm", 1, 500, "$5")]);
+
+    await useTmuxStore.getState().refresh();
+
+    await vi.waitFor(() =>
+      expect(
+        useTabsStore.getState().tabs.find((t) => t.id === id)!.tmuxSessionId,
+      ).toBe("$5"),
+    );
+    useTabsStore.setState({ tabs: [], activeId: null, unreadByTab: {} });
+  });
+
+  it("应该_当各会话的接入情况与上次刷新相同时_不重复识别", async () => {
+    // 面板每 3 秒刷新一次；会话在别的终端里一直接着时，不能每次都 fork 进程去识别
+    tmuxAvailableMock.mockResolvedValue(true);
+    tmuxSessionOfTabMock.mockReset();
+    tmuxSessionOfTabMock.mockResolvedValue(null);
+    const id = useTabsStore.getState().addTab();
+    useTabsStore.getState().setSessionId(id, "s-1");
+    tmuxListSessionsMock.mockResolvedValue([session("elsewhere", 1, 500, "$8")]);
+
+    await useTmuxStore.getState().refresh();
+    await useTmuxStore.getState().refresh({ silent: true });
+    await vi.waitFor(() => expect(tmuxSessionOfTabMock).toHaveBeenCalledTimes(1));
+
+    // 有人接入（客户端数变了）→ 再识别一次
+    tmuxListSessionsMock.mockResolvedValue([session("elsewhere", 2, 500, "$8")]);
+    await useTmuxStore.getState().refresh({ silent: true });
+    await vi.waitFor(() => expect(tmuxSessionOfTabMock).toHaveBeenCalledTimes(2));
+    useTabsStore.setState({ tabs: [], activeId: null, unreadByTab: {} });
+  });
+
+  it("应该_当接着的会话都已记在标签上时_不再逐个查询", async () => {
+    tmuxAvailableMock.mockResolvedValue(true);
+    tmuxSessionOfTabMock.mockReset();
+    useTabsStore.getState().addTab({ title: "farm", tmuxSessionId: "$5" });
+    tmuxListSessionsMock.mockResolvedValue([
+      session("farm", 1, 500, "$5"),
+      session("idle", 0, 500, "$6"),
+    ]);
+
+    await useTmuxStore.getState().refresh();
+
+    expect(tmuxSessionOfTabMock).not.toHaveBeenCalled();
+    useTabsStore.setState({ tabs: [], activeId: null, unreadByTab: {} });
   });
 
   it("UT-S10 newSession 调接口、刷新列表并返回新 id", async () => {

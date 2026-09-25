@@ -306,6 +306,38 @@ describe("TerminalPaneGroup", () => {
     expect(inactiveTab.className).toContain("min-w-[104px]");
   });
 
+  it("应该_当标签接着_tmux_会话时_标题前显示_tmux_图标并在悬停提示里写明", () => {
+    useTabsStore.setState({
+      tabs: [
+        {
+          id: "t-tmux",
+          title: "build-farm",
+          sessionId: "s1",
+          auto_title: false,
+          tmuxSessionId: "$1",
+        },
+        { id: "t-plain", title: "~/proj", sessionId: "s2", auto_title: true },
+      ],
+      activeId: "t-tmux",
+      unreadByTab: {},
+    });
+    const group = makeGroup({
+      tab_ids: ["t-tmux", "t-plain"],
+      active_tab_id: "t-tmux",
+    });
+    render(<TerminalPaneGroup group={group} />);
+
+    expect(screen.getByTestId("tab-tmux-icon-t-tmux")).toBeTruthy();
+    expect(
+      screen.getByTestId("terminal-pane-group-tab-t-tmux").getAttribute("title"),
+    ).toBe("tmux 会话：build-farm");
+    // 普通标签不受影响
+    expect(screen.queryByTestId("tab-tmux-icon-t-plain")).toBeNull();
+    expect(
+      screen.getByTestId("terminal-pane-group-tab-t-plain").getAttribute("title"),
+    ).toBeNull();
+  });
+
   it("group.tab_ids=[t1]，全局 tabs=[t1,t2] → 仅显示 t1（真独占，不 fallback）", () => {
     useTabsStore.setState({
       tabs: [
@@ -803,5 +835,162 @@ describe("TerminalPaneGroup — 关闭接着 tmux 的标签", () => {
       expect(screen.queryByTestId("terminal-pane-group-tab-t1")).toBeNull(),
     );
     warnSpy.mockRestore();
+  });
+});
+
+/* =============================================================================
+ * 批量关闭（关闭其他 / 右侧 / 全部）同样要确认运行中的命令
+ * ========================================================================== */
+describe("TerminalPaneGroup — 批量关闭前确认运行中的命令", () => {
+  function renderThreeTabs() {
+    useTabsStore.setState({
+      tabs: [
+        { id: "t1", title: "保留的", sessionId: "s1", auto_title: true },
+        { id: "t2", title: "在跑构建", sessionId: "s2", auto_title: true },
+        { id: "t3", title: "空闲", sessionId: "s3", auto_title: true },
+      ],
+      activeId: "t1",
+      unreadByTab: {},
+    });
+    usePaneLayoutStore.setState({
+      root: {
+        kind: "leaf",
+        group: {
+          id: "g-batch",
+          type: "terminal",
+          tab_ids: ["t1", "t2", "t3"],
+          active_tab_id: "t1",
+        },
+      },
+      active_group_id: "g-batch",
+    });
+    const root = usePaneLayoutStore.getState().root;
+    if (root.kind !== "leaf") throw new Error("expected leaf");
+    render(<TerminalPaneGroup group={root.group} />);
+  }
+
+  function closeOthersOf(tabId: string) {
+    fireEvent.contextMenu(screen.getByTestId(`terminal-pane-group-tab-${tabId}`));
+    fireEvent.click(screen.getByTestId("terminal-tab-ctx-close-others"));
+  }
+
+  const tabIds = () => useTabsStore.getState().tabs.map((t) => t.id);
+
+  it("应该_当要关的标签里有运行中命令时_先弹确认框且一个都不关", async () => {
+    mockHasRunning.mockImplementation(async (sid: string) => sid === "s2");
+    renderThreeTabs();
+
+    closeOthersOf("t1");
+
+    const dialog = await screen.findByTestId("confirm-action-dialog");
+    expect(dialog.textContent).toContain("在跑构建");
+    expect(tabIds()).toEqual(["t1", "t2", "t3"]);
+  });
+
+  it("应该_确认后_把要关的标签全部关掉", async () => {
+    mockHasRunning.mockImplementation(async (sid: string) => sid === "s2");
+    renderThreeTabs();
+    closeOthersOf("t1");
+
+    fireEvent.click(await screen.findByTestId("confirm-action-ok"));
+
+    await waitFor(() => expect(tabIds()).toEqual(["t1"]));
+  });
+
+  it("应该_取消后_一个都不关", async () => {
+    mockHasRunning.mockImplementation(async (sid: string) => sid === "s2");
+    renderThreeTabs();
+    closeOthersOf("t1");
+
+    fireEvent.click(await screen.findByTestId("confirm-action-cancel"));
+
+    await waitFor(() =>
+      expect(screen.queryByTestId("confirm-action-dialog")).toBeNull(),
+    );
+    expect(tabIds()).toEqual(["t1", "t2", "t3"]);
+  });
+
+  it("应该_当都没有运行中命令时_不弹框直接关", async () => {
+    renderThreeTabs();
+
+    closeOthersOf("t1");
+
+    await waitFor(() => expect(tabIds()).toEqual(["t1"]));
+    expect(screen.queryByTestId("confirm-action-dialog")).toBeNull();
+  });
+
+  it("应该_接着_tmux_的标签不算运行中_关掉只断开连接", async () => {
+    // tmux 客户端本身就是前台进程，按"运行中"算会让批量关闭总是弹框
+    mockHasRunning.mockResolvedValue(true);
+    mockTmuxOfTab.mockResolvedValue({ id: "$1", name: "build" });
+    renderThreeTabs();
+
+    closeOthersOf("t1");
+
+    await waitFor(() => expect(tabIds()).toEqual(["t1"]));
+    expect(screen.queryByTestId("confirm-action-dialog")).toBeNull();
+  });
+});
+
+describe("TerminalPaneGroup — 标签多到放不下时可滚动", () => {
+  const many = Array.from({ length: 12 }, (_, i) => ({
+    id: `t${i}`,
+    title: `tab-${i}`,
+    sessionId: `s${i}`,
+    auto_title: true,
+  }));
+  const scrollIntoView = vi.fn();
+  const scrollBy = vi.fn();
+  beforeEach(() => {
+    scrollIntoView.mockReset();
+    scrollBy.mockReset();
+    // jsdom 没有布局，这两个方法都不存在
+    Element.prototype.scrollIntoView = scrollIntoView;
+    Element.prototype.scrollBy = scrollBy as unknown as Element["scrollBy"];
+    useTabsStore.setState({ tabs: many, activeId: "t0", unreadByTab: {} });
+  });
+
+  function renderMany(active = "t0") {
+    return render(
+      <TerminalPaneGroup
+        group={makeGroup({ tab_ids: many.map((t) => t.id), active_tab_id: active })}
+      />,
+    );
+  }
+
+  it("应该_标签放在可横向滚动的容器里_新建按钮在容器外始终可见", () => {
+    renderMany();
+    const strip = screen.getByTestId("terminal-pane-group-tabstrip");
+    expect(strip.className).toContain("overflow-x-auto");
+    expect(within(strip).getByTestId("terminal-pane-group-tab-t11")).toBeTruthy();
+    const add = screen.getByRole("button", { name: "新建标签" });
+    expect(strip.contains(add)).toBe(false);
+  });
+
+  it("应该_当切到某个标签时_把它滚进可视区", () => {
+    const { rerender } = renderMany("t0");
+    scrollIntoView.mockClear();
+    rerender(
+      <TerminalPaneGroup
+        group={makeGroup({ tab_ids: many.map((t) => t.id), active_tab_id: "t11" })}
+      />,
+    );
+    expect(scrollIntoView).toHaveBeenCalled();
+    const target = scrollIntoView.mock.instances.at(-1) as unknown as HTMLElement;
+    expect(target.dataset.testid).toBe("terminal-pane-group-tab-t11");
+  });
+
+  it("应该_在标签栏上滚竖向滚轮时_横向滚动标签", () => {
+    renderMany();
+    const strip = screen.getByTestId("terminal-pane-group-tabstrip");
+    fireEvent.wheel(strip, { deltaY: 120, deltaX: 0 });
+    expect(scrollBy).toHaveBeenCalledWith({ left: 120 });
+  });
+
+  it("应该_触控板本身在横向滚动时_不再额外处理", () => {
+    renderMany();
+    const strip = screen.getByTestId("terminal-pane-group-tabstrip");
+    fireEvent.wheel(strip, { deltaY: 3, deltaX: 40 });
+    expect(scrollBy).not.toHaveBeenCalled();
   });
 });

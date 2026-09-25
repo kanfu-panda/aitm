@@ -1,9 +1,9 @@
 //! OpenAI 兼容 provider 集成测试。
 
+use aitm_lib::providers::LlmProvider;
 use aitm_lib::providers::openai_compat::{OpenAICompatClient, OpenAICompatConfig};
 use aitm_lib::providers::presets::Preset;
 use aitm_lib::providers::types::*;
-use aitm_lib::providers::LlmProvider;
 use futures::StreamExt;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -37,11 +37,14 @@ data: [DONE]\n\n\
         models: vec![],
     };
     let _ = &mut cfg;
-    let client = OpenAICompatClient::new(cfg);
+    let client = OpenAICompatClient::new(cfg).unwrap();
 
     let req = ChatRequest {
         model: "deepseek-chat".into(),
-        messages: vec![Message { role: Role::User, content: MessageContent::Text("hi".into()) }],
+        messages: vec![Message {
+            role: Role::User,
+            content: MessageContent::Text("hi".into()),
+        }],
         tools: vec![],
         system: None,
         max_tokens: 100,
@@ -59,8 +62,19 @@ data: [DONE]\n\n\
         })
         .collect();
     assert_eq!(text, "Hi there");
-    assert!(chunks.iter().any(|c| matches!(c, ChatChunk::Done { stop_reason: StopReason::EndTurn })));
-    assert!(chunks.iter().any(|c| matches!(c, ChatChunk::Usage { input_tokens: 5, output_tokens: 3 })));
+    assert!(chunks.iter().any(|c| matches!(
+        c,
+        ChatChunk::Done {
+            stop_reason: StopReason::EndTurn
+        }
+    )));
+    assert!(chunks.iter().any(|c| matches!(
+        c,
+        ChatChunk::Usage {
+            input_tokens: 5,
+            output_tokens: 3
+        }
+    )));
 }
 
 #[tokio::test]
@@ -92,7 +106,7 @@ data: [DONE]\n\n\
         api_key: "sk-x".into(),
         models: vec![],
     };
-    let client = OpenAICompatClient::new(cfg);
+    let client = OpenAICompatClient::new(cfg).unwrap();
 
     let req = ChatRequest {
         model: "deepseek-chat".into(),
@@ -119,10 +133,17 @@ data: [DONE]\n\n\
         })
         .collect();
     assert_eq!(args, r#"{"a":1}"#);
-    assert!(chunks.iter().any(|c| matches!(c, ChatChunk::ToolUseEnd { .. })));
-    assert!(chunks
-        .iter()
-        .any(|c| matches!(c, ChatChunk::Done { stop_reason: StopReason::ToolUse })));
+    assert!(
+        chunks
+            .iter()
+            .any(|c| matches!(c, ChatChunk::ToolUseEnd { .. }))
+    );
+    assert!(chunks.iter().any(|c| matches!(
+        c,
+        ChatChunk::Done {
+            stop_reason: StopReason::ToolUse
+        }
+    )));
 }
 
 /// Qwen DashScope 海外版的 streaming tool_calls 在第一个 chunk 给真实 id，
@@ -160,7 +181,7 @@ data: [DONE]\n\n\
         api_key: "sk-x".into(),
         models: vec![],
     };
-    let client = OpenAICompatClient::new(cfg);
+    let client = OpenAICompatClient::new(cfg).unwrap();
 
     let req = ChatRequest {
         model: "qwen3-coder-plus".into(),
@@ -183,8 +204,11 @@ data: [DONE]\n\n\
         ChatChunk::ToolUseStart { call_id, .. } => Some(call_id.clone()),
         _ => None,
     });
-    assert_eq!(start_call_id.as_deref(), Some("call_real"),
-        "Start 事件必须用第一个 chunk 的真 id，不能被后续空字符串 id 覆盖");
+    assert_eq!(
+        start_call_id.as_deref(),
+        Some("call_real"),
+        "Start 事件必须用第一个 chunk 的真 id，不能被后续空字符串 id 覆盖"
+    );
 
     // 所有 ArgsDelta 必须 emit 给同一个真 call_id（不能是空串）
     let arg_call_ids: std::collections::HashSet<String> = chunks
@@ -194,7 +218,11 @@ data: [DONE]\n\n\
             _ => None,
         })
         .collect();
-    assert_eq!(arg_call_ids.len(), 1, "所有 ArgsDelta 应共享同一 call_id，不能因后续空 id 而分裂");
+    assert_eq!(
+        arg_call_ids.len(),
+        1,
+        "所有 ArgsDelta 应共享同一 call_id，不能因后续空 id 而分裂"
+    );
     assert_eq!(arg_call_ids.iter().next().unwrap(), "call_real");
 
     // 拼接后的 args 必须是合法 JSON 且含 dir 字段
@@ -242,14 +270,20 @@ async fn openai_429_限流() {
         .await;
 
     let cfg = OpenAICompatConfig {
-        id: "x".into(), display_name: "x".into(),
+        id: "x".into(),
+        display_name: "x".into(),
         base_url: mock.uri(),
-        api_key: "k".into(), models: vec![],
+        api_key: "k".into(),
+        models: vec![],
     };
-    let client = OpenAICompatClient::new(cfg);
+    let client = OpenAICompatClient::new(cfg).unwrap();
     let req = ChatRequest {
-        model: "x".into(), messages: vec![], tools: vec![],
-        system: None, max_tokens: 100, temperature: 1.0,
+        model: "x".into(),
+        messages: vec![],
+        tools: vec![],
+        system: None,
+        max_tokens: 100,
+        temperature: 1.0,
     };
     let r = client.stream_chat(req).await;
     assert!(matches!(r, Err(ProviderError::RateLimited)));

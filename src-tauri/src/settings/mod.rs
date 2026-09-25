@@ -524,7 +524,10 @@ mod tests {
 
     #[test]
     fn 默认光标为_block() {
-        assert_eq!(AppSettings::default().terminal.cursor_style, CursorStyle::Block);
+        assert_eq!(
+            AppSettings::default().terminal.cursor_style,
+            CursorStyle::Block
+        );
     }
 
     #[test]
@@ -665,17 +668,9 @@ font_size = 14
 
         let toml_str = toml::to_string(&s).unwrap();
         // 关键断言：必须落地为顶层 [safety] 段，不是 [safety.map] 或 inline。
-        assert!(
-            toml_str.contains("[safety]"),
-            "实际 toml:\n{}",
-            toml_str
-        );
+        assert!(toml_str.contains("[safety]"), "实际 toml:\n{}", toml_str);
         // whitelist 应该是数组形式
-        assert!(
-            toml_str.contains("whitelist"),
-            "实际 toml:\n{}",
-            toml_str
-        );
+        assert!(toml_str.contains("whitelist"), "实际 toml:\n{}", toml_str);
         assert!(
             toml_str.contains("show_low_auto_approved"),
             "实际 toml:\n{}",
@@ -785,11 +780,7 @@ suspend_timer_minutes = 10
         s.browser.suspend_timer_minutes = 10;
 
         let toml_str = toml::to_string(&s).unwrap();
-        assert!(
-            toml_str.contains("[browser]"),
-            "实际 toml:\n{}",
-            toml_str
-        );
+        assert!(toml_str.contains("[browser]"), "实际 toml:\n{}", toml_str);
         assert!(toml_str.contains("max_active_tabs = 5"));
         assert!(toml_str.contains("suspend_timer_minutes = 10"));
 
@@ -847,11 +838,7 @@ font_size = 14
         s.ui.activity_bar_position = ActivityBarPosition::Bottom;
 
         let toml_str = toml::to_string(&s).unwrap();
-        assert!(
-            toml_str.contains("[ui]"),
-            "实际 toml:\n{}",
-            toml_str
-        );
+        assert!(toml_str.contains("[ui]"), "实际 toml:\n{}", toml_str);
         assert!(
             toml_str.contains("activity_bar_position = \"bottom\""),
             "实际 toml:\n{}",
@@ -923,7 +910,10 @@ font_size = 14
         // serde rename_all = "lowercase" 应让三个变体落地为小写字符串
         assert_eq!(serde_json::to_string(&ThemeMode::Auto).unwrap(), "\"auto\"");
         assert_eq!(serde_json::to_string(&ThemeMode::Dark).unwrap(), "\"dark\"");
-        assert_eq!(serde_json::to_string(&ThemeMode::Light).unwrap(), "\"light\"");
+        assert_eq!(
+            serde_json::to_string(&ThemeMode::Light).unwrap(),
+            "\"light\""
+        );
 
         let auto: ThemeMode = serde_json::from_str("\"auto\"").unwrap();
         assert_eq!(auto, ThemeMode::Auto);
@@ -969,7 +959,11 @@ activity_bar_position = "left"
 "#;
         let s: AppSettings = toml::from_str(toml_str).unwrap();
         assert_eq!(s.ui.activity_bar_position, ActivityBarPosition::Left);
-        assert_eq!(s.ui.theme_mode, ThemeMode::Dark, "缺 theme_mode 应默认 dark");
+        assert_eq!(
+            s.ui.theme_mode,
+            ThemeMode::Dark,
+            "缺 theme_mode 应默认 dark"
+        );
     }
 
     #[test]
@@ -1121,7 +1115,10 @@ font_size = 14
     #[test]
     fn privacy_settings_默认_opt_in_为_true() {
         let s = PrivacySettings::default();
-        assert!(s.analytics_opt_in, "默认应启用匿名使用统计（用户可在 UI 关）");
+        assert!(
+            s.analytics_opt_in,
+            "默认应启用匿名使用统计（用户可在 UI 关）"
+        );
     }
 
     #[test]
@@ -1141,7 +1138,10 @@ font_size = 14
 "#;
         let s: AppSettings = toml::from_str(toml_str).unwrap();
         assert_eq!(s.terminal.font_size, 14);
-        assert!(s.privacy.analytics_opt_in, "缺 [privacy] 段应默认 opt_in=true");
+        assert!(
+            s.privacy.analytics_opt_in,
+            "缺 [privacy] 段应默认 opt_in=true"
+        );
     }
 
     #[test]
@@ -1152,7 +1152,10 @@ font_size = 14
 [privacy]
 "#;
         let s: AppSettings = toml::from_str(toml_str).unwrap();
-        assert!(s.privacy.analytics_opt_in, "缺 analytics_opt_in 字段应默认 true");
+        assert!(
+            s.privacy.analytics_opt_in,
+            "缺 analytics_opt_in 字段应默认 true"
+        );
     }
 
     #[test]
@@ -1160,11 +1163,7 @@ font_size = 14
         // 默认值经 toml ser/de 后应该完全相等。
         let s = AppSettings::default();
         let toml_str = toml::to_string(&s).unwrap();
-        assert!(
-            toml_str.contains("[privacy]"),
-            "实际 toml:\n{}",
-            toml_str
-        );
+        assert!(toml_str.contains("[privacy]"), "实际 toml:\n{}", toml_str);
         assert!(
             toml_str.contains("analytics_opt_in = true"),
             "实际 toml:\n{}",
@@ -1407,7 +1406,10 @@ open_files = ["/proj/foo.ts"]
         let mut s = AppSettings::default();
         s.editor.font_size = 18;
         let toml_str = toml::to_string(&s).unwrap();
-        assert!(toml_str.contains("font_size = 18"), "toml 应含 font_size = 18\n{toml_str}");
+        assert!(
+            toml_str.contains("font_size = 18"),
+            "toml 应含 font_size = 18\n{toml_str}"
+        );
         let back: AppSettings = toml::from_str(&toml_str).unwrap();
         assert_eq!(back.editor.font_size, 18);
     }
@@ -1500,11 +1502,7 @@ open_files = ["/a/foo.ts"]
         s.editor.active_file = Some("/proj/a.ts".to_string());
 
         let toml_str = toml::to_string(&s).unwrap();
-        assert!(
-            toml_str.contains("[editor]"),
-            "实际 toml:\n{}",
-            toml_str,
-        );
+        assert!(toml_str.contains("[editor]"), "实际 toml:\n{}", toml_str,);
         assert!(toml_str.contains("open_files"));
         assert!(toml_str.contains("active_file = \"/proj/a.ts\""));
 
@@ -1515,10 +1513,7 @@ open_files = ["/a/foo.ts"]
     #[test]
     fn editor_active_file_往返保留() {
         let mut s = AppSettings::default();
-        s.editor.open_files = vec![
-            "/x/foo.ts".to_string(),
-            "/x/bar.rs".to_string(),
-        ];
+        s.editor.open_files = vec!["/x/foo.ts".to_string(), "/x/bar.rs".to_string()];
         s.editor.active_file = Some("/x/bar.rs".to_string());
 
         let toml_str = toml::to_string(&s).unwrap();
@@ -1637,7 +1632,8 @@ font_size = 14
     fn keybindings_往返保留_单条覆盖() {
         // 用户改 Cmd+T → Cmd+Shift+T 后落 TOML 再读回应保留。
         let mut s = AppSettings::default();
-        s.ui.keybindings.insert("newTab".into(), "Cmd+Shift+T".into());
+        s.ui.keybindings
+            .insert("newTab".into(), "Cmd+Shift+T".into());
 
         let toml_str = toml::to_string(&s).unwrap();
         assert!(
@@ -1648,23 +1644,38 @@ font_size = 14
         assert!(toml_str.contains("newTab"));
 
         let back: AppSettings = toml::from_str(&toml_str).unwrap();
-        assert_eq!(back.ui.keybindings.get("newTab"), Some(&"Cmd+Shift+T".to_string()));
+        assert_eq!(
+            back.ui.keybindings.get("newTab"),
+            Some(&"Cmd+Shift+T".to_string())
+        );
     }
 
     #[test]
     fn keybindings_往返保留_多条覆盖() {
         // 多条覆盖（含特殊字符 \\ 和 ,）round-trip 必须全保留。
         let mut s = AppSettings::default();
-        s.ui.keybindings.insert("newTab".into(), "Cmd+Shift+T".into());
-        s.ui.keybindings.insert("splitVertical".into(), "Cmd+\\".into());
-        s.ui.keybindings.insert("openSettings".into(), "Cmd+,".into());
+        s.ui.keybindings
+            .insert("newTab".into(), "Cmd+Shift+T".into());
+        s.ui.keybindings
+            .insert("splitVertical".into(), "Cmd+\\".into());
+        s.ui.keybindings
+            .insert("openSettings".into(), "Cmd+,".into());
 
         let toml_str = toml::to_string(&s).unwrap();
         let back: AppSettings = toml::from_str(&toml_str).unwrap();
         assert_eq!(back.ui.keybindings.len(), 3);
-        assert_eq!(back.ui.keybindings.get("newTab"), Some(&"Cmd+Shift+T".to_string()));
-        assert_eq!(back.ui.keybindings.get("splitVertical"), Some(&"Cmd+\\".to_string()));
-        assert_eq!(back.ui.keybindings.get("openSettings"), Some(&"Cmd+,".to_string()));
+        assert_eq!(
+            back.ui.keybindings.get("newTab"),
+            Some(&"Cmd+Shift+T".to_string())
+        );
+        assert_eq!(
+            back.ui.keybindings.get("splitVertical"),
+            Some(&"Cmd+\\".to_string())
+        );
+        assert_eq!(
+            back.ui.keybindings.get("openSettings"),
+            Some(&"Cmd+,".to_string())
+        );
     }
 
     #[test]

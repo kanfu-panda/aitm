@@ -149,12 +149,7 @@ fn map_status(s: git2::Status) -> GitStatus {
     if s.contains(S::INDEX_NEW) {
         return GitStatus::Added;
     }
-    if s.intersects(
-        S::INDEX_MODIFIED
-            | S::WT_MODIFIED
-            | S::INDEX_TYPECHANGE
-            | S::WT_TYPECHANGE,
-    ) {
+    if s.intersects(S::INDEX_MODIFIED | S::WT_MODIFIED | S::INDEX_TYPECHANGE | S::WT_TYPECHANGE) {
         return GitStatus::Modified;
     }
     if s.contains(S::IGNORED) {
@@ -347,7 +342,10 @@ mod tests {
             .join("tracked.txt")
             .to_string_lossy()
             .into_owned();
-        assert_eq!(out[0].path, expected, "git_status 输出应等于 canonical cwd join 文件名");
+        assert_eq!(
+            out[0].path, expected,
+            "git_status 输出应等于 canonical cwd join 文件名"
+        );
     }
 
     /// HR4-7 关键场景：cwd 路径包含 symlink（macOS 上 /tmp → /private/tmp，
@@ -441,10 +439,7 @@ mod tests {
         );
 
         // normal.txt 仍是 Untracked（ignored 不污染普通 untracked 判定）
-        let normal_entry = out
-            .iter()
-            .find(|e| e.path.ends_with("normal.txt"))
-            .unwrap();
+        let normal_entry = out.iter().find(|e| e.path.ends_with("normal.txt")).unwrap();
         assert_eq!(normal_entry.status, GitStatus::Untracked);
     }
 

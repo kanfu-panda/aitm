@@ -12,7 +12,7 @@
 //!   命令直接 `?` 透传。
 
 use anyhow::{Context, Result};
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 
 /// 一行 `conversations`。
 ///
@@ -217,9 +217,7 @@ pub mod messages {
         kind: &str,
         payload_json: &str,
     ) -> Result<(i64, i64)> {
-        let tx = conn
-            .unchecked_transaction()
-            .context("开启事务失败")?;
+        let tx = conn.unchecked_transaction().context("开启事务失败")?;
 
         let next_seq: i64 = tx
             .query_row(

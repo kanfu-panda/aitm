@@ -2,8 +2,8 @@
 //!
 //! 用户用 `make_config` 加 API key 即可快速创建客户端。
 
-use super::openai_compat::OpenAICompatConfig;
 use super::ModelInfo;
+use super::openai_compat::OpenAICompatConfig;
 
 /// 预设标识符。新增预设在这里加。
 #[derive(Debug, Clone, Copy)]
@@ -62,25 +62,69 @@ impl Preset {
     pub fn models(&self) -> Vec<ModelInfo> {
         match self {
             Self::DeepSeek => vec![
-                ModelInfo { id: "deepseek-chat".into(), display_name: "DeepSeek Chat".into(), context_window: 128_000 },
-                ModelInfo { id: "deepseek-coder".into(), display_name: "DeepSeek Coder".into(), context_window: 128_000 },
+                ModelInfo {
+                    id: "deepseek-chat".into(),
+                    display_name: "DeepSeek Chat".into(),
+                    context_window: 128_000,
+                },
+                ModelInfo {
+                    id: "deepseek-coder".into(),
+                    display_name: "DeepSeek Coder".into(),
+                    context_window: 128_000,
+                },
             ],
             Self::QwenDashScope => vec![
-                ModelInfo { id: "qwen3-coder-plus".into(), display_name: "Qwen3 Coder Plus".into(), context_window: 128_000 },
-                ModelInfo { id: "qwen-max".into(), display_name: "Qwen Max".into(), context_window: 128_000 },
-                ModelInfo { id: "qwen-plus".into(), display_name: "Qwen Plus".into(), context_window: 128_000 },
+                ModelInfo {
+                    id: "qwen3-coder-plus".into(),
+                    display_name: "Qwen3 Coder Plus".into(),
+                    context_window: 128_000,
+                },
+                ModelInfo {
+                    id: "qwen-max".into(),
+                    display_name: "Qwen Max".into(),
+                    context_window: 128_000,
+                },
+                ModelInfo {
+                    id: "qwen-plus".into(),
+                    display_name: "Qwen Plus".into(),
+                    context_window: 128_000,
+                },
             ],
             Self::Zhipu => vec![
-                ModelInfo { id: "glm-4.6".into(), display_name: "GLM 4.6".into(), context_window: 128_000 },
-                ModelInfo { id: "glm-4-air".into(), display_name: "GLM 4 Air".into(), context_window: 128_000 },
+                ModelInfo {
+                    id: "glm-4.6".into(),
+                    display_name: "GLM 4.6".into(),
+                    context_window: 128_000,
+                },
+                ModelInfo {
+                    id: "glm-4-air".into(),
+                    display_name: "GLM 4 Air".into(),
+                    context_window: 128_000,
+                },
             ],
             Self::MoonshotKimi => vec![
-                ModelInfo { id: "kimi-k2-0905-preview".into(), display_name: "Kimi K2".into(), context_window: 128_000 },
-                ModelInfo { id: "moonshot-v1-32k".into(), display_name: "Moonshot V1 32K".into(), context_window: 32_000 },
+                ModelInfo {
+                    id: "kimi-k2-0905-preview".into(),
+                    display_name: "Kimi K2".into(),
+                    context_window: 128_000,
+                },
+                ModelInfo {
+                    id: "moonshot-v1-32k".into(),
+                    display_name: "Moonshot V1 32K".into(),
+                    context_window: 32_000,
+                },
             ],
             Self::OpenAIOfficial => vec![
-                ModelInfo { id: "gpt-4o".into(), display_name: "GPT-4o".into(), context_window: 128_000 },
-                ModelInfo { id: "gpt-4o-mini".into(), display_name: "GPT-4o Mini".into(), context_window: 128_000 },
+                ModelInfo {
+                    id: "gpt-4o".into(),
+                    display_name: "GPT-4o".into(),
+                    context_window: 128_000,
+                },
+                ModelInfo {
+                    id: "gpt-4o-mini".into(),
+                    display_name: "GPT-4o Mini".into(),
+                    context_window: 128_000,
+                },
             ],
         }
     }
@@ -103,11 +147,23 @@ mod tests {
 
     #[test]
     fn from_id_全部预设可识别() {
-        assert!(matches!(Preset::from_id("deepseek"), Some(Preset::DeepSeek)));
-        assert!(matches!(Preset::from_id("qwen"), Some(Preset::QwenDashScope)));
+        assert!(matches!(
+            Preset::from_id("deepseek"),
+            Some(Preset::DeepSeek)
+        ));
+        assert!(matches!(
+            Preset::from_id("qwen"),
+            Some(Preset::QwenDashScope)
+        ));
         assert!(matches!(Preset::from_id("zhipu"), Some(Preset::Zhipu)));
-        assert!(matches!(Preset::from_id("moonshot"), Some(Preset::MoonshotKimi)));
-        assert!(matches!(Preset::from_id("openai"), Some(Preset::OpenAIOfficial)));
+        assert!(matches!(
+            Preset::from_id("moonshot"),
+            Some(Preset::MoonshotKimi)
+        ));
+        assert!(matches!(
+            Preset::from_id("openai"),
+            Some(Preset::OpenAIOfficial)
+        ));
         assert!(Preset::from_id("xx").is_none());
     }
 

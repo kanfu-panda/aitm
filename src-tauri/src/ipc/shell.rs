@@ -115,7 +115,10 @@ pub fn shell_reveal(path: String) -> Result<(), String> {
         let dir = if target.is_dir() {
             target.clone()
         } else {
-            target.parent().map(|p| p.to_path_buf()).unwrap_or(target.clone())
+            target
+                .parent()
+                .map(|p| p.to_path_buf())
+                .unwrap_or(target.clone())
         };
         Command::new("xdg-open").arg(dir).spawn().is_ok()
     } else {

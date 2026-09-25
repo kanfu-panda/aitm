@@ -446,7 +446,10 @@ mod tests {
     fn 命令结束_sentinel_被安静跳过() {
         let mut p = Osc7Parser::new();
         assert_eq!(p.feed(b"\x1b]6969;aitm-done;0;abc12345\x07"), None);
-        assert_eq!(p.feed(b"\x1b]7;file:///tmp/after\x07").as_deref(), Some("/tmp/after"));
+        assert_eq!(
+            p.feed(b"\x1b]7;file:///tmp/after\x07").as_deref(),
+            Some("/tmp/after")
+        );
     }
 
     #[test]

@@ -62,7 +62,9 @@ pub enum MessageContent {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ContentBlock {
-    Text { text: String },
+    Text {
+        text: String,
+    },
     ToolUse {
         id: String,
         name: String,
@@ -94,7 +96,10 @@ pub enum ChatChunk {
     /// 一次 tool 调用开始（拿到 id + name）。
     ToolUseStart { call_id: String, name: String },
     /// tool 调用 args 增量。所有 chunk 拼接后才能 JSON parse。
-    ToolUseArgsDelta { call_id: String, json_partial: String },
+    ToolUseArgsDelta {
+        call_id: String,
+        json_partial: String,
+    },
     /// 当前 tool 调用的 args 结束。
     ToolUseEnd { call_id: String },
     /// token 使用统计。
@@ -142,9 +147,38 @@ pub enum ProviderError {
     Other(String),
 }
 
+/// 构造 Provider 共用的 HTTP 客户端（120 秒超时）。
+///
+/// 构造失败（如 TLS 后端初始化失败）返回错误而不是 panic：这条路径在用户保存
+/// Provider 设置时触发，panic 会让整个应用崩溃，返回错误则能在设置界面提示出来。
+pub fn build_http_client() -> Result<reqwest::Client, ProviderError> {
+    http_client_from(reqwest::Client::builder().timeout(std::time::Duration::from_secs(120)))
+}
+
+fn http_client_from(builder: reqwest::ClientBuilder) -> Result<reqwest::Client, ProviderError> {
+    builder
+        .build()
+        .map_err(|e| ProviderError::Config(format!("创建 HTTP 客户端失败：{e}")))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn 应该_当_http_客户端构造失败时_返回配置错误而不是_panic() {
+        // 传一个不认识的 TLS 配置对象，reqwest 在 build() 时报错——模拟 TLS 后端初始化失败
+        let builder = reqwest::Client::builder().use_preconfigured_tls(0u8);
+
+        let err = http_client_from(builder).unwrap_err();
+
+        assert!(matches!(err, ProviderError::Config(ref m) if m.contains("HTTP 客户端")));
+    }
+
+    #[test]
+    fn 应该_正常环境下_能构造出客户端() {
+        assert!(build_http_client().is_ok());
+    }
 
     #[test]
     fn role_序列化为_lowercase() {
@@ -166,7 +200,8 @@ mod tests {
 
     #[test]
     fn message_content_blocks_反序列化() {
-        let json = r#"[{"type":"text","text":"hi"},{"type":"tool_use","id":"x","name":"foo","input":{}}]"#;
+        let json =
+            r#"[{"type":"text","text":"hi"},{"type":"tool_use","id":"x","name":"foo","input":{}}]"#;
         let m: MessageContent = serde_json::from_str(json).unwrap();
         match m {
             MessageContent::Blocks(bs) => {
@@ -200,8 +235,14 @@ mod tests {
 
     #[test]
     fn stop_reason_序列化() {
-        assert_eq!(serde_json::to_string(&StopReason::EndTurn).unwrap(), "\"end_turn\"");
-        assert_eq!(serde_json::to_string(&StopReason::ToolUse).unwrap(), "\"tool_use\"");
+        assert_eq!(
+            serde_json::to_string(&StopReason::EndTurn).unwrap(),
+            "\"end_turn\""
+        );
+        assert_eq!(
+            serde_json::to_string(&StopReason::ToolUse).unwrap(),
+            "\"tool_use\""
+        );
     }
 
     #[test]

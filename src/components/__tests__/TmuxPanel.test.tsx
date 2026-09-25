@@ -155,7 +155,8 @@ describe("TmuxPanel", () => {
 
     await waitFor(() => expect(useTabsStore.getState().tabs).toHaveLength(1));
     const tab = useTabsStore.getState().tabs[0];
-    expect(tab.title).toContain("alpha");
+    // 标题只放会话名：标签栏靠 tmux 图标区分，不再加「tmux: 」前缀
+    expect(tab.title).toBe("alpha");
     expect(tab.initialInput).toBe("tmux attach-session -t 'alpha'\n");
     // 记下接的是哪个会话：重启恢复时靠它接回去
     expect(tab.tmuxSessionId).toBe("$alpha");

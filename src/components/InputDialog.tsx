@@ -1,6 +1,7 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
+import { requestTerminalFocus } from "../lib/terminalFocus";
 import { useBrowserModalGuard } from "../lib/useBrowserModalGuard";
 
 interface Props {
@@ -17,6 +18,11 @@ interface Props {
     onSubmit: (value: string) => Promise<void> | void;
     /** OK 按钮文字；默认"确认"。 */
     okLabel?: string;
+    /**
+     * 提交成功关闭后把键盘焦点交给当前活动终端，而不是还给打开对话框的按钮。
+     * 用于提交会新开终端标签的场景（如新建 tmux 会话），让用户能直接打字。
+     */
+    focusTerminalOnSubmit?: boolean;
   } | null;
   /** 用户取消 / 关闭 → 调此 setter 把 open 切 null。 */
   onClose: () => void;
@@ -37,10 +43,13 @@ export default function InputDialog({ open, onClose }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  /** 本次关闭是否由提交成功引起（决定关闭后焦点去向） */
+  const submittedRef = useRef(false);
 
   // open 变化（打开新对话）时重置 input 到 initialValue
   useEffect(() => {
     if (open) {
+      submittedRef.current = false;
       setValue(open.initialValue ?? "");
       setError(null);
       setSubmitting(false);
@@ -75,6 +84,7 @@ export default function InputDialog({ open, onClose }: Props) {
     setError(null);
     try {
       await open.onSubmit(value);
+      submittedRef.current = true;
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -92,6 +102,13 @@ export default function InputDialog({ open, onClose }: Props) {
         <Dialog.Content
           className="fixed left-1/2 top-1/2 z-[101] w-[420px] max-w-[90vw] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-[var(--c-border-strong)] bg-[var(--c-bg-elev-1)] p-5 shadow-2xl"
           data-testid="input-dialog"
+          onCloseAutoFocus={(e) => {
+            // Radix 在对话框卸载后才调这里（焦点锁已撤），此时交出焦点不会被拉回
+            if (submittedRef.current && open.focusTerminalOnSubmit) {
+              e.preventDefault();
+              requestTerminalFocus();
+            }
+          }}
         >
           <form onSubmit={handleSubmit}>
             <Dialog.Title className="mb-3 text-base font-semibold text-[var(--c-text-base)]">

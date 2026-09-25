@@ -166,7 +166,8 @@ export default function TmuxPanel() {
       // 必须经分屏组开标签：直调 tabs store 的 addTab，分屏时新标签不属于任何组，
       // 看不见、PTY 也不启动（1.6.0 的"点了没反应"）
       const tabId = await addTabToActiveGroup({
-        title: `tmux: ${name}`,
+        // 标签栏另有 tmux 图标标明身份，标题只放会话名，把宽度留给名字
+        title: name,
         initialInput: `${cmd}\n`,
         tmuxSessionId: id,
       });
@@ -225,6 +226,8 @@ export default function TmuxPanel() {
       label: cwd ? t("tmux.newCwdHint", { cwd }) : undefined,
       initialValue: defaultSessionName(cwd, names),
       okLabel: t("tmux.newOk"),
+      // 建好后直接在新标签里接入，关闭对话框时把焦点交给它，不用再点一下终端
+      focusTerminalOnSubmit: true,
       validate: (v) => {
         const key = sessionNameError(v, names);
         return key ? t(key) : null;

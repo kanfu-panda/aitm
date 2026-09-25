@@ -10,6 +10,7 @@ vi.mock("../../lib/tauri", async (orig) => {
   return {
     ...real,
     appQuitConfirmed: vi.fn().mockResolvedValue(undefined),
+    tmuxSessionOfTab: vi.fn().mockResolvedValue(null),
     browserHideAllActive: vi.fn().mockResolvedValue(undefined),
     browserShowAllActive: vi.fn().mockResolvedValue(undefined),
     onAppConfirmQuitRequested: vi.fn(async (cb: () => void) => {
@@ -23,7 +24,8 @@ vi.mock("../../lib/tauri", async (orig) => {
 });
 
 import QuitConfirmDialog from "../QuitConfirmDialog";
-import { appQuitConfirmed } from "../../lib/tauri";
+import { useTabsStore } from "../../stores/tabs";
+import { appQuitConfirmed, tmuxSessionOfTab } from "../../lib/tauri";
 
 const mockQuit = appQuitConfirmed as unknown as ReturnType<typeof vi.fn>;
 
@@ -115,5 +117,73 @@ describe("QuitConfirmDialog", () => {
     fireQuitRequest();
     await screen.findByRole("dialog");
     expect(mockQuit).not.toHaveBeenCalled();
+  });
+
+  describe("有接着 tmux 的标签时如实说明会话不会丢", () => {
+    afterEach(() => {
+      useTabsStore.setState({ tabs: [], activeId: null });
+      (tmuxSessionOfTab as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(
+        null,
+      );
+    });
+
+    it("应该_当标签里手敲了_tmux_attach_时_弹框前识别出来并同样如实说明", async () => {
+      (tmuxSessionOfTab as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(
+        { id: "$4", name: "farm" },
+      );
+      useTabsStore.setState({
+        tabs: [{ id: "t1", title: "~", sessionId: "s1", auto_title: true }],
+        activeId: "t1",
+      });
+      render(<QuitConfirmDialog />);
+      await waitFor(() => expect(quitCallbacks.length).toBe(1));
+
+      fireQuitRequest();
+
+      const dialog = await screen.findByRole("dialog");
+      await waitFor(() =>
+        expect(dialog.textContent).toContain("tmux 会话会在后台继续运行"),
+      );
+      // 记下后重启能自动接回
+      expect(useTabsStore.getState().tabs[0].tmuxSessionId).toBe("$4");
+    });
+
+    it("应该_当有_tmux_标签时_说明_tmux_会话会保留并在下次启动接回", async () => {
+      useTabsStore.setState({
+        tabs: [
+          { id: "t1", title: "~", sessionId: "s1", auto_title: true },
+          {
+            id: "t2",
+            title: "build",
+            sessionId: "s2",
+            auto_title: false,
+            tmuxSessionId: "$1",
+          },
+        ],
+        activeId: "t1",
+      });
+      render(<QuitConfirmDialog />);
+      await waitFor(() => expect(quitCallbacks.length).toBe(1));
+
+      fireQuitRequest();
+
+      const dialog = await screen.findByRole("dialog");
+      expect(dialog.textContent).toContain("tmux 会话会在后台继续运行");
+      expect(dialog.textContent).not.toContain("所有终端会话");
+    });
+
+    it("应该_当没有_tmux_标签时_保持原来的提示", async () => {
+      useTabsStore.setState({
+        tabs: [{ id: "t1", title: "~", sessionId: "s1", auto_title: true }],
+        activeId: "t1",
+      });
+      render(<QuitConfirmDialog />);
+      await waitFor(() => expect(quitCallbacks.length).toBe(1));
+
+      fireQuitRequest();
+
+      const dialog = await screen.findByRole("dialog");
+      expect(dialog.textContent).toContain("所有终端会话和未保存的文件编辑将会丢失");
+    });
   });
 });

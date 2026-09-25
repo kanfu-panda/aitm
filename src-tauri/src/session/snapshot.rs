@@ -93,6 +93,11 @@ pub struct TabSnapshot {
     /// 重启恢复时，若该会话仍在，前端自动写入接入命令把标签接回去；不在了就恢复成
     /// 普通标签。纯增字段，旧 snapshot 缺省为 None（结构体级 `serde(default)`）。
     pub tmux_session_id: Option<String>,
+    /// 是否是所在分屏当时选中的那个标签。
+    ///
+    /// 重启时前端据此还原每个分屏各自选中哪个标签；没有它，每个分屏都会落到
+    /// 第一个标签上。纯增字段，旧 snapshot 缺省为 false（结构体级 `serde(default)`）。
+    pub group_active: bool,
 }
 
 /// snapshot 文件绝对路径。dirs::data_dir() 失败（理论不该发生）→ fallback HOME/.aitm/sessions/
@@ -133,8 +138,7 @@ pub fn save_snapshot(snap: &SessionSnapshot) -> Result<(), String> {
 
 /// 内部：写到指定路径。
 pub fn save_to(path: &std::path::Path, snap: &SessionSnapshot) -> Result<(), String> {
-    let json = serde_json::to_vec_pretty(snap)
-        .map_err(|e| format!("序列化 snapshot 失败：{e}"))?;
+    let json = serde_json::to_vec_pretty(snap).map_err(|e| format!("序列化 snapshot 失败：{e}"))?;
     if json.len() > MAX_SNAPSHOT_BYTES {
         return Err(format!(
             "snapshot 过大 ({} bytes > {} 上限)",
@@ -143,8 +147,7 @@ pub fn save_to(path: &std::path::Path, snap: &SessionSnapshot) -> Result<(), Str
         ));
     }
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("创建 snapshot 目录失败：{e}"))?;
+        std::fs::create_dir_all(parent).map_err(|e| format!("创建 snapshot 目录失败：{e}"))?;
     }
     std::fs::write(path, &json).map_err(|e| format!("写 snapshot 失败：{e}"))?;
     Ok(())
@@ -180,6 +183,7 @@ mod tests {
                     unread: 0,
                     group_id: Some("g-initial".into()),
                     tmux_session_id: None,
+                    group_active: false,
                 },
                 TabSnapshot {
                     tab_id: "tab-2".into(),
@@ -188,6 +192,7 @@ mod tests {
                     unread: 3,
                     group_id: Some("g-right".into()),
                     tmux_session_id: None,
+                    group_active: false,
                 },
             ],
             active_tab_id: Some("tab-1".into()),
@@ -288,6 +293,34 @@ mod tests {
     }
 
     #[test]
+    fn 应该_当标签是所在分屏选中的那个时_快照保存再读取原样保留() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("snap.json");
+        let mut snap = sample_snapshot();
+        snap.tabs[1].group_active = true;
+
+        save_to(&path, &snap).unwrap();
+        let loaded = load_from(&path).unwrap().unwrap();
+        assert!(!loaded.tabs[0].group_active);
+        assert!(loaded.tabs[1].group_active);
+    }
+
+    #[test]
+    fn 应该_当读取旧版快照没有分屏选中字段时_视为未选中() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("snap.json");
+        let payload = serde_json::json!({
+            "schema_version": SCHEMA_VERSION,
+            "saved_at_ms": 0,
+            "tabs": [{"tab_id": "t1", "title": "x", "cwd": null, "unread": 0, "group_id": "g"}],
+            "active_tab_id": "t1",
+        });
+        std::fs::write(&path, payload.to_string()).unwrap();
+        let loaded = load_from(&path).unwrap().unwrap();
+        assert!(!loaded.tabs[0].group_active);
+    }
+
+    #[test]
     fn 应该_当读取旧版快照没有_tmux_字段时_视为没接_tmux() {
         let tmp = TempDir::new().unwrap();
         let path = tmp.path().join("snap.json");
@@ -358,6 +391,7 @@ mod tests {
                 unread: 0,
                 group_id: None,
                 tmux_session_id: None,
+                group_active: false,
             })
             .collect();
         let big = SessionSnapshot {
@@ -442,6 +476,7 @@ mod tests {
                     unread: 0,
                     group_id: Some("g-initial".into()),
                     tmux_session_id: None,
+                    group_active: false,
                 },
                 TabSnapshot {
                     tab_id: "t2".into(),
@@ -450,6 +485,7 @@ mod tests {
                     unread: 0,
                     group_id: Some("g-right-side".into()),
                     tmux_session_id: None,
+                    group_active: false,
                 },
                 TabSnapshot {
                     tab_id: "t3".into(),
@@ -458,6 +494,7 @@ mod tests {
                     unread: 0,
                     group_id: None,
                     tmux_session_id: None,
+                    group_active: false,
                 },
             ],
             active_tab_id: Some("t1".into()),

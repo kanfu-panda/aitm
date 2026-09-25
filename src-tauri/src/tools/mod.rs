@@ -157,7 +157,10 @@ mod tests {
 
     #[test]
     fn tool_result_serialize_含_is_error_字段() {
-        let r = ToolResult { content: "ok".into(), is_error: false };
+        let r = ToolResult {
+            content: "ok".into(),
+            is_error: false,
+        };
         let j = serde_json::to_value(&r).unwrap();
         assert_eq!(j["is_error"], false);
         assert_eq!(j["content"], "ok");
@@ -165,7 +168,9 @@ mod tests {
 
     #[test]
     fn blocked_error_含_reason() {
-        let e = ToolError::Blocked { reason: "越界".into() };
+        let e = ToolError::Blocked {
+            reason: "越界".into(),
+        };
         let r: ToolResult = e.into();
         assert!(r.content.contains("越界"));
     }
@@ -260,7 +265,9 @@ mod tests {
     #[tokio::test]
     async fn tool_default_preview_返回_none() {
         let ctx = dummy_ctx();
-        let got = DefaultPreviewTool.preview(&serde_json::json!({}), &ctx).await;
+        let got = DefaultPreviewTool
+            .preview(&serde_json::json!({}), &ctx)
+            .await;
         assert!(got.is_none(), "沿用默认实现的工具 preview 应返回 None");
     }
 

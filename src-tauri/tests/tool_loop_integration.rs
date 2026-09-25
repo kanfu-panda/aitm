@@ -282,8 +282,9 @@ async fn run_command_黑名单_拦截_rm_rf_root() {
                 },
                 ChatChunk::ToolUseArgsDelta {
                     call_id: "c1".into(),
-                    json_partial: r#"{"session_id":"00000000-0000-0000-0000-000000000000","cmd":"rm -rf /"}"#
-                        .into(),
+                    json_partial:
+                        r#"{"session_id":"00000000-0000-0000-0000-000000000000","cmd":"rm -rf /"}"#
+                            .into(),
                 },
                 ChatChunk::ToolUseEnd {
                     call_id: "c1".into(),

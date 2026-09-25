@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use tokio::sync::Mutex;
 
 use super::pty_session::Session;
@@ -131,11 +131,7 @@ impl SessionManager {
 
     /// 跨所有 session 子串搜索 query，每命中一行附带 session_id。
     /// 总命中数受 `max_results` 截断（按 session 顺序遍历，先到先得）。
-    pub async fn search_recent(
-        &self,
-        query: &str,
-        max_results: usize,
-    ) -> Vec<(SessionId, String)> {
+    pub async fn search_recent(&self, query: &str, max_results: usize) -> Vec<(SessionId, String)> {
         if query.is_empty() || max_results == 0 {
             return Vec::new();
         }

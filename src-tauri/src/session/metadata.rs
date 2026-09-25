@@ -58,8 +58,7 @@ impl TabMetadata {
             parts.push(format!("cwd: {cwd}"));
         }
         if !self.listening_ports.is_empty() {
-            let ports: Vec<String> =
-                self.listening_ports.iter().map(|p| p.to_string()).collect();
+            let ports: Vec<String> = self.listening_ports.iter().map(|p| p.to_string()).collect();
             parts.push(format!("监听端口: {}", ports.join(", ")));
         }
         parts.join(" / ")

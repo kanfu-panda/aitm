@@ -51,12 +51,19 @@ vi.mock("../CodeMirrorViewer", async () => {
 });
 
 // tauri 层 partial mock：保留 browserHideAllActive 等 useBrowserModalGuard 依赖；
-// 只覆盖本测试关心的 fsReadText / settings 路径，避免误把 dialog modal-guard 打断。
+// 只覆盖本测试关心的 fsReadText / fsStat / fileWrite / settings 路径，避免误把
+// dialog modal-guard 打断。
+// fsStat 默认给个固定 mtime，配合 pushFiles 的 lastMtimeMs 断言"外部改动轮询"逻辑；
+// fileWrite 默认成功，saveFile 走真实 store 实现（实测也是真调 file_write IPC）。
 vi.mock("../../lib/tauri", async (orig) => {
   const real = await orig<typeof import("../../lib/tauri")>();
   return {
     ...real,
     fsReadText: vi.fn(),
+    fsStat: vi
+      .fn()
+      .mockResolvedValue({ exists: true, mtime_ms: 1, size: 0, is_dir: false }),
+    fileWrite: vi.fn().mockResolvedValue(undefined),
     settingsUpdate: vi.fn().mockResolvedValue(undefined),
     settingsGet: vi.fn().mockResolvedValue({}),
     settingsReset: vi.fn().mockResolvedValue({}),
@@ -73,12 +80,29 @@ import {
   __setPersistFnForTest,
   useFileEditorStore,
 } from "../../stores/file-editor";
+import { fileWrite, fsReadText, fsStat } from "../../lib/tauri";
+import { useFocusSurfaceStore } from "../../stores/focus-surface";
 import FilePreviewWorkspace from "../FilePreviewWorkspace";
+
+const fsReadTextMock = fsReadText as unknown as ReturnType<typeof vi.fn>;
+const fsStatMock = fsStat as unknown as ReturnType<typeof vi.fn>;
+const fileWriteMock = fileWrite as unknown as ReturnType<typeof vi.fn>;
 
 function resetStore() {
   useFileEditorStore.setState({ openFiles: [], activeId: null });
   __cancelPendingPersistForTest();
   __setPersistFnForTest(() => {});
+  fsReadTextMock.mockReset();
+  fsStatMock.mockReset();
+  fsStatMock.mockResolvedValue({
+    exists: true,
+    mtime_ms: 1,
+    size: 0,
+    is_dir: false,
+  });
+  fileWriteMock.mockReset();
+  fileWriteMock.mockResolvedValue(undefined);
+  useFocusSurfaceStore.setState({ lastSurface: "terminal" });
 }
 
 afterEach(() => {
@@ -103,6 +127,8 @@ function pushFiles(
     cursorLine: f.cursorLine ?? 1,
     cursorCol: f.cursorCol ?? 1,
     mdMode: f.mdMode,
+    lastMtimeMs: f.lastMtimeMs,
+    stale: f.stale ?? false,
   }));
   useFileEditorStore.setState({ openFiles: made, activeId });
 }
@@ -205,7 +231,8 @@ describe("FilePreviewWorkspace", () => {
     expect(useFileEditorStore.getState().openFiles).toHaveLength(1);
   });
 
-  it("dialog '保存并关闭'（T5b saveFile throw）→ 降级走 closeFile 仍关 tab", async () => {
+  it("dialog '保存并关闭' saveFile 失败（如禁止写入）→ 降级走 closeFile 仍关 tab", async () => {
+    fileWriteMock.mockRejectedValueOnce(new Error("禁止写入系统目录"));
     pushFiles(
       [{ path: "/x/a.ts", dirty: true }],
       "/x/a.ts",
@@ -214,10 +241,25 @@ describe("FilePreviewWorkspace", () => {
     fireEvent.click(screen.getByTestId("file-tab-close-/x/a.ts"));
     await screen.findByTestId("close-file-confirm-dialog");
     fireEvent.click(screen.getByTestId("close-file-btn-save"));
-    // T5b 阶段 saveFile 占位 throw；FilePreviewWorkspace 内部 catch 后走 closeFile
+    // saveFile 失败；FilePreviewWorkspace 内部 catch 后走 closeFile 降级
     await waitFor(() => {
       expect(useFileEditorStore.getState().openFiles).toHaveLength(0);
     });
+  });
+
+  it("dialog '保存并关闭' saveFile 成功 → 落盘后关 tab", async () => {
+    pushFiles(
+      [{ path: "/x/a.ts", content: "edited", original: "orig", dirty: true }],
+      "/x/a.ts",
+    );
+    render(<FilePreviewWorkspace />);
+    fireEvent.click(screen.getByTestId("file-tab-close-/x/a.ts"));
+    await screen.findByTestId("close-file-confirm-dialog");
+    fireEvent.click(screen.getByTestId("close-file-btn-save"));
+    await waitFor(() => {
+      expect(useFileEditorStore.getState().openFiles).toHaveLength(0);
+    });
+    expect(fileWriteMock).toHaveBeenCalledWith("/x/a.ts", "edited");
   });
 
   it("Cmd+W 焦点在编辑器 → 关 active tab", async () => {
@@ -388,5 +430,208 @@ describe("FilePreviewWorkspace", () => {
       // /y/b.rs 已关；/x/a.ts dirty 仍在 + 弹 dialog
       expect(ids).toEqual(["/x/a.ts"]);
     });
+  });
+
+  // ===== v0.9.0 H6：useShortcuts.closeTab 转发的关编辑器 tab 事件 =====
+
+  describe("aitm:request-close-editor-tab（焦点不在 workspace 内时的转发路径）", () => {
+    it("non-dirty active tab → 直接关闭", async () => {
+      pushFiles(
+        [{ path: "/x/a.ts" }, { path: "/y/b.rs" }],
+        "/y/b.rs",
+      );
+      render(<FilePreviewWorkspace />);
+
+      act(() => {
+        window.dispatchEvent(new Event("aitm:request-close-editor-tab"));
+      });
+
+      await waitFor(() => {
+        const ids = useFileEditorStore.getState().openFiles.map((f) => f.id);
+        expect(ids).toEqual(["/x/a.ts"]);
+      });
+    });
+
+    it("dirty active tab → 弹 CloseFileConfirmDialog（跟直接 Cmd+W 走同一条 requestClose）", async () => {
+      pushFiles([{ path: "/x/a.ts", dirty: true }], "/x/a.ts");
+      render(<FilePreviewWorkspace />);
+
+      act(() => {
+        window.dispatchEvent(new Event("aitm:request-close-editor-tab"));
+      });
+
+      expect(
+        await screen.findByTestId("close-file-confirm-dialog"),
+      ).toBeTruthy();
+    });
+
+    it("没有 activeId（理论上不会发生，防御）→ 不报错也不关任何 tab", async () => {
+      pushFiles([{ path: "/x/a.ts" }], null);
+      render(<FilePreviewWorkspace />);
+      // openFiles.length === 0 时组件本来就不渲染；这里手动清空 activeId
+      // 模拟"有 tab 但没有 active"的边界，确认转发 handler 的 if(id) 守卫生效。
+      act(() => {
+        window.dispatchEvent(new Event("aitm:request-close-editor-tab"));
+      });
+      await new Promise((r) => setTimeout(r, 30));
+      expect(useFileEditorStore.getState().openFiles).toHaveLength(1);
+    });
+  });
+
+  // ===== v0.10.3 #10：外部改动轮询（open 时立即查一次 + 3s 周期） =====
+
+  describe("外部改动轮询 / stale banner", () => {
+    it("mtime 变化 + non-dirty → 静默 fsReadText + reloadFromDisk（无 banner）", async () => {
+      fsStatMock.mockResolvedValue({
+        exists: true,
+        mtime_ms: 2,
+        size: 0,
+        is_dir: false,
+      });
+      fsReadTextMock.mockResolvedValueOnce("外部改过的新内容");
+      pushFiles(
+        [{ path: "/x/a.ts", content: "old", dirty: false, lastMtimeMs: 1 }],
+        "/x/a.ts",
+      );
+      render(<FilePreviewWorkspace />);
+
+      await waitFor(() => {
+        const f = useFileEditorStore.getState().openFiles[0];
+        expect(f.content).toBe("外部改过的新内容");
+      });
+      const f = useFileEditorStore.getState().openFiles[0];
+      expect(f.dirty).toBe(false);
+      expect(f.stale).toBe(false);
+      expect(f.lastMtimeMs).toBe(2);
+      expect(
+        screen.queryByTestId("file-stale-banner"),
+      ).toBeNull();
+    });
+
+    it("mtime 变化 + dirty → markStale 弹 banner，不静默覆盖 buffer", async () => {
+      fsStatMock.mockResolvedValue({
+        exists: true,
+        mtime_ms: 2,
+        size: 0,
+        is_dir: false,
+      });
+      pushFiles(
+        [
+          {
+            path: "/x/a.ts",
+            content: "我的未保存修改",
+            original: "old",
+            dirty: true,
+            lastMtimeMs: 1,
+          },
+        ],
+        "/x/a.ts",
+      );
+      render(<FilePreviewWorkspace />);
+
+      expect(await screen.findByTestId("file-stale-banner")).toBeTruthy();
+      const f = useFileEditorStore.getState().openFiles[0];
+      expect(f.stale).toBe(true);
+      // dirty 分支不读盘覆盖
+      expect(f.content).toBe("我的未保存修改");
+      expect(fsReadTextMock).not.toHaveBeenCalled();
+    });
+
+    it("mtime 未变化 → 不触发任何 store 变化", async () => {
+      fsStatMock.mockResolvedValue({
+        exists: true,
+        mtime_ms: 1,
+        size: 0,
+        is_dir: false,
+      });
+      pushFiles(
+        [{ path: "/x/a.ts", content: "old", dirty: false, lastMtimeMs: 1 }],
+        "/x/a.ts",
+      );
+      render(<FilePreviewWorkspace />);
+
+      await waitFor(() => {
+        expect(fsStatMock).toHaveBeenCalled();
+      });
+      await new Promise((r) => setTimeout(r, 20));
+      const f = useFileEditorStore.getState().openFiles[0];
+      expect(f.content).toBe("old");
+      expect(fsReadTextMock).not.toHaveBeenCalled();
+    });
+
+    it("banner 点 '重新加载' → fsStat + fsReadText 成功后 reloadFromDisk", async () => {
+      fsStatMock.mockResolvedValue({
+        exists: true,
+        mtime_ms: 2,
+        size: 0,
+        is_dir: false,
+      });
+      pushFiles(
+        [
+          {
+            path: "/x/a.ts",
+            content: "我的修改",
+            original: "old",
+            dirty: true,
+            lastMtimeMs: 1,
+          },
+        ],
+        "/x/a.ts",
+      );
+      render(<FilePreviewWorkspace />);
+      await screen.findByTestId("file-stale-banner");
+      fsReadTextMock.mockResolvedValueOnce("磁盘最新内容");
+
+      fireEvent.click(screen.getByTestId("file-stale-reload"));
+
+      await waitFor(() => {
+        const f = useFileEditorStore.getState().openFiles[0];
+        expect(f.content).toBe("磁盘最新内容");
+        expect(f.stale).toBe(false);
+      });
+    });
+
+    it("banner 点 '保留我的' → dismissStale，content 不变", async () => {
+      fsStatMock.mockResolvedValue({
+        exists: true,
+        mtime_ms: 2,
+        size: 0,
+        is_dir: false,
+      });
+      pushFiles(
+        [
+          {
+            path: "/x/a.ts",
+            content: "我的修改",
+            original: "old",
+            dirty: true,
+            lastMtimeMs: 1,
+          },
+        ],
+        "/x/a.ts",
+      );
+      render(<FilePreviewWorkspace />);
+      await screen.findByTestId("file-stale-banner");
+
+      fireEvent.click(screen.getByTestId("file-stale-keep"));
+
+      await waitFor(() => {
+        expect(
+          screen.queryByTestId("file-stale-banner"),
+        ).toBeNull();
+      });
+      const f = useFileEditorStore.getState().openFiles[0];
+      expect(f.content).toBe("我的修改");
+      expect(f.stale).toBe(false);
+    });
+  });
+
+  // ===== v0.10.0 HR9-11：mousedown 记 lastSurface=editor =====
+
+  it("mousedown workspace 容器 → focus-surface 记为 editor", () => {
+    pushFiles([{ path: "/x/a.ts" }], "/x/a.ts");
+    render(<FilePreviewWorkspace />);
+    fireEvent.mouseDown(screen.getByTestId("file-preview-workspace"));
+    expect(useFocusSurfaceStore.getState().lastSurface).toBe("editor");
   });
 });

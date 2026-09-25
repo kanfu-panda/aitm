@@ -3,7 +3,7 @@
 use tauri::State;
 use tokio::sync::Mutex;
 
-use crate::settings::{store, AppSettings};
+use crate::settings::{AppSettings, store};
 
 /// 全局 settings 状态（注册到 Tauri Builder.manage）。
 pub struct SettingsState {
@@ -52,8 +52,14 @@ pub async fn settings_update(
 
     // v0.6.0-A：sidebar 宽度 clamp 到 [180, 600]。
     // file_preview_dialog 不 clamp（前端逻辑处理 off-screen reset）。
-    merged.ui.file_tree_width = merged.ui.file_tree_width.clamp(PANEL_WIDTH_MIN, PANEL_WIDTH_MAX);
-    merged.ui.ai_sidebar_width = merged.ui.ai_sidebar_width.clamp(PANEL_WIDTH_MIN, PANEL_WIDTH_MAX);
+    merged.ui.file_tree_width = merged
+        .ui
+        .file_tree_width
+        .clamp(PANEL_WIDTH_MIN, PANEL_WIDTH_MAX);
+    merged.ui.ai_sidebar_width = merged
+        .ui
+        .ai_sidebar_width
+        .clamp(PANEL_WIDTH_MIN, PANEL_WIDTH_MAX);
 
     *guard = merged.clone();
     store::save(&merged).map_err(|e| e.to_string())
@@ -77,7 +83,9 @@ mod tests {
     /// 单测无法直接构造 Tauri `State<SettingsState>`，所以这里用纯函数 mirror。
     fn clamp_panel_widths(s: &mut AppSettings) {
         s.ui.file_tree_width = s.ui.file_tree_width.clamp(PANEL_WIDTH_MIN, PANEL_WIDTH_MAX);
-        s.ui.ai_sidebar_width = s.ui.ai_sidebar_width.clamp(PANEL_WIDTH_MIN, PANEL_WIDTH_MAX);
+        s.ui.ai_sidebar_width =
+            s.ui.ai_sidebar_width
+                .clamp(PANEL_WIDTH_MIN, PANEL_WIDTH_MAX);
     }
 
     /// 回归测：前端 TS `AppSettings` 没 providers 字段，settings_update 直接 save 会让 serde default 把 providers.map 清空，覆盖磁盘上的 Qwen 等用户配置。修复后必须保留 providers。

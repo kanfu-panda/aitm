@@ -29,6 +29,7 @@
   "quitDialog": {
     "title": "Quit aitm?",
     "description": "All terminal sessions and unsaved file edits will be lost.",
+    "descriptionWithTmux": "Programs running in regular terminals and unsaved file edits will be lost. tmux sessions keep running in the background and will be reattached the next time aitm starts.",
     "cancel": "Cancel",
     "confirm": "Quit"
   },
@@ -542,7 +543,9 @@
   },
   "paneGroup": {
     "newTab": "New tab",
-    "newTabTitle": "New tab (⌘T)"
+    "newTabTitle": "New tab (⌘T)",
+    "batchCloseRunning": "{{count}} tab(s) have commands still running: {{names}}. Closing them all will terminate these commands.",
+    "batchCloseConfirm": "Close all"
   },
   "tmux": {
     "title": "tmux sessions",
@@ -576,6 +579,7 @@
     "previewReload": "Refresh preview",
     "previewLoading": "Loading…",
     "previewEmpty": "No output yet",
-    "attachNoPane": "No pane can take a new tab (the current pane may have reached its tab limit). Close some tabs and try again."
+    "attachNoPane": "No pane can take a new tab (the current pane may have reached its tab limit). Close some tabs and try again.",
+    "tabTooltip": "tmux session: {{name}}"
   }
 }

@@ -5,7 +5,7 @@
 
 use async_trait::async_trait;
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::ansi::strip_for_llm;
 use super::{RiskClass, Tool, ToolContext, ToolError, ToolResult};
@@ -33,12 +33,9 @@ fn resolve_session_id(arg: Option<&str>, ctx: &ToolContext) -> Result<String, To
     let trimmed = arg.unwrap_or("").trim();
     let needs_fallback = matches!(trimmed, "" | "current" | "default" | "active" | "main");
     if needs_fallback {
-        return ctx
-            .active_session_id
-            .clone()
-            .ok_or_else(|| ToolError::SessionNotFound(
-                "无活跃 tab —— 用户需要先打开一个终端 tab".into(),
-            ));
+        return ctx.active_session_id.clone().ok_or_else(|| {
+            ToolError::SessionNotFound("无活跃 tab —— 用户需要先打开一个终端 tab".into())
+        });
     }
     Ok(trimmed.to_string())
 }
@@ -238,7 +235,7 @@ mod tests {
     /// session_id 改为 optional 后，缺时回退到 active；ctx 也无 active → SessionNotFound。
     #[tokio::test]
     async fn get_terminal_history_缺_session_id_无_active_则_session_not_found() {
-        let ctx = make_ctx();  // active_session_id = None
+        let ctx = make_ctx(); // active_session_id = None
         let r = GetTerminalHistoryTool
             .execute(json!({ "lines": 10 }), &ctx)
             .await;

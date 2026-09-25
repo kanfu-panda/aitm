@@ -133,6 +133,58 @@ describe("useFileEditorStore", () => {
         useFileEditorStore.getState().openFile("/no/such.ts"),
       ).rejects.toThrow("read fail");
     });
+
+    it("HR9-10：同 path 并发第二次调用命中 inflightOpen → 只切 active，不重复读盘", async () => {
+      let resolveRead: ((v: string) => void) | null = null;
+      fsReadTextMock.mockImplementationOnce(
+        () =>
+          new Promise<string>((resolve) => {
+            resolveRead = resolve;
+          }),
+      );
+      // 第一次调用：读盘中途挂起（还没 push 进 openFiles）
+      const p1 = useFileEditorStore.getState().openFile("/dup.ts");
+      // 第二次并发调用：应命中 inflightOpen.has() 分支，立刻切 active 并返回
+      const p2 = useFileEditorStore.getState().openFile("/dup.ts");
+      await p2;
+      expect(useFileEditorStore.getState().activeId).toBe("/dup.ts");
+      expect(fsReadTextMock).toHaveBeenCalledTimes(1);
+      // 放行第一次读盘，收尾
+      resolveRead!("dup-content");
+      await p1;
+      expect(useFileEditorStore.getState().openFiles).toHaveLength(1);
+    });
+
+    it("读盘期间该 path 已被其它入口写入 openFiles（防御性二次校验）→ 不重复 push，只切 active", async () => {
+      let resolveRead: ((v: string) => void) | null = null;
+      fsReadTextMock.mockImplementationOnce(
+        () =>
+          new Promise<string>((resolve) => {
+            resolveRead = resolve;
+          }),
+      );
+      const p = useFileEditorStore.getState().openFile("/race.ts");
+      // 模拟：await 期间，其它入口已经把同 path 的 file 塞进了 openFiles
+      useFileEditorStore.setState((s) => ({
+        openFiles: [
+          ...s.openFiles,
+          {
+            id: "/race.ts",
+            path: "/race.ts",
+            content: "winner",
+            original: "winner",
+            dirty: false,
+            cursorLine: 1,
+            cursorCol: 1,
+          },
+        ],
+      }));
+      resolveRead!("loser-content");
+      await p;
+      const s = useFileEditorStore.getState();
+      expect(s.openFiles.filter((f) => f.id === "/race.ts")).toHaveLength(1);
+      expect(s.activeId).toBe("/race.ts");
+    });
   });
 
   describe("closeFile", () => {
@@ -300,6 +352,28 @@ describe("useFileEditorStore", () => {
       expect(f.dirty).toBe(true); // content !== original → 仍 dirty
     });
 
+    it("多文件打开时只保存目标 id，其它 tab 内容不受影响", async () => {
+      fsReadTextMock
+        .mockResolvedValueOnce("a-v1")
+        .mockResolvedValueOnce("b-v1");
+      await useFileEditorStore.getState().openFile("/a.ts");
+      await useFileEditorStore.getState().openFile("/b.ts");
+      useFileEditorStore.getState().updateContent("/a.ts", "a-edited");
+      useFileEditorStore.getState().updateContent("/b.ts", "b-edited");
+
+      await useFileEditorStore.getState().saveFile("/a.ts");
+
+      const s = useFileEditorStore.getState();
+      const a = s.openFiles.find((f) => f.id === "/a.ts")!;
+      const b = s.openFiles.find((f) => f.id === "/b.ts")!;
+      expect(a.dirty).toBe(false);
+      expect(a.original).toBe("a-edited");
+      // /b.ts 未被 saveFile 触及，仍是 dirty + 未变的内容
+      expect(b.dirty).toBe(true);
+      expect(b.content).toBe("b-edited");
+      expect(b.original).toBe("b-v1");
+    });
+
     it("saveFile 不存在的 id → 静默返", async () => {
       await useFileEditorStore.getState().saveFile("/nope");
       expect(fileWriteMock).not.toHaveBeenCalled();
@@ -451,6 +525,65 @@ describe("useFileEditorStore", () => {
       } finally {
         vi.useRealTimers();
       }
+    });
+  });
+
+  describe("外部改动 actions（v0.10.3 #10：reloadFromDisk / markStale / dismissStale）", () => {
+    it("reloadFromDisk：把磁盘新内容写回 buffer + 清 dirty + 清 stale", async () => {
+      fsReadTextMock.mockResolvedValueOnce("v1");
+      await useFileEditorStore.getState().openFile("/x.ts");
+      useFileEditorStore.getState().updateContent("/x.ts", "local-edit");
+      useFileEditorStore.getState().markStale("/x.ts", 999);
+
+      useFileEditorStore.getState().reloadFromDisk("/x.ts", "disk-v2", 1000);
+
+      const f = useFileEditorStore.getState().openFiles[0];
+      expect(f.content).toBe("disk-v2");
+      expect(f.original).toBe("disk-v2");
+      expect(f.dirty).toBe(false);
+      expect(f.stale).toBe(false);
+      expect(f.lastMtimeMs).toBe(1000);
+    });
+
+    it("reloadFromDisk：id 不匹配的 tab 不受影响", async () => {
+      fsReadTextMock
+        .mockResolvedValueOnce("a")
+        .mockResolvedValueOnce("b");
+      await useFileEditorStore.getState().openFile("/a.ts");
+      await useFileEditorStore.getState().openFile("/b.ts");
+
+      useFileEditorStore.getState().reloadFromDisk("/a.ts", "a-new", 111);
+
+      const b = useFileEditorStore
+        .getState()
+        .openFiles.find((f) => f.id === "/b.ts")!;
+      expect(b.content).toBe("b");
+    });
+
+    it("markStale：标记 stale=true + 更新 lastMtimeMs", async () => {
+      fsReadTextMock.mockResolvedValueOnce("v1");
+      await useFileEditorStore.getState().openFile("/x.ts");
+
+      useFileEditorStore.getState().markStale("/x.ts", 2000);
+
+      const f = useFileEditorStore.getState().openFiles[0];
+      expect(f.stale).toBe(true);
+      expect(f.lastMtimeMs).toBe(2000);
+    });
+
+    it("dismissStale：清 stale 但不动 content/original", async () => {
+      fsReadTextMock.mockResolvedValueOnce("v1");
+      await useFileEditorStore.getState().openFile("/x.ts");
+      useFileEditorStore.getState().updateContent("/x.ts", "still-editing");
+      useFileEditorStore.getState().markStale("/x.ts", 2000);
+
+      useFileEditorStore.getState().dismissStale("/x.ts", 2100);
+
+      const f = useFileEditorStore.getState().openFiles[0];
+      expect(f.stale).toBe(false);
+      expect(f.lastMtimeMs).toBe(2100);
+      // "保留我的"：content 不受影响
+      expect(f.content).toBe("still-editing");
     });
   });
 });

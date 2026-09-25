@@ -81,9 +81,8 @@ pub fn resolve_scope(cwd_in: &Path, db: &AitmDb) -> Result<Scope> {
 
     // 3. 查 ignored
     let cwd_str = cwd.to_string_lossy().into_owned();
-    let ignored = db.with_global(|conn| {
-        crate::store::repo_global::ignored_paths::is_ignored(conn, &cwd_str)
-    })?;
+    let ignored = db
+        .with_global(|conn| crate::store::repo_global::ignored_paths::is_ignored(conn, &cwd_str))?;
     if ignored {
         return Ok(Scope::Global);
     }

@@ -364,7 +364,9 @@ pub fn discover_all(
 /// 拿不到 HOME → 只扫项目级。任何失败都退化成空列表，绝不 panic。
 pub fn load_skills(cwd: &Path) -> Vec<SkillMeta> {
     let home = dirs::home_dir();
-    let global = home.as_deref().map(|h| h.join(".claude").join(SKILLS_SUBDIR));
+    let global = home
+        .as_deref()
+        .map(|h| h.join(".claude").join(SKILLS_SUBDIR));
     let project = cwd.join(".claude").join(SKILLS_SUBDIR);
     let plugin_root = home
         .as_deref()
@@ -437,10 +439,11 @@ fn cached_with(
 /// 退回匹配是因为 LLM 可能按目录名称呼一个 frontmatter `name` 不一致的 skill。
 pub fn find<'a>(skills: &'a [SkillMeta], name: &str) -> Option<&'a SkillMeta> {
     let want = name.trim();
-    skills
-        .iter()
-        .find(|s| s.name == want)
-        .or_else(|| skills.iter().find(|s| s.dir.file_name().is_some_and(|d| d == want)))
+    skills.iter().find(|s| s.name == want).or_else(|| {
+        skills
+            .iter()
+            .find(|s| s.dir.file_name().is_some_and(|d| d == want))
+    })
 }
 
 /// 渲染注入 system prompt 的 skills **提示段**（不是清单）。空列表 → `None`。
@@ -486,7 +489,11 @@ pub fn render_hint(skills: &[SkillMeta], cwd: &Path) -> Option<String> {
         .map(|s| s.name.as_str())
         .collect();
     if !project.is_empty() {
-        let shown: Vec<&str> = project.iter().take(PROJECT_SKILL_NAMES_MAX).copied().collect();
+        let shown: Vec<&str> = project
+            .iter()
+            .take(PROJECT_SKILL_NAMES_MAX)
+            .copied()
+            .collect();
         let more = project.len() - shown.len();
         let tail = if more > 0 {
             format!("（另有 {more} 个，用 list_skills 搜）")
@@ -532,7 +539,8 @@ mod tests {
 
     /// 造一个带标准 frontmatter 的 skill。
     fn write_skill(root: &Path, dir_name: &str, name: &str, desc: &str, body: &str) -> PathBuf {
-        let content = format!("---\nname: {name}\ndescription: {desc}\nversion: 0.1.0\n---\n{body}");
+        let content =
+            format!("---\nname: {name}\ndescription: {desc}\nversion: 0.1.0\n---\n{body}");
         write_skill_raw(root, dir_name, &content)
     }
 
@@ -677,7 +685,11 @@ mod tests {
     #[test]
     fn scan_dir_缺_name_用目录名兜底() {
         let tmp = TempDir::new().unwrap();
-        write_skill_raw(tmp.path(), "fallback-dir", "---\ndescription: 只有描述\n---\n正文");
+        write_skill_raw(
+            tmp.path(),
+            "fallback-dir",
+            "---\ndescription: 只有描述\n---\n正文",
+        );
         let got = scan_dir(tmp.path());
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].name, "fallback-dir");
@@ -821,9 +833,18 @@ mod tests {
         );
         let got = render_hint(&skills, tmp.path()).unwrap();
         assert!(!got.contains("资深写作专家"), "🔴 简介不该进 system prompt");
-        assert!(!got.contains("风险评估与控制专家"), "🔴 简介不该进 system prompt");
-        assert!(!got.contains("- `writing-expert`"), "🔴 清单行不该进 system prompt");
-        assert!(!got.contains("risk-expert"), "🔴 用户级 skill 的名字也不该逐个列出");
+        assert!(
+            !got.contains("风险评估与控制专家"),
+            "🔴 简介不该进 system prompt"
+        );
+        assert!(
+            !got.contains("- `writing-expert`"),
+            "🔴 清单行不该进 system prompt"
+        );
+        assert!(
+            !got.contains("risk-expert"),
+            "🔴 用户级 skill 的名字也不该逐个列出"
+        );
     }
 
     /// 真实规模（118 个）下提示段必须是**几百字节**量级，而不是老实现的 20KB。
@@ -862,7 +883,10 @@ mod tests {
             &[("user-level", "用户级")],
         ));
         let got = render_hint(&skills, cwd.path()).unwrap();
-        assert!(got.contains("proj-only"), "项目级 skill 应被点名，实得：\n{got}");
+        assert!(
+            got.contains("proj-only"),
+            "项目级 skill 应被点名，实得：\n{got}"
+        );
         assert!(!got.contains("user-level"), "用户级不该点名（走搜索）");
         assert!(!got.contains("项目专用"), "点名只给名字，不给简介");
     }
@@ -985,7 +1009,13 @@ mod tests {
         let cwd = TempDir::new().unwrap();
         let root = cwd.path().join(".claude").join("skills");
         fs::create_dir_all(&root).unwrap();
-        write_skill(&root, "aitm-test-cache-x1", "aitm-test-cache-x1", "缓存测试", "正文");
+        write_skill(
+            &root,
+            "aitm-test-cache-x1",
+            "aitm-test-cache-x1",
+            "缓存测试",
+            "正文",
+        );
         let got = load_skills_cached(cwd.path());
         assert!(find(&got, "aitm-test-cache-x1").is_some());
         // 第二次走缓存，返回同一份数据
@@ -1003,7 +1033,13 @@ mod tests {
         let root = cwd.path().join(".claude").join("skills");
         fs::create_dir_all(&root).unwrap();
         // 名字加随机后缀，避免与维护者真实 ~/.claude/skills 里的同名 skill 撞
-        write_skill(&root, "aitm-test-skill-x1", "aitm-test-skill-x1", "测试用", "正文");
+        write_skill(
+            &root,
+            "aitm-test-skill-x1",
+            "aitm-test-skill-x1",
+            "测试用",
+            "正文",
+        );
         let got = load_skills(cwd.path());
         assert!(
             find(&got, "aitm-test-skill-x1").is_some(),
@@ -1043,7 +1079,13 @@ mod tests {
     fn scan_plugin_skills_市场名下直接是_skills() {
         // 布局一：marketplaces/<市场>/skills/*/SKILL.md（市场名下直接是 skills）
         let tmp = TempDir::new().unwrap();
-        write_plugin_skill(tmp.path(), &["demo-market"], "demo-prd", "demo-prd", "创建 PRD 文档");
+        write_plugin_skill(
+            tmp.path(),
+            &["demo-market"],
+            "demo-prd",
+            "demo-prd",
+            "创建 PRD 文档",
+        );
         let got = scan_plugin_skills(tmp.path());
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].name, "demo-prd");
@@ -1053,7 +1095,13 @@ mod tests {
     fn scan_plugin_skills_市场_插件_skills() {
         // 布局二：marketplaces/<市场>/<插件>/skills/*/SKILL.md
         let tmp = TempDir::new().unwrap();
-        write_plugin_skill(tmp.path(), &["demo-market", "demo-plugin"], "do", "do", "执行分阶段实施计划");
+        write_plugin_skill(
+            tmp.path(),
+            &["demo-market", "demo-plugin"],
+            "do",
+            "do",
+            "执行分阶段实施计划",
+        );
         let got = scan_plugin_skills(tmp.path());
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].name, "do");
@@ -1141,7 +1189,11 @@ mod tests {
         write_skill(global.path(), "dup", "dup", "用户版本", "正文");
         write_skill(project.path(), "dup", "dup", "项目版本", "正文");
 
-        let got = discover_all(Some(global.path()), Some(project.path()), Some(plugin_root.path()));
+        let got = discover_all(
+            Some(global.path()),
+            Some(project.path()),
+            Some(plugin_root.path()),
+        );
         assert_eq!(got.len(), 1, "同名只保留一份");
         assert_eq!(find(&got, "dup").unwrap().description, "项目版本");
     }
@@ -1163,11 +1215,21 @@ mod tests {
         let plugin_root = TempDir::new().unwrap();
         let global = TempDir::new().unwrap();
         let project = TempDir::new().unwrap();
-        write_plugin_skill(plugin_root.path(), &["market"], "only-plugin", "only-plugin", "d");
+        write_plugin_skill(
+            plugin_root.path(),
+            &["market"],
+            "only-plugin",
+            "only-plugin",
+            "d",
+        );
         write_skill(global.path(), "only-global", "only-global", "d", "正文");
         write_skill(project.path(), "only-project", "only-project", "d", "正文");
 
-        let got = discover_all(Some(global.path()), Some(project.path()), Some(plugin_root.path()));
+        let got = discover_all(
+            Some(global.path()),
+            Some(project.path()),
+            Some(plugin_root.path()),
+        );
         assert_eq!(got.len(), 3);
         for name in ["only-plugin", "only-global", "only-project"] {
             assert_eq!(
@@ -1202,5 +1264,3 @@ mod tests {
         assert_eq!(via_all, via_discover);
     }
 }
-
-

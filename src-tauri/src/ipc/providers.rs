@@ -19,11 +19,13 @@ use tauri::{AppHandle, Emitter, State};
 
 use crate::ipc::ai::AiState;
 use crate::ipc::settings::SettingsState;
+use crate::providers::ModelInfo;
 use crate::providers::anthropic::{self as anthropic_mod, AnthropicConfig};
 use crate::providers::env::{load_dotenv_map, mask_api_key};
 use crate::providers::presets::Preset;
-use crate::providers::types::{ChatRequest, ChatChunk, Message, MessageContent, ProviderError, Role};
-use crate::providers::ModelInfo;
+use crate::providers::types::{
+    ChatChunk, ChatRequest, Message, MessageContent, ProviderError, Role,
+};
 use crate::settings::{AppSettings, ProviderConfig};
 
 /// API key 解析来源（优先级 env > dotenv > config > none）。
@@ -429,11 +431,7 @@ mod tests {
                 },
             );
             let dotenv = HashMap::new();
-            let dto = build_dto(
-                ProviderKind::OpenAICompat(Preset::DeepSeek),
-                &s,
-                &dotenv,
-            );
+            let dto = build_dto(ProviderKind::OpenAICompat(Preset::DeepSeek), &s, &dotenv);
             assert_eq!(dto.id, "deepseek");
             assert_eq!(dto.key_source, KeySource::Config);
             // mask_api_key 保留前 3 / 后 4

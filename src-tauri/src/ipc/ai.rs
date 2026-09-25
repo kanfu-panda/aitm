@@ -33,7 +33,7 @@ use crate::orchestrator::tool_loop::{
     AiToolFinishedEvent, AiToolRequestEvent, AiToolStartedEvent, EventSink, ToolLoopHandle,
     run_tool_loop,
 };
-use crate::providers::registry::{auto_register, ProviderRegistry, RegistryEntry, SharedRegistry};
+use crate::providers::registry::{ProviderRegistry, RegistryEntry, SharedRegistry, auto_register};
 use crate::providers::types::*;
 use crate::safety::whitelist::compile as compile_whitelist;
 use crate::scope::Scope;
@@ -218,11 +218,7 @@ pub fn render_runtime_context(ctx: &RuntimeContext) -> Option<String> {
     }
     /// 同上，String 版本（空串 → "(未知)"）
     fn show_str(s: &str) -> &str {
-        if s.is_empty() {
-            "(未知)"
-        } else {
-            s
-        }
+        if s.is_empty() { "(未知)" } else { s }
     }
 
     let mut out = String::from("# 当前运行时状态（v0.9.2 实时注入，每轮请求刷新）\n\n");
@@ -416,6 +412,8 @@ struct PersistenceSink {
     cid: String,
     /// provider id 用于 token usage 累加
     provider_id: String,
+    /// 写库放后台线程按序执行：sink 回调是同步的，直接写 SQLite 会占住 tokio worker
+    writes: crate::store::write_queue::WriteQueue,
 }
 
 /// T-B4：一次工具调用跨事件累积的元信息。
@@ -433,6 +431,16 @@ struct ToolCallAccum {
 }
 
 impl PersistenceSink {
+    /// 把一条消息交给后台写库队列（按提交顺序落盘，不阻塞当前线程）。
+    fn persist_message_async(&self, kind: &'static str, payload: String) {
+        let (db, bucket, cid) = (self.db.clone(), self.bucket.clone(), self.cid.clone());
+        self.writes.submit(move || {
+            if let Err(err) = persist_message(&db, &bucket, &cid, kind, &payload) {
+                tracing::warn!("persist {kind} message failed: {err}");
+            }
+        });
+    }
+
     fn drain_assistant_text(&self) -> String {
         self.assistant_buffer
             .lock()
@@ -450,9 +458,7 @@ impl PersistenceSink {
             return;
         }
         let payload = serde_json::json!({ "content": text }).to_string();
-        if let Err(err) = persist_message(&self.db, &self.bucket, &self.cid, "assistant", &payload) {
-            tracing::warn!("persist assistant (工具前) message failed: {err}");
-        }
+        self.persist_message_async("assistant", payload);
     }
 }
 
@@ -557,11 +563,7 @@ impl EventSink for PersistenceSink {
                 e.auto_approved_reason.as_deref(),
                 preview,
             );
-            if let Err(err) =
-                persist_message(&self.db, &self.bucket, &self.cid, "tool_call", &payload)
-            {
-                tracing::warn!("persist tool_call message failed: {err}");
-            }
+            self.persist_message_async("tool_call", payload);
         }
         self.inner.emit_tool_finished(e);
     }
@@ -582,28 +584,24 @@ impl EventSink for PersistenceSink {
                     "usage": e.usage,
                 })
                 .to_string();
-                if let Err(err) = persist_message(
-                    &self.db,
-                    &self.bucket,
-                    &self.cid,
-                    "assistant",
-                    &payload,
-                ) {
-                    tracing::warn!("persist assistant message failed: {err}");
-                }
+                self.persist_message_async("assistant", payload);
             }
 
             // 2. token usage → db
             if let Some(u) = &e.usage {
-                if let Err(err) = persist_token_usage(
-                    &self.db,
-                    &self.bucket,
-                    &self.provider_id,
-                    u.input_tokens as i64,
-                    u.output_tokens as i64,
-                ) {
-                    tracing::warn!("persist token usage failed: {err}");
-                }
+                let (db, bucket, provider_id) = (
+                    self.db.clone(),
+                    self.bucket.clone(),
+                    self.provider_id.clone(),
+                );
+                let (delta_in, delta_out) = (u.input_tokens as i64, u.output_tokens as i64);
+                self.writes.submit(move || {
+                    if let Err(err) =
+                        persist_token_usage(&db, &bucket, &provider_id, delta_in, delta_out)
+                    {
+                        tracing::warn!("persist token usage failed: {err}");
+                    }
+                });
             }
         }
         self.inner.emit_done(e);
@@ -638,14 +636,7 @@ fn persist_token_usage(
 ) -> anyhow::Result<()> {
     let yyyymm = repo_global::token_usage::current_yyyymm();
     db.with_global(|c| {
-        repo_global::token_usage::accumulate(
-            c,
-            bucket,
-            provider_id,
-            &yyyymm,
-            delta_in,
-            delta_out,
-        )?;
+        repo_global::token_usage::accumulate(c, bucket, provider_id, &yyyymm, delta_in, delta_out)?;
         Ok(())
     })
 }
@@ -691,10 +682,7 @@ impl EventSink for TauriSink {
 
 /// 解析 args.cwd → 绝对路径；优先用前端传的 args.cwd，缺失或空时用
 /// active_session 的 shell 实时 cwd 兜底，再不行用 HOME。
-async fn resolve_args_cwd(
-    args: &ChatSendArgs,
-    session_state: &Arc<SessionState>,
-) -> PathBuf {
+async fn resolve_args_cwd(args: &ChatSendArgs, session_state: &Arc<SessionState>) -> PathBuf {
     if let Some(c) = args.cwd.as_deref() {
         if !c.is_empty() {
             return PathBuf::from(c);
@@ -768,12 +756,11 @@ pub async fn ai_chat_send(
     let cwd_path = resolve_args_cwd(&args, session_state.inner()).await;
     let db_arc: Arc<AitmDb> = db.inner().clone();
     let cwd_for_scope = cwd_path.clone();
-    let scope = tokio::task::spawn_blocking(move || {
-        crate::scope::resolve_scope(&cwd_for_scope, &db_arc)
-    })
-    .await
-    .map_err(|e| format!("scope resolve spawn 失败: {e}"))?
-    .map_err(|e| e.to_string())?;
+    let scope =
+        tokio::task::spawn_blocking(move || crate::scope::resolve_scope(&cwd_for_scope, &db_arc))
+            .await
+            .map_err(|e| format!("scope resolve spawn 失败: {e}"))?
+            .map_err(|e| e.to_string())?;
 
     // 2. NeedsInit → 暂存 + emit + 返回（不起 stream task，等用户决议）
     if let Scope::NeedsInit { cwd } = &scope {
@@ -896,7 +883,13 @@ async fn spawn_chat_with_scope(
         let bucket_for_user = bucket.clone();
         let cid_for_user = cid.clone();
         let _ = tokio::task::spawn_blocking(move || {
-            persist_message(&db_for_user, &bucket_for_user, &cid_for_user, "user", &payload)
+            persist_message(
+                &db_for_user,
+                &bucket_for_user,
+                &cid_for_user,
+                "user",
+                &payload,
+            )
         })
         .await;
     }
@@ -911,10 +904,7 @@ async fn spawn_chat_with_scope(
     let cwd = resolve_tool_cwd(&scope, session_cwd);
 
     // 2. compose system prompt（base + 全局 MEMORY + 项目 MEMORY + skills 导航说明）
-    let base_system = args
-        .system
-        .clone()
-        .unwrap_or_else(default_system_prompt);
+    let base_system = args.system.clone().unwrap_or_else(default_system_prompt);
     let scope_for_compose = scope.clone();
     let cwd_for_skills = cwd.clone();
     let composed = tokio::task::spawn_blocking(move || {
@@ -980,6 +970,7 @@ async fn spawn_chat_with_scope(
         pending_tools: StdMutex::new(HashMap::new()),
         cid: cid.clone(),
         provider_id,
+        writes: crate::store::write_queue::WriteQueue::new("chat"),
     });
 
     // C1：查当前 model 的上下文窗口（token）透传给 loop 做预算裁剪；
@@ -1056,10 +1047,7 @@ pub async fn ai_tool_approve(
 
 /// 用户在前端 ConfirmDialog 点了"拒绝" → 喂回 tool loop。
 #[tauri::command]
-pub async fn ai_tool_reject(
-    call_id: String,
-    state: State<'_, AiState>,
-) -> Result<(), String> {
+pub async fn ai_tool_reject(call_id: String, state: State<'_, AiState>) -> Result<(), String> {
     tool_loop::resolve_approval(&state.tool_loop_handle, &call_id, false, false).await;
     Ok(())
 }
@@ -1230,7 +1218,10 @@ mod tests {
         );
 
         let got = append_skills_hint("BASE_PROMPT".to_string(), cwd.path());
-        assert!(got.starts_with("BASE_PROMPT"), "原 system prompt 必须保留在前");
+        assert!(
+            got.starts_with("BASE_PROMPT"),
+            "原 system prompt 必须保留在前"
+        );
         assert!(got.contains("aitm-test-inject"), "项目级 skill 应被点名");
         assert!(got.contains("list_skills"), "应引导去搜索");
         assert!(got.contains("load_skill"), "应引导去加载正文");
@@ -1420,7 +1411,10 @@ mod tests {
         let out = render_runtime_context(&ctx).expect("非空 → Some");
         assert!(out.contains("session_id: sess-2"));
         assert!(out.contains("cwd: (未知)"), "cwd 缺失应输出 `(未知)` 占位");
-        assert!(out.contains("shell: (未知)"), "shell 缺失应输出 `(未知)` 占位");
+        assert!(
+            out.contains("shell: (未知)"),
+            "shell 缺失应输出 `(未知)` 占位"
+        );
         // 浏览器 / 编辑器整段未打开
         assert!(out.contains("active 浏览器 tab：(未打开"));
         assert!(out.contains("active 编辑器文件：(未打开"));
@@ -1669,7 +1663,8 @@ mod tests {
             old_text: String::new(),
             new_text: "hello".into(),
         };
-        let s = build_tool_call_payload("tc3", &accum, "已写入", false, 42, None, Some(&fin_preview));
+        let s =
+            build_tool_call_payload("tc3", &accum, "已写入", false, 42, None, Some(&fin_preview));
         let v: serde_json::Value = serde_json::from_str(&s).unwrap();
         assert_eq!(v["preview"]["path"], "new.txt");
         assert_eq!(v["preview"]["new_text"], "hello");

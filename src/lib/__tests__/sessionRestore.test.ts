@@ -246,15 +246,30 @@ describe("重启恢复时把 tmux 标签接回去", () => {
   }
 
   it("应该_当快照里的_tmux_会话仍在时_只为它生成接入命令", async () => {
-    tmuxListSessionsMock.mockResolvedValue([{ id: "$7" }, { id: "$99" }]);
+    tmuxListSessionsMock.mockResolvedValue([
+      { id: "$7", name: "alive" },
+      { id: "$99", name: "other" },
+    ]);
     tmuxAttachCommandMock.mockResolvedValue("'/bin/tmux' attach-session -t '$7'");
 
     const reattach = await resolveTmuxReattach(tmuxSnapshot());
 
     expect([...reattach.keys()]).toEqual(["old-2"]);
-    expect(reattach.get("old-2")).toBe("'/bin/tmux' attach-session -t '$7'");
+    expect(reattach.get("old-2")).toEqual({
+      command: "'/bin/tmux' attach-session -t '$7'",
+      name: "alive",
+    });
     // 重启恢复是共享接入，不踢掉别处的客户端
     expect(tmuxAttachCommandMock).toHaveBeenCalledWith("$7", false);
+  });
+
+  it("应该_当会话在应用关闭期间改过名时_接回信息里带的是现在的名字", async () => {
+    tmuxListSessionsMock.mockResolvedValue([{ id: "$7", name: "renamed" }]);
+    tmuxAttachCommandMock.mockResolvedValue("'/bin/tmux' attach-session -t '$7'");
+
+    const reattach = await resolveTmuxReattach(tmuxSnapshot());
+
+    expect(reattach.get("old-2")?.name).toBe("renamed");
   });
 
   it("应该_当查询_tmux_失败时_不接回任何标签也不抛错", async () => {
@@ -272,11 +287,18 @@ describe("重启恢复时把 tmux 标签接回去", () => {
   it("应该_当会话仍在时_恢复出的标签带接入命令并记住会话_id", () => {
     restoreSnapshotTabs(
       tmuxSnapshot(),
-      new Map([["old-2", "'/bin/tmux' attach-session -t '$7'"]]),
+      new Map([
+        [
+          "old-2",
+          { command: "'/bin/tmux' attach-session -t '$7'", name: "alive-now" },
+        ],
+      ]),
     );
     const tabs = useTabsStore.getState().tabs;
     expect(tabs).toHaveLength(3);
-    expect(tabs[1].title).toBe("tmux: alive");
+    // 标题只用会话名（标签栏另有 tmux 图标），且取 tmux 此刻的名字：
+    // 1.6.1 的快照标题是「tmux: alive」，也要借这次恢复换成新样式
+    expect(tabs[1].title).toBe("alive-now");
     expect(tabs[1].initialInput).toBe("'/bin/tmux' attach-session -t '$7'\n");
     expect(tabs[1].tmuxSessionId).toBe("$7");
     // 普通标签不受影响
@@ -293,5 +315,118 @@ describe("重启恢复时把 tmux 标签接回去", () => {
     expect(gone.auto_title).toBe(true);
     expect(gone.title).not.toContain("tmux");
     expect(gone.last_cwd).toBe("/proj");
+  });
+});
+
+describe("重启恢复每个分屏各自选中的标签与焦点分屏", () => {
+  beforeEach(resetStores);
+
+  /** 左 g-initial、右 g-right 两个分屏。 */
+  function splitLayout() {
+    usePaneLayoutStore.setState({
+      root: {
+        kind: "split",
+        direction: "horizontal",
+        ratio: 0.5,
+        left: {
+          kind: "leaf",
+          group: {
+            id: INITIAL_GROUP_ID,
+            type: "terminal",
+            tab_ids: [],
+            active_tab_id: null,
+          },
+        },
+        right: {
+          kind: "leaf",
+          group: {
+            id: "g-right",
+            type: "terminal",
+            tab_ids: [],
+            active_tab_id: null,
+          },
+        },
+      },
+      active_group_id: INITIAL_GROUP_ID,
+    });
+  }
+
+  function tab(id: string, group: string, groupActive?: boolean) {
+    return {
+      tab_id: id,
+      title: id,
+      cwd: "/proj",
+      unread: 0,
+      group_id: group,
+      ...(groupActive === undefined ? {} : { group_active: groupActive }),
+    };
+  }
+
+  /** 旧 tab_id → 恢复后的新 id（按快照顺序一一对应）。 */
+  function newIdOf(snapshot: SessionSnapshot, oldId: string): string {
+    const idx = snapshot.tabs.findIndex((t) => t.tab_id === oldId);
+    return useTabsStore.getState().tabs[idx].id;
+  }
+
+  function groupById(id: string) {
+    return collectAllGroups(usePaneLayoutStore.getState().root).find(
+      (g) => g.id === id,
+    );
+  }
+
+  it("应该_当快照记着各分屏选中的标签时_每个分屏选中原来那个而不是第一个", () => {
+    splitLayout();
+    const snap = makeSnapshot({
+      tabs: [
+        tab("l1", INITIAL_GROUP_ID, false),
+        tab("l2", INITIAL_GROUP_ID, true),
+        tab("r1", "g-right", false),
+        tab("r2", "g-right", true),
+      ],
+      active_tab_id: "l2",
+    });
+
+    restoreSnapshotTabs(snap);
+
+    expect(groupById(INITIAL_GROUP_ID)?.active_tab_id).toBe(newIdOf(snap, "l2"));
+    expect(groupById("g-right")?.active_tab_id).toBe(newIdOf(snap, "r2"));
+  });
+
+  it("应该_当焦点在右侧分屏时_重启后焦点仍在右侧且全局当前标签一致", () => {
+    splitLayout();
+    const snap = makeSnapshot({
+      tabs: [
+        tab("l1", INITIAL_GROUP_ID, true),
+        tab("r1", "g-right", false),
+        tab("r2", "g-right", true),
+      ],
+      active_tab_id: "r2",
+    });
+
+    restoreSnapshotTabs(snap);
+
+    const { active_group_id } = usePaneLayoutStore.getState();
+    expect(active_group_id).toBe("g-right");
+    expect(useTabsStore.getState().activeId).toBe(newIdOf(snap, "r2"));
+    expect(groupById("g-right")?.active_tab_id).toBe(newIdOf(snap, "r2"));
+  });
+
+  it("应该_当旧快照没有分屏选中信息时_当前标签所在分屏仍选中它并获得焦点", () => {
+    splitLayout();
+    const snap = makeSnapshot({
+      tabs: [
+        tab("l1", INITIAL_GROUP_ID),
+        tab("r1", "g-right"),
+        tab("r2", "g-right"),
+      ],
+      active_tab_id: "r2",
+    });
+
+    restoreSnapshotTabs(snap);
+
+    expect(usePaneLayoutStore.getState().active_group_id).toBe("g-right");
+    expect(groupById("g-right")?.active_tab_id).toBe(newIdOf(snap, "r2"));
+    // 其余分屏没有信息可用，保持原行为：选中第一个
+    expect(groupById(INITIAL_GROUP_ID)?.active_tab_id).toBe(newIdOf(snap, "l1"));
   });
 });

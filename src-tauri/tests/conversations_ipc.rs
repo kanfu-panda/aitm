@@ -219,14 +219,7 @@ fn conv_set_model_后_provider_model_保存() {
         assert_eq!(c.provider_id, "");
         assert_eq!(c.model_id, "");
 
-        conv_set_model_impl(
-            &db,
-            &scope,
-            c.id.clone(),
-            "openai".into(),
-            "gpt-4o".into(),
-        )
-        .unwrap();
+        conv_set_model_impl(&db, &scope, c.id.clone(), "openai".into(), "gpt-4o".into()).unwrap();
 
         let list = conv_list_impl(&db, &scope).unwrap();
         let got = list.iter().find(|r| r.id == c.id).unwrap();
@@ -499,8 +492,14 @@ fn tool_call_消息_往返_含_preview() {
         })
         .to_string();
 
-        conv_append_message_impl(&db, &scope, c.id.clone(), "tool_call".into(), payload.clone())
-            .unwrap();
+        conv_append_message_impl(
+            &db,
+            &scope,
+            c.id.clone(),
+            "tool_call".into(),
+            payload.clone(),
+        )
+        .unwrap();
 
         let list = conv_get_messages_impl(&db, &scope, c.id.clone()).unwrap();
         assert_eq!(list.len(), 1);
@@ -562,7 +561,10 @@ fn 混合消息_时序_user_assistant_tool_call_assistant() {
         let kinds: Vec<&str> = list.iter().map(|m| m.kind.as_str()).collect();
         assert_eq!(kinds, vec!["user", "assistant", "tool_call", "assistant"]);
         // seq 严格递增
-        assert_eq!(list.iter().map(|m| m.seq).collect::<Vec<_>>(), vec![1, 2, 3, 4]);
+        assert_eq!(
+            list.iter().map(|m| m.seq).collect::<Vec<_>>(),
+            vec![1, 2, 3, 4]
+        );
     });
 }
 
@@ -642,7 +644,8 @@ fn append_刷新_conversation_的_updated_at_在_list_排前() {
 
         let list = conv_list_impl(&db, &scope).unwrap();
         assert_eq!(
-            list[0].id, a.id,
+            list[0].id,
+            a.id,
             "刚追加消息的 A 应排到最前；list = {:?}",
             list.iter().map(|r| &r.title).collect::<Vec<_>>()
         );

@@ -90,9 +90,7 @@ impl Tool for WriteFileTool {
         let target = sandboxed_target(&parsed.path, &canonical_cwd).ok()?;
 
         // 只读旧内容算 diff；不存在则视为空串（新建文件场景）。绝不写盘。
-        let old_text = tokio::fs::read_to_string(&target)
-            .await
-            .unwrap_or_default();
+        let old_text = tokio::fs::read_to_string(&target).await.unwrap_or_default();
 
         Some(ToolPreview {
             kind: "diff".into(),
@@ -198,7 +196,10 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let ctx = make_ctx(dir.path().to_path_buf());
         let r = WriteFileTool
-            .execute(json!({ "path": "hello.txt", "content": "line1\nline2" }), &ctx)
+            .execute(
+                json!({ "path": "hello.txt", "content": "line1\nline2" }),
+                &ctx,
+            )
             .await
             .unwrap();
         assert!(!r.is_error);
@@ -247,10 +248,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let ctx = make_ctx(dir.path().to_path_buf());
         let r = WriteFileTool
-            .execute(
-                json!({ "path": "a/b/c.txt", "content": "nested" }),
-                &ctx,
-            )
+            .execute(json!({ "path": "a/b/c.txt", "content": "nested" }), &ctx)
             .await
             .unwrap();
         assert!(!r.is_error);
@@ -299,7 +297,9 @@ mod tests {
     async fn 缺参数_invalid_args() {
         let dir = TempDir::new().unwrap();
         let ctx = make_ctx(dir.path().to_path_buf());
-        let r = WriteFileTool.execute(json!({ "path": "a.txt" }), &ctx).await;
+        let r = WriteFileTool
+            .execute(json!({ "path": "a.txt" }), &ctx)
+            .await;
         assert!(matches!(r, Err(ToolError::InvalidArgs(_))));
     }
 }

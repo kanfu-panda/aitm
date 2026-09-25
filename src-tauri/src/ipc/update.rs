@@ -16,8 +16,7 @@
 use serde::{Deserialize, Serialize};
 
 /// GitHub Releases API 端点。仓库 owner/name 通过编译期常量配置。
-const RELEASES_API_URL: &str =
-    "https://api.github.com/repos/kanfu-panda/aitm/releases/latest";
+const RELEASES_API_URL: &str = "https://api.github.com/repos/kanfu-panda/aitm/releases/latest";
 
 /// HTTP 客户端 timeout（毫秒）—— 启动调用，不希望挂太久
 const HTTP_TIMEOUT_MS: u64 = 5_000;
@@ -323,13 +322,19 @@ mod tests {
 
     /// 造一组真实 release 的资产（照抄 v1.3.0 的实际文件名）
     fn 全平台资产() -> Vec<GitHubAsset> {
-        ["aarch64.dmg", "arm64-setup.exe", "arm64_en-US.msi", "x64-setup.exe", "x64_en-US.msi"]
-            .iter()
-            .map(|tail| GitHubAsset {
-                name: format!("aitm_1.3.0_{tail}"),
-                browser_download_url: format!("https://x/y/aitm_1.3.0_{tail}"),
-            })
-            .collect()
+        [
+            "aarch64.dmg",
+            "arm64-setup.exe",
+            "arm64_en-US.msi",
+            "x64-setup.exe",
+            "x64_en-US.msi",
+        ]
+        .iter()
+        .map(|tail| GitHubAsset {
+            name: format!("aitm_1.3.0_{tail}"),
+            browser_download_url: format!("https://x/y/aitm_1.3.0_{tail}"),
+        })
+        .collect()
     }
 
     #[test]
@@ -347,7 +352,10 @@ mod tests {
     #[test]
     fn pick_asset_windows_arm_取_arm64_不取_x64() {
         let url = pick_asset(&全平台资产(), &["_arm64-setup.exe", "_arm64_en-US.msi"]);
-        assert_eq!(url.as_deref(), Some("https://x/y/aitm_1.3.0_arm64-setup.exe"));
+        assert_eq!(
+            url.as_deref(),
+            Some("https://x/y/aitm_1.3.0_arm64-setup.exe")
+        );
     }
 
     #[test]
@@ -381,10 +389,16 @@ mod tests {
             assert!(!s.is_empty(), "macOS/Windows 必须有候选后缀");
         }
         if cfg!(target_os = "windows") {
-            assert!(s.iter().all(|x| !x.ends_with(".dmg")), "Windows 不该匹配 dmg：{s:?}");
+            assert!(
+                s.iter().all(|x| !x.ends_with(".dmg")),
+                "Windows 不该匹配 dmg：{s:?}"
+            );
         }
         if cfg!(target_os = "macos") {
-            assert!(s.iter().all(|x| x.ends_with(".dmg")), "macOS 只该匹配 dmg：{s:?}");
+            assert!(
+                s.iter().all(|x| x.ends_with(".dmg")),
+                "macOS 只该匹配 dmg：{s:?}"
+            );
         }
     }
 

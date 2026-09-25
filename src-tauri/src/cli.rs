@@ -95,11 +95,7 @@ pub fn run_init(rest: &[String]) -> i32 {
 }
 
 /// 注入 IO 的核心实现，单测专用。
-pub fn run_init_with<O: Write, E: Write>(
-    rest: &[String],
-    out: &mut O,
-    err: &mut E,
-) -> i32 {
+pub fn run_init_with<O: Write, E: Write>(rest: &[String], out: &mut O, err: &mut E) -> i32 {
     let args = match parse_init_args(rest) {
         Ok(a) => a,
         Err(msg) if msg == "__HELP__" => {
@@ -179,7 +175,10 @@ fn print_init_help<W: Write>(w: &mut W) {
     let mut s = String::new();
     let _ = writeln!(s, "用法: aitm init [path] [--name NAME]");
     let _ = writeln!(s);
-    let _ = writeln!(s, "  在 path（默认当前目录）下创建 .aitm/project.json + .gitignore，");
+    let _ = writeln!(
+        s,
+        "  在 path（默认当前目录）下创建 .aitm/project.json + .gitignore，"
+    );
     let _ = writeln!(s, "  并把项目注册到全局 db。已存在 marker 时幂等返回。");
     let _ = writeln!(s);
     let _ = writeln!(s, "选项:");
@@ -361,11 +360,7 @@ mod tests {
 
             let mut out: Vec<u8> = Vec::new();
             let mut err: Vec<u8> = Vec::new();
-            let code = run_init_with(
-                &[proj.to_string_lossy().into_owned()],
-                &mut out,
-                &mut err,
-            );
+            let code = run_init_with(&[proj.to_string_lossy().into_owned()], &mut out, &mut err);
             assert_eq!(code, EXIT_OK);
 
             let m = marker::read(&proj).unwrap().unwrap();

@@ -174,6 +174,17 @@ export async function installTauriMock(
       themeMode: DEFAULTS.ui.theme_mode,
       // 启动是否静默恢复上次会话；spec 用 __setRestoreSession(false) 关掉。
       restoreSession: DEFAULTS.ui.restore_session,
+      // 上次保存的分屏布局（JSON 字符串）；spec 用 __setPaneLayout 注入
+      paneLayout: DEFAULTS.ui.pane_layout as string | null,
+    };
+
+    // spec 在 page.goto 前调，模拟上次退出时保存下来的分屏布局。
+    (
+      window as unknown as {
+        __setPaneLayout: (layout: unknown) => void;
+      }
+    ).__setPaneLayout = (layout) => {
+      settingsState.paneLayout = JSON.stringify(layout);
     };
 
     // spec 在 page.goto 前调，模拟用户在设置里关掉"启动时恢复上次会话"。
@@ -409,8 +420,19 @@ export async function installTauriMock(
         }
 
         // === 已有命令 ===
-        if (cmd === "session_open")
-          return "00000000-0000-0000-0000-000000000001";
+        if (cmd === "session_open") {
+          const sid = "00000000-0000-0000-0000-000000000001";
+          // 模拟真实后端：PTY 一建好就开始发输出，早于 session_open 的返回值到达前端
+          const early = (window as unknown as { __sessionOpenEarlyOutput?: string })
+            .__sessionOpenEarlyOutput;
+          if (early) {
+            emitMockEvent("session:data", {
+              session_id: sid,
+              bytes_base64: btoa(early),
+            });
+          }
+          return sid;
+        }
         if (cmd === "session_write") {
           sessionWrites.push(atob(args.bytesBase64 as string));
           return null;
@@ -439,6 +461,7 @@ export async function installTauriMock(
               activity_bar_position: settingsState.activityBarPosition,
               theme_mode: settingsState.themeMode,
               restore_session: settingsState.restoreSession,
+              pane_layout: settingsState.paneLayout,
             },
           };
         }
