@@ -40,7 +40,7 @@ export default function BrowserTabBar() {
       {/* 标签区单独滚动，并**隐藏滚动条**：macOS 的 overlay 滚动条画在容器内，
           会直接压住标签文字。用触控板/滚轮照样能横向滚。 */}
       <div
-        className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto scrollbar-none"
         data-testid="browser-tab-strip"
       >
         {tabs.map((tab) => {

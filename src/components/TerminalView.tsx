@@ -382,6 +382,8 @@ export default function TerminalView({
 
     (async () => {
       let id = idRef.current;
+      // 挂载时会话已存在 = 重新挂载（例如标签被拖到另一个分屏），xterm 是新建的空白实例
+      const reattach = id !== null;
       if (!id) {
         // v0.9.1 HR3-1：把上次会话 last_cwd 传给后端 PTY 启动目录。
         // null / undefined / 不存在的目录都由后端 [`resolve_initial_cwd`] 兜底到 HOME。
@@ -455,6 +457,22 @@ export default function TerminalView({
         sessionResize(id!, term.cols, term.rows).catch(() => {});
       });
       if (containerRef.current) resizeObs.observe(containerRef.current);
+
+      // 重新挂载后新 xterm 是空的。tmux / vim 这类全屏程序只在收到窗口尺寸变化信号时
+      // 整屏重绘；新旧分屏一样大时尺寸没变、不会有信号，屏幕会一直黑到下一次有输出。
+      // 所以先少一行再改回来，逼它重绘一次（放在订阅之后，重绘内容才收得到；放在输入
+      // 绑定之后且不 await，不耽误用户马上打字）。中间停一下，免得两次信号被合并、
+      // 程序读到的尺寸与原来相同而不重绘
+      if (reattach && term.rows > 1) {
+        const { cols, rows } = term;
+        const sid = id;
+        void (async () => {
+          await sessionResize(sid, cols, rows - 1).catch(() => {});
+          await new Promise((r) => setTimeout(r, 50));
+          if (!alive) return;
+          await sessionResize(sid, cols, rows).catch(() => {});
+        })();
+      }
     })();
 
     return () => {

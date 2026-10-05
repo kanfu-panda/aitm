@@ -234,6 +234,16 @@ describe("BrowserTabBar", () => {
     expect(tabs[0].textContent).toContain("Tab A");
   });
 
+  it("应该_当标签区横向滚动时_用层外的 scrollbar-none 类隐藏滚动条", () => {
+    // 写成 [scrollbar-width:none] 工具类会被全局 * { scrollbar-width: thin } 盖掉，
+    // 实测上冒出一条粗滚动条压住标签；层叠是否生效由 tabbar.spec.ts 在真实引擎里断言
+    seedTabs([{ key: "a", title: "Tab A" }], "a");
+    render(<BrowserTabBar />);
+    const strip = screen.getByTestId("browser-tab-strip");
+    expect(strip.classList.contains("scrollbar-none")).toBe(true);
+    expect(strip.className).not.toContain("[scrollbar-width:none]");
+  });
+
   it("点 tab → setActive；点 × → closeTab", () => {
     seedTabs(
       [
