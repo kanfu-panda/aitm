@@ -176,6 +176,17 @@ export async function installTauriMock(
       restoreSession: DEFAULTS.ui.restore_session,
       // 上次保存的分屏布局（JSON 字符串）；spec 用 __setPaneLayout 注入
       paneLayout: DEFAULTS.ui.pane_layout as string | null,
+      // 界面语言；spec 用 __setLanguage("en") 切英文（英文文案更长，用来测排版）
+      language: DEFAULTS.ui.language,
+    };
+
+    // spec 在 page.goto 前调，指定启动时的界面语言。
+    (
+      window as unknown as {
+        __setLanguage: (lang: string) => void;
+      }
+    ).__setLanguage = (lang) => {
+      settingsState.language = lang;
     };
 
     // spec 在 page.goto 前调，模拟上次退出时保存下来的分屏布局。
@@ -462,6 +473,7 @@ export async function installTauriMock(
               theme_mode: settingsState.themeMode,
               restore_session: settingsState.restoreSession,
               pane_layout: settingsState.paneLayout,
+              language: settingsState.language,
             },
           };
         }
@@ -542,6 +554,13 @@ export async function installTauriMock(
               title: null,
             },
           ];
+        }
+        if (cmd === "tmux_session_of_tab") {
+          // 默认 null（标签没接 tmux）；spec 用 __setTmuxSessionOfTab 指定
+          return (
+            (window as unknown as { __tmuxSessionOfTab?: unknown })
+              .__tmuxSessionOfTab ?? null
+          );
         }
         if (cmd === "tmux_attach_command") {
           // 现在按 session_id 接入（形如 `$1`）；名字只用于显示

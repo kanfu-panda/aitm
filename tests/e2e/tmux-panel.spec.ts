@@ -376,3 +376,40 @@ test("E2E-12 重启恢复分屏：每个分屏选中原来的标签，焦点仍�
   await expect(groups.nth(1)).toHaveAttribute("data-focused", "true");
   await expect(groups.nth(0)).toHaveAttribute("data-focused", "false");
 });
+
+// 英文界面下关 tmux 标签的确认框，"Close and end session" /
+// "Close tab, keep session" 在 420px 宽的框里放不下，按钮文字折成两行，按钮又高又大
+test("E2E-13 英文界面关 tmux 标签：确认框三个按钮都是单行且不超出对话框", async ({
+  page,
+}) => {
+  await installTauriMock(page);
+  await page.addInitScript(() => {
+    const w = window as unknown as {
+      __setLanguage?: (l: string) => void;
+      __tmuxSessionOfTab?: unknown;
+    };
+    w.__setLanguage?.("en");
+    // 关标签时后端按进程关系认出它接着 tmux
+    w.__tmuxSessionOfTab = { id: "$1", name: "build-farm" };
+  });
+  await page.goto("/");
+  await expect(page.getByRole("tab")).toHaveCount(1, { timeout: 5_000 });
+
+  await page.getByLabel("关闭标签").click();
+
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toContainText("Close tab, keep session");
+  const buttons = dialog.getByRole("button");
+  await expect(buttons).toHaveCount(3);
+
+  const box = (await dialog.boundingBox())!;
+  const heights: number[] = [];
+  for (let i = 0; i < 3; i++) {
+    const b = (await buttons.nth(i).boundingBox())!;
+    heights.push(b.height);
+    expect(b.x).toBeGreaterThanOrEqual(box.x);
+    expect(b.x + b.width).toBeLessThanOrEqual(box.x + box.width);
+  }
+  // 单行按钮高 32px（上下内边距 12 + 行高 20）；折成两行时三个按钮会被一起撑到 50px 以上
+  for (const h of heights) expect(h).toBeLessThan(40);
+});

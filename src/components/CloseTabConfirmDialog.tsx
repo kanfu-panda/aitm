@@ -43,7 +43,12 @@ export default function CloseTabConfirmDialog({
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-40 bg-black/60" />
         <Dialog.Content
-          className="fixed left-1/2 top-1/2 z-50 -translate-x-1/2 -translate-y-1/2 w-[420px] rounded-lg border border-[var(--c-border-strong)] bg-[var(--c-bg-elev-1)] p-5 text-[var(--c-text-base)] shadow-2xl"
+          // tmux 版有三个按钮，英文文案较长（"Close tab, keep session"），420px 放不下会
+          // 折成两行、把按钮撑得又高又大，所以加宽并禁止按钮文字折行
+          className={
+            "fixed left-1/2 top-1/2 z-50 -translate-x-1/2 -translate-y-1/2 rounded-lg border border-[var(--c-border-strong)] bg-[var(--c-bg-elev-1)] p-5 text-[var(--c-text-base)] shadow-2xl " +
+            (tmuxSession ? "w-[500px]" : "w-[420px]")
+          }
           aria-label={t("closeTabDialog.dialogAria")}
         >
           <Dialog.Title className="text-base font-medium text-[var(--c-text-base)]">
@@ -61,14 +66,14 @@ export default function CloseTabConfirmDialog({
               <button
                 type="button"
                 onClick={onCancel}
-                className="rounded border border-[var(--c-border-strong)] px-3 py-1.5 text-sm text-[var(--c-text-base)] hover:bg-[var(--c-bg-elev-2)]"
+                className="whitespace-nowrap rounded border border-[var(--c-border-strong)] px-3 py-1.5 text-sm text-[var(--c-text-base)] hover:bg-[var(--c-bg-elev-2)]"
               >
                 {t("closeTabDialog.cancel")}
               </button>
               <button
                 type="button"
                 onClick={onCloseAndKillTmux}
-                className="rounded border border-[var(--c-error)] px-3 py-1.5 text-sm text-[var(--c-error)] hover:bg-[var(--c-bg-elev-2)]"
+                className="whitespace-nowrap rounded border border-[var(--c-error)] px-3 py-1.5 text-sm text-[var(--c-error)] hover:bg-[var(--c-bg-elev-2)]"
               >
                 {t("closeTabDialog.killSession")}
               </button>
@@ -76,7 +81,7 @@ export default function CloseTabConfirmDialog({
                 type="button"
                 onClick={onConfirm}
                 autoFocus
-                className="rounded bg-[var(--c-success)] px-3 py-1.5 text-sm text-white hover:opacity-90"
+                className="whitespace-nowrap rounded bg-[var(--c-success)] px-3 py-1.5 text-sm text-white hover:opacity-90"
               >
                 {t("closeTabDialog.keepSession")}
               </button>
