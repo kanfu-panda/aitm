@@ -304,8 +304,9 @@ describe("AiSidebar", () => {
     render(<AiSidebar />);
 
     await screen.findByText("请先配置 AI Provider");
-    // 没有模型时不会加载对话，切换器只会永远停在"加载中"
-    expect(screen.queryByText("加载中…")).toBeNull();
+    // 没有模型时不会加载对话，切换器只会永远停在"加载中"。
+    // 头部要等主体通知"没有模型"后的下一次渲染才切换，所以等它而不是立即断言
+    await waitFor(() => expect(screen.queryByText("加载中…")).toBeNull());
     expect(screen.getByRole("banner")).toHaveTextContent("AI 助手");
   });
 

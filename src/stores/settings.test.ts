@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // v0.7.0-A：mock analytics 验证 settings_changed 事件
 vi.mock("../lib/analytics", () => ({
@@ -17,6 +17,7 @@ vi.mock("../lib/tauri", async () => {
 });
 
 import { trackEvent } from "../lib/analytics";
+import { settingsUpdate } from "../lib/tauri";
 import { useSettingsStore } from "./settings";
 
 const trackEventMock = trackEvent as unknown as ReturnType<typeof vi.fn>;
@@ -278,6 +279,36 @@ describe("useSettingsStore", () => {
       // 仅含 section key；不含 font_size / cursor_style 等具体值
       expect(Object.keys(props)).toEqual(["section"]);
       expect(props.section).toBe("terminal");
+    });
+  });
+
+  describe("延迟保存", () => {
+    const settingsUpdateMock = settingsUpdate as unknown as ReturnType<
+      typeof vi.fn
+    >;
+    afterEach(() => {
+      vi.useRealTimers();
+      settingsUpdateMock.mockReset().mockResolvedValue(undefined);
+    });
+
+    it("应该_当保存接口同步抛错时_记录错误而不是从计时器里抛出未捕获异常", () => {
+      vi.useFakeTimers();
+      const err = vi.spyOn(console, "error").mockImplementation(() => {});
+      settingsUpdateMock.mockImplementation(() => {
+        throw new TypeError("invoke 不可用");
+      });
+      useSettingsStore.getState().update({ terminal: { font_size: 15 } });
+      expect(() => vi.advanceTimersByTime(300)).not.toThrow();
+      return vi.waitFor(() => expect(err).toHaveBeenCalled()).finally(() =>
+        err.mockRestore(),
+      );
+    });
+
+    it("应该_当保存接口返回的不是_Promise_时_不抛出未捕获异常", () => {
+      vi.useFakeTimers();
+      settingsUpdateMock.mockReturnValue(undefined);
+      useSettingsStore.getState().update({ terminal: { font_size: 16 } });
+      expect(() => vi.advanceTimersByTime(300)).not.toThrow();
     });
   });
 });

@@ -129,7 +129,11 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     if (saveTimer) clearTimeout(saveTimer);
     saveTimer = setTimeout(() => {
       const current = get().settings;
-      settingsUpdate(current).catch((e) => console.error("settings_update 失败", e));
+      // 先包成 Promise：settingsUpdate 同步抛错（如 IPC 不可用）时也走 catch，
+      // 不会变成计时器里的未捕获异常
+      Promise.resolve()
+        .then(() => settingsUpdate(current))
+        .catch((e) => console.error("settings_update 失败", e));
     }, 300);
   },
 }));
