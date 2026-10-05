@@ -2,6 +2,15 @@
 
 All notable changes to aitm will be documented in this file. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.3] — 2026-10-05
+
+### 修复
+
+- 修复把接着 tmux 的标签拖到另一个分屏后一直黑屏，要等有新输出才显示（vim 等全屏程序同理）。现在换分屏后会立即整屏重绘
+- 修复标签多到放不下时，标签栏底部冒出一条粗滚动条压住标签（终端分屏与浏览器面板的标签栏都受影响）。现在滚动条隐藏，用滚轮或触控板横向滚动
+- 修复英文界面下关闭 tmux 标签时，确认框按钮文字折成两行、按钮又高又大。现在对话框加宽，按钮保持单行
+- 修复修改设置后，若后台保存接口不可用，会产生未捕获异常。现在只记录错误
+
 ## [1.6.2] — 2026-09-25
 
 ### 修复

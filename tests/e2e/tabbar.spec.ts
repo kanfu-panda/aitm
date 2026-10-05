@@ -64,3 +64,23 @@ test("标签放不下时 + 仍可见、新标签滚进可视区、滚轮能翻�
     .toBe(0);
   await expect(page.getByRole("tab").first()).toBeInViewport({ ratio: 1 });
 });
+
+// 标签多时标签栏冒出一条很粗的系统滚动条，压住标签。
+// 全局样式 `* { scrollbar-width: thin }` 不在任何层里，压过了 Tailwind 工具类层里的
+// `scrollbar-width: none`；WebKit 见到非 auto 的 scrollbar-width 就改画原生滚动条
+test("标签放不下时标签栏不显示滚动条", async ({ page }) => {
+  await page.setViewportSize({ width: 900, height: 700 });
+  await page.goto("/");
+  await expect(page.getByRole("tab")).toHaveCount(1, { timeout: 5_000 });
+
+  const add = page.getByLabel("新建标签");
+  for (let i = 0; i < 14; i++) await add.click();
+  const strip = page.getByTestId("terminal-pane-group-tabstrip");
+  expect(await strip.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(
+    true,
+  );
+
+  expect(
+    await strip.evaluate((el) => getComputedStyle(el).scrollbarWidth),
+  ).toBe("none");
+});

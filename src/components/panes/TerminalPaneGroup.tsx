@@ -313,7 +313,7 @@ export function TerminalPaneGroup({ group }: Props) {
         {/* 标签多到放不下时横向滚动；"+" 放在滚动区外，始终可见。
             竖向滚轮转成横向（鼠标没有横向滚轮），触控板自带横向滚动时不插手 */}
         <div
-          className="flex h-full min-w-0 flex-1 items-center overflow-x-auto overflow-y-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          className="flex h-full min-w-0 flex-1 items-center overflow-x-auto overflow-y-hidden scrollbar-none"
           data-testid="terminal-pane-group-tabstrip"
           onWheel={(e) => {
             if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {

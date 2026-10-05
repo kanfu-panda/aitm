@@ -307,6 +307,34 @@ describe("TerminalView", () => {
     expect(onOpened).not.toHaveBeenCalled();
   });
 
+  it("应该_当接上已有会话重新挂载时_把_PTY_尺寸抖动一次让全屏程序整屏重绘", async () => {
+    // 标签拖到另一个分屏会重新挂载、换一个空白 xterm。tmux 这类全屏程序只在收到窗口
+    // 尺寸变化信号时整屏重绘；两个分屏一样大时尺寸没变，不抖一下就一直黑屏
+    render(<TerminalView sessionId="existing-session" />);
+
+    await waitFor(() =>
+      expect(sessionMocks.sessionResizeMock).toHaveBeenCalledTimes(2),
+    );
+    expect(sessionMocks.sessionResizeMock.mock.calls).toEqual([
+      ["existing-session", 80, 23],
+      ["existing-session", 80, 24],
+    ]);
+    // 必须先订阅输出再抖动，否则重绘的内容会在订阅建立前发完
+    const subscribedAt =
+      sessionMocks.onSessionDataMock.mock.invocationCallOrder[0];
+    const firstResizeAt =
+      sessionMocks.sessionResizeMock.mock.invocationCallOrder[0];
+    expect(subscribedAt).toBeLessThan(firstResizeAt);
+  });
+
+  it("应该_当首次打开新会话时_不抖动_PTY_尺寸", async () => {
+    const onOpened = vi.fn();
+    render(<TerminalView sessionId={null} onSessionOpened={onOpened} />);
+    await waitFor(() => expect(onOpened).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 150));
+    expect(sessionMocks.sessionResizeMock).not.toHaveBeenCalled();
+  });
+
   it("收到 PTY 输出应该写入 xterm", async () => {
     render(<TerminalView sessionId={null} />);
 

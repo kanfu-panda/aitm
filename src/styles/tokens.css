@@ -269,3 +269,13 @@ html, body, #root {
   scrollbar-width: thin;
   scrollbar-color: var(--c-bg-elev-3) transparent;
 }
+
+/* 隐藏滚动条、只靠滚轮 / 触控板滚动的区域（如标签栏）用这个类。
+ * 必须和上面的全局规则一样写在层外：层外规则总是压过 Tailwind 工具类所在的层，
+ * 写成 [scrollbar-width:none] 工具类会被上面的 thin 盖掉，WebKit 随即画出原生滚动条 */
+.scrollbar-none {
+  scrollbar-width: none;
+}
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
