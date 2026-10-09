@@ -24,6 +24,7 @@ use serde_json::{Value, json};
 use crate::skills::{self, DESC_MAX_CHARS, SkillMeta};
 
 use super::{RiskClass, Tool, ToolContext, ToolError, ToolResult};
+use crate::ui_error::ui_err;
 
 /// 一次搜索最多列出的条数。
 ///
@@ -68,8 +69,13 @@ impl Tool for ListSkillsTool {
     }
 
     async fn execute(&self, args: Value, ctx: &ToolContext) -> Result<ToolResult, ToolError> {
-        let parsed: Args = serde_json::from_value(args)
-            .map_err(|e| ToolError::InvalidArgs(format!("list_skills 参数: {e}")))?;
+        let parsed: Args = serde_json::from_value(args).map_err(|e| {
+            ToolError::InvalidArgs(ui_err(
+                "tool.skill.listInvalidArgs",
+                &[("error", e.to_string())],
+                format!("list_skills 参数: {e}"),
+            ))
+        })?;
 
         let cwd = ctx.cwd.clone();
         // 扫目录是阻塞 IO（虽然通常命中缓存），丢到 blocking 线程池
@@ -78,7 +84,13 @@ impl Tool for ListSkillsTool {
             render(&all, parsed.query.as_deref())
         })
         .await
-        .map_err(|e| ToolError::Exec(format!("skill 搜索任务失败: {e}")))?;
+        .map_err(|e| {
+            ToolError::Exec(ui_err(
+                "tool.skill.searchTaskFailed",
+                &[("error", e.to_string())],
+                format!("skill 搜索任务失败: {e}"),
+            ))
+        })?;
 
         Ok(ToolResult {
             content,
@@ -94,7 +106,7 @@ impl Tool for ListSkillsTool {
 ///   [`MAX_RESULTS`] 条，超出时注明还有多少条
 pub(crate) fn render(all: &[SkillMeta], query: Option<&str>) -> String {
     if all.is_empty() {
-        return "当前没有安装任何 skill。".to_string();
+        return ui_err("tool.skill.noneInstalled", &[], "当前没有安装任何 skill。");
     }
 
     // LLM 常给 optional 参数填空串（项目 CLAUDE.md 记过这个坑）→ 视同未传
@@ -460,5 +472,32 @@ mod tests {
         let ctx = ctx_at(cwd.path().to_path_buf());
         let r = ListSkillsTool.execute(json!({ "query": 123 }), &ctx).await;
         assert!(matches!(r, Err(ToolError::InvalidArgs(_))), "实得 {r:?}");
+    }
+
+    /// 解析编码字符串，返回 (code, params)。
+    fn parse_code(s: &str) -> (String, serde_json::Value) {
+        let v: serde_json::Value =
+            serde_json::from_str(s).unwrap_or_else(|_| panic!("不是编码串：{s}"));
+        (v["code"].as_str().unwrap().to_string(), v["params"].clone())
+    }
+
+    #[test]
+    fn 应该_当没装任何_skill时_返回编码化的提示() {
+        let got = render(&[], None);
+        assert_eq!(parse_code(&got).0, "tool.skill.noneInstalled");
+        assert_eq!(crate::ui_error::plain(&got), "当前没有安装任何 skill。");
+    }
+
+    #[tokio::test]
+    async fn 应该_当参数类型错误时_返回编码化的参数错误() {
+        let cwd = TempDir::new().unwrap();
+        let ctx = ctx_at(cwd.path().to_path_buf());
+        let Err(ToolError::InvalidArgs(s)) =
+            ListSkillsTool.execute(json!({ "query": 123 }), &ctx).await
+        else {
+            panic!("应返回 InvalidArgs");
+        };
+        assert_eq!(parse_code(&s).0, "tool.skill.listInvalidArgs");
+        assert!(crate::ui_error::plain(&s).starts_with("list_skills 参数: "));
     }
 }

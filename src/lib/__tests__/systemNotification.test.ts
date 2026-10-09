@@ -11,6 +11,7 @@ vi.mock("@tauri-apps/plugin-notification", () => ({
 }));
 
 import type { NotificationEvent } from "../../stores/notifications";
+import i18n from "../i18n";
 import { useSettingsStore } from "../../stores/settings";
 import {
   _resetPermissionStateForTest,
@@ -109,10 +110,10 @@ describe("systemNotification", () => {
       expect(call.title).toBe("aitm — 出错");
     });
 
-    it("event.message 优先 body", async () => {
+    it("终端程序（OSC）的通知：event.message 优先 body", async () => {
       mockIsPermissionGranted.mockResolvedValueOnce(true);
       await ensureNotificationPermission();
-      await sendSystemNotification(baseEvent({ message: "my custom" }));
+      await sendSystemNotification(baseEvent({ message: "my custom", source: "osc9" }));
       expect(mockSendNotification.mock.calls[0][0].body).toBe("my custom");
     });
 
@@ -121,6 +122,61 @@ describe("systemNotification", () => {
       await ensureNotificationPermission();
       await sendSystemNotification(baseEvent({ message: "", level: "waiting" }));
       expect(mockSendNotification.mock.calls[0][0].body).toBe("AI 等待你的审批");
+    });
+
+    // 英文界面下系统通知仍是中文
+    describe("跟随界面语言", () => {
+      afterEach(async () => {
+        await i18n.changeLanguage("zh-CN");
+      });
+
+      const sendAndGet = async (ev: Partial<NotificationEvent>) => {
+        mockIsPermissionGranted.mockResolvedValueOnce(true);
+        await ensureNotificationPermission();
+        await sendSystemNotification(baseEvent(ev));
+        return mockSendNotification.mock.calls[0][0] as { title: string; body: string };
+      };
+
+      it("应该_当界面为英文且 AI 完成时_标题与正文都是英文", async () => {
+        await i18n.changeLanguage("en");
+        const call = await sendAndGet({ level: "done", message: "" });
+        expect(call.title).toBe("aitm — Done");
+        expect(call.body).toBe("AI finished");
+      });
+
+      it("应该_当界面为英文且 AI 等待审批时_正文带上工具名", async () => {
+        await i18n.changeLanguage("en");
+        const call = await sendAndGet({ level: "waiting", message: "run_command" });
+        expect(call.title).toBe("aitm — Waiting for approval");
+        expect(call.body).toBe("AI is waiting for approval: run_command");
+      });
+
+      it("应该_当界面为英文且 AI 出错时_正文带上错误详情", async () => {
+        await i18n.changeLanguage("en");
+        const call = await sendAndGet({ level: "error", message: "HTTP 401" });
+        expect(call.title).toBe("aitm — Error");
+        expect(call.body).toBe("AI error: HTTP 401");
+      });
+
+      it("应该_当界面为英文且错误详情带编码时_详情也是英文", async () => {
+        i18n.addResource("en", "translation", "backendErrors.test.timeout", "Timed out");
+        await i18n.changeLanguage("en");
+        const detail = JSON.stringify({ code: "test.timeout", params: {}, message: "超时" });
+        const call = await sendAndGet({ level: "error", message: detail });
+        expect(call.body).toBe("AI error: Timed out");
+      });
+
+      it("应该_当界面为中文且 AI 完成时_后端附带的文字不覆盖本地化正文", async () => {
+        const call = await sendAndGet({ level: "done", message: "anything" });
+        expect(call.title).toBe("aitm — 完成");
+        expect(call.body).toBe("AI 完成");
+      });
+
+      it("应该_当界面为日文时_标题是日文", async () => {
+        await i18n.changeLanguage("ja");
+        const call = await sendAndGet({ level: "done", message: "" });
+        expect(call.title).toBe("aitm — 完了");
+      });
     });
 
     it("sendNotification 抛错 → 静默不抛", async () => {

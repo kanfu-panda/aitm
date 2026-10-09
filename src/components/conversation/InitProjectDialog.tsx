@@ -1,5 +1,6 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   aiChatResume,
   markIgnored,
@@ -14,7 +15,7 @@ import { useBrowserModalGuard } from "../../lib/useBrowserModalGuard";
 /**
  * cwd 解析为 NeedsInit 时弹的"是否初始化为 aitm 项目"对话框。
  *
- * 文案严格按 spec §7.4(1)：
+ * 文案严格按 spec §7.4(1)（中文原文如下，各语言见语言包 initProject 段）：
  *   "✨ 在这里开始一个 AI 项目？"
  *   3 个 radio 选项：
  *     - 是，初始化为项目（推荐）
@@ -33,6 +34,8 @@ import { useBrowserModalGuard } from "../../lib/useBrowserModalGuard";
  *
  * 注意：loadFromScope 必须在 aiChatResume 之前；store 切到新 scope 后再
  * 让后端流式 chunk 进来，前端 conversationId 才能匹配上。
+ * 询问是在发消息途中弹出的，所以切换时带 keepActive：保留正在进行的这一轮
+ * （刚发的用户消息、回复占位、原对话 id），否则这轮会被库里的旧内容冲掉。
  */
 export type Choice = "init" | "temp_global" | "ignore";
 
@@ -45,6 +48,7 @@ export default function InitProjectDialog({ payload, onResolved }: Props) {
   const [choice, setChoice] = useState<Choice>("init");
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
+  const { t } = useTranslation();
   const toggleSidebar = useSidebarStore((s) => s.toggle);
 
   // payload 变化时（新一次 NeedsInit）重置默认选项 + 名字
@@ -102,11 +106,11 @@ export default function InitProjectDialog({ payload, onResolved }: Props) {
         <Dialog.Overlay className="fixed inset-0 z-[60] bg-black/60 backdrop-blur-sm" />
         <Dialog.Content className="fixed left-1/2 top-1/2 z-[60] w-[520px] max-w-[90vw] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-[var(--c-border-strong)] bg-[var(--c-bg-elev-1)] p-5 text-[var(--c-text-base)] shadow-2xl focus:outline-none">
           <Dialog.Title className="mb-2 text-base font-medium text-[var(--c-text-base)]">
-            ✨ 在这里开始一个 AI 项目？
+            {t("initProject.title")}
           </Dialog.Title>
 
           <Dialog.Description className="mb-4 text-xs leading-relaxed text-[var(--c-text-muted)]">
-            你正在使用 AI 助手，但当前目录还不是 aitm 项目。要不要让 AI 长期记住这里？
+            {t("initProject.desc")}
           </Dialog.Description>
 
           <div className="mb-4 space-y-2">
@@ -114,7 +118,7 @@ export default function InitProjectDialog({ payload, onResolved }: Props) {
               htmlFor="init-project-name"
               className="block text-[11px] text-[var(--c-text-dim)]"
             >
-              项目名
+              {t("initProject.nameLabel")}
             </label>
             <input
               id="init-project-name"
@@ -122,7 +126,7 @@ export default function InitProjectDialog({ payload, onResolved }: Props) {
               value={name}
               onChange={(e) => setName(e.target.value)}
               disabled={busy || choice !== "init"}
-              aria-label="项目名"
+              aria-label={t("initProject.nameLabel")}
               autoCapitalize="off"
               autoCorrect="off"
               autoComplete="off"
@@ -130,7 +134,7 @@ export default function InitProjectDialog({ payload, onResolved }: Props) {
               className="w-full rounded border border-[var(--c-border-strong)] bg-[var(--c-bg-base)] px-2 py-1 text-sm text-[var(--c-text-base)] focus:border-[var(--c-border-strong)] focus:outline-none disabled:opacity-50"
             />
             <div className="text-[11px] text-[var(--c-text-dim)]">
-              路径：
+              {t("initProject.path")}
               <code className="ml-1 break-all rounded bg-[var(--c-bg-elev-2)] px-1 py-0.5 text-[10px] text-[var(--c-text-muted)]">
                 {payload.cwd}
               </code>
@@ -143,24 +147,24 @@ export default function InitProjectDialog({ payload, onResolved }: Props) {
               current={choice}
               onChange={setChoice}
               disabled={busy}
-              title="是，初始化为项目（推荐）"
-              desc="在 ./.aitm/ 创建标记，AI 记住对话和命令上下文。适合：长期工作目录、git 仓库。"
+              title={t("initProject.initTitle")}
+              desc={t("initProject.initDesc")}
             />
             <ChoiceRow
               value="temp_global"
               current={choice}
               onChange={setChoice}
               disabled={busy}
-              title="不用，这次临时用一下"
-              desc="对话存到全局桶；下次再来此目录会再问一次。"
+              title={t("initProject.tempTitle")}
+              desc={t("initProject.tempDesc")}
             />
             <ChoiceRow
               value="ignore"
               current={choice}
               onChange={setChoice}
               disabled={busy}
-              title="别再问我这个目录"
-              desc="永久加入忽略名单，纯终端模式。"
+              title={t("initProject.ignoreTitle")}
+              desc={t("initProject.ignoreDesc")}
             />
           </div>
 
@@ -170,18 +174,18 @@ export default function InitProjectDialog({ payload, onResolved }: Props) {
               onClick={handleCloseSidebar}
               disabled={busy}
               className="rounded border border-[var(--c-border-strong)] px-3 py-1 text-sm text-[var(--c-text-muted)] hover:bg-[var(--c-bg-elev-2)] disabled:opacity-50"
-              aria-label="关闭 AI 侧边栏"
+              aria-label={t("initProject.closeSidebar")}
             >
-              关闭 AI 侧边栏
+              {t("initProject.closeSidebar")}
             </button>
             <button
               type="button"
               onClick={submit}
               disabled={busy || (choice === "init" && name.trim() === "")}
               className="rounded bg-[var(--c-success)] px-3 py-1 text-sm text-white hover:opacity-90 disabled:cursor-not-allowed disabled:bg-[var(--c-bg-elev-3)] disabled:text-[var(--c-text-dim)]"
-              aria-label="确定"
+              aria-label={t("initProject.confirm")}
             >
-              {busy ? "处理中…" : "确定"}
+              {busy ? t("initProject.busy") : t("initProject.confirm")}
             </button>
           </div>
         </Dialog.Content>
@@ -257,7 +261,7 @@ export async function applyChoice(
       uuid: r.uuid,
       root_path: r.root_path,
     };
-    await useChatStore.getState().loadFromScope(scope);
+    await useChatStore.getState().loadFromScope(scope, { keepActive: true });
     await aiChatResume(payload.conversation_id, scope);
     return;
   }
@@ -271,6 +275,6 @@ export async function applyChoice(
   }
 
   const scope: ScopeDto = { kind: "global" };
-  await useChatStore.getState().loadFromScope(scope);
+  await useChatStore.getState().loadFromScope(scope, { keepActive: true });
   await aiChatResume(payload.conversation_id, scope);
 }

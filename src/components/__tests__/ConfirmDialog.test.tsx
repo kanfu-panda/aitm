@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import ConfirmDialog from "../ConfirmDialog";
+import i18n from "../../lib/i18n";
 import type { AiToolRequestEvent } from "../../lib/tauri";
 
 // 测试夹具：把 onAiToolRequest 注入的 callback 暴露给测试代码，
@@ -153,6 +154,30 @@ describe("ConfirmDialog", () => {
 
     const reason = await screen.findByLabelText("风险评分原因");
     expect(reason).toHaveTextContent("L2：默认");
+  });
+
+  it("应该_当界面为英文且风险原因为编码字符串时_显示英文原因", async () => {
+    await i18n.changeLanguage("en");
+    try {
+      render(<ConfirmDialog conversationId="conv-1" />);
+      await waitFor(() => expect(requestCallbacks.length).toBe(1));
+
+      fireRequest({
+        risk: "destructive",
+        name: "run_command",
+        risk_reason: JSON.stringify({
+          code: "risk.sudo",
+          params: { level: "L2" },
+          message: "L2：DESTRUCTIVE：sudo 提权",
+        }),
+      });
+
+      const reason = await screen.findByLabelText("Risk score reason");
+      expect(reason).toHaveTextContent("L2: DESTRUCTIVE: sudo privilege escalation");
+      expect(reason).not.toHaveTextContent("提权");
+    } finally {
+      await i18n.changeLanguage("zh-CN");
+    }
   });
 
   it("无 risk_reason 不渲染评分原因区块", async () => {

@@ -395,7 +395,7 @@ test("E2E-13 英文界面关 tmux 标签：确认框三个按钮都是单行且�
   await page.goto("/");
   await expect(page.getByRole("tab")).toHaveCount(1, { timeout: 5_000 });
 
-  await page.getByLabel("关闭标签").click();
+  await page.getByLabel("Close tab").click();
 
   const dialog = page.getByRole("dialog");
   await expect(dialog).toContainText("Close tab, keep session");

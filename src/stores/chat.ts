@@ -144,8 +144,12 @@ interface ChatState {
   // === 1F 新增 ===
   /** 切换 scope（当前 active tab 的 cwd 解析结果）。
    *  从对应 bucket 重新 load 对话列表（最新的 active）；如果 bucket 一条对话
-   *  都没有自动 createConversation 拿到一个空对话。 */
-  loadFromScope: (scope: ScopeDto) => Promise<void>;
+   *  都没有自动 createConversation 拿到一个空对话。
+   *
+   *  `keepActive`：发消息途中后端要先问"要不要初始化为项目"，用户确认后才切换作用域。
+   *  这时当前对话的这一轮还在进行（用户消息与回复占位只在内存里），所以保留内存中的
+   *  当前对话（id、消息、流式状态）继续作为 active，也不取消正在进行的请求。 */
+  loadFromScope: (scope: ScopeDto, opts?: { keepActive?: boolean }) => Promise<void>;
 }
 
 let convCounter = 0;
@@ -692,16 +696,21 @@ export const useChatStore = create<ChatState>((set, get) => {
       set((s) => patchActive(s, (c) => ({ ...c, providerId, modelId })));
     },
 
-    loadFromScope: async (scope) => {
-      // 1. 取消正在 streaming 的对话
+    loadFromScope: async (scope, opts) => {
       const cur = get().conversations.find((c) => c.id === get().activeId);
-      if (cur?.streaming) {
+      const keep = opts?.keepActive ? cur : undefined;
+      // 1. 取消正在 streaming 的对话（保留当前这一轮时不取消）
+      if (cur?.streaming && !keep) {
         aiChatCancel().catch(() => {});
       }
 
       try {
         const rows = await convList(scope);
-        const conversations = rows.map(dtoToConversation);
+        let conversations = rows.map(dtoToConversation);
+        if (keep) {
+          // 库里同 id 的版本缺了这一轮还没落库的消息，用内存里的替换
+          conversations = [keep, ...conversations.filter((c) => c.id !== keep.id)];
+        }
 
         // 计算最大 newConversationSerial（避免标题撞号）。
         // v0.10.5 i18n：三语容错——历史 title 可能用任一语言创建，都要识别。
@@ -722,7 +731,15 @@ export const useChatStore = create<ChatState>((set, get) => {
           }
         }
 
-        if (conversations.length === 0) {
+        if (keep) {
+          set({
+            conversations,
+            activeId: keep.id,
+            newConversationSerial: maxSerial,
+            scope,
+            ...mirrorActive(conversations, keep.id),
+          });
+        } else if (conversations.length === 0) {
           // 该 bucket 还没对话 — 自动创建一个空的
           set({
             conversations: [],

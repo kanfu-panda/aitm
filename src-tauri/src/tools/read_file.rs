@@ -5,6 +5,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::{RiskClass, Tool, ToolContext, ToolError, ToolResult};
+use crate::ui_error::ui_err;
 
 const MAX_BYTES: usize = 1_000_000; // 1 MB
 const TRUNCATED_NOTE: &str = "\n\n[文件过大已截断到前 1MB]";
@@ -44,28 +45,48 @@ impl Tool for ReadFileTool {
     }
 
     async fn execute(&self, args: Value, ctx: &ToolContext) -> Result<ToolResult, ToolError> {
-        let parsed: Args = serde_json::from_value(args)
-            .map_err(|e| ToolError::InvalidArgs(format!("read_file 参数: {e}")))?;
+        let parsed: Args = serde_json::from_value(args).map_err(|e| {
+            ToolError::InvalidArgs(ui_err(
+                "tool.file.argsParse",
+                &[("tool", "read_file".into()), ("error", e.to_string())],
+                format!("read_file 参数: {e}"),
+            ))
+        })?;
 
         let resolved = resolve_path(&parsed.path, &ctx.cwd);
-        let canonical_cwd = ctx
-            .cwd
-            .canonicalize()
-            .map_err(|e| ToolError::Exec(format!("cwd 不存在: {e}")))?;
-        let canonical_target = resolved
-            .canonicalize()
-            .map_err(|e| ToolError::Exec(format!("文件不存在: {e}")))?;
+        let canonical_cwd = ctx.cwd.canonicalize().map_err(|e| {
+            ToolError::Exec(ui_err(
+                "tool.file.cwdMissing",
+                &[("error", e.to_string())],
+                format!("cwd 不存在: {e}"),
+            ))
+        })?;
+        let canonical_target = resolved.canonicalize().map_err(|e| {
+            ToolError::Exec(ui_err(
+                "tool.file.notFound",
+                &[("error", e.to_string())],
+                format!("文件不存在: {e}"),
+            ))
+        })?;
 
         // 沙盒检查：解析后的目标必须在 cwd 内
         if !canonical_target.starts_with(&canonical_cwd) {
             return Err(ToolError::Blocked {
-                reason: format!("路径越界沙盒（不在 {} 内）", canonical_cwd.display()),
+                reason: ui_err(
+                    "tool.file.outOfSandbox",
+                    &[("cwd", canonical_cwd.display().to_string())],
+                    format!("路径越界沙盒（不在 {} 内）", canonical_cwd.display()),
+                ),
             });
         }
 
-        let bytes = tokio::fs::read(&canonical_target)
-            .await
-            .map_err(|e| ToolError::Exec(format!("读文件失败: {e}")))?;
+        let bytes = tokio::fs::read(&canonical_target).await.map_err(|e| {
+            ToolError::Exec(ui_err(
+                "tool.file.readFailed",
+                &[("error", e.to_string())],
+                format!("读文件失败: {e}"),
+            ))
+        })?;
 
         let (content, truncated) = if bytes.len() > MAX_BYTES {
             (
@@ -174,5 +195,56 @@ mod tests {
         let ctx = make_ctx(dir.path().to_path_buf());
         let r = ReadFileTool.execute(json!({}), &ctx).await;
         assert!(matches!(r, Err(ToolError::InvalidArgs(_))));
+    }
+
+    #[tokio::test]
+    async fn 应该_当文件不存在时_细节带编码且还原为中文() {
+        let dir = TempDir::new().unwrap();
+        let ctx = make_ctx(dir.path().to_path_buf());
+        let e = ReadFileTool
+            .execute(json!({ "path": "nope.txt" }), &ctx)
+            .await
+            .unwrap_err();
+        let ToolError::Exec(d) = e else {
+            panic!("应是 Exec")
+        };
+        let (code, params) = crate::tools::decode_ui_err(&d);
+        assert_eq!(code, "tool.file.notFound");
+        assert!(params["error"].is_string());
+        assert!(crate::ui_error::plain(&d).starts_with("文件不存在: "));
+    }
+
+    #[tokio::test]
+    async fn 应该_当路径越界时_原因带编码() {
+        let dir = TempDir::new().unwrap();
+        let outside = TempDir::new().unwrap();
+        std::fs::write(outside.path().join("s.txt"), "x").unwrap();
+        let ctx = make_ctx(dir.path().to_path_buf());
+        let e = ReadFileTool
+            .execute(
+                json!({ "path": outside.path().join("s.txt").to_string_lossy() }),
+                &ctx,
+            )
+            .await
+            .unwrap_err();
+        let ToolError::Blocked { reason } = e else {
+            panic!("应是 Blocked")
+        };
+        let (code, params) = crate::tools::decode_ui_err(&reason);
+        assert_eq!(code, "tool.file.outOfSandbox");
+        assert!(params["cwd"].is_string());
+    }
+
+    #[tokio::test]
+    async fn 应该_当参数缺失时_细节带编码() {
+        let dir = TempDir::new().unwrap();
+        let ctx = make_ctx(dir.path().to_path_buf());
+        let e = ReadFileTool.execute(json!({}), &ctx).await.unwrap_err();
+        let ToolError::InvalidArgs(d) = e else {
+            panic!("应是 InvalidArgs")
+        };
+        let (code, params) = crate::tools::decode_ui_err(&d);
+        assert_eq!(code, "tool.file.argsParse");
+        assert_eq!(params["tool"], "read_file");
     }
 }

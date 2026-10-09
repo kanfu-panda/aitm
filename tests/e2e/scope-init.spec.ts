@@ -188,3 +188,64 @@ test.describe("InitProjectDialog 3 分支", () => {
     expect(projectInitArgs).toBeUndefined();
   });
 });
+
+// 发消息时弹出这个询问，确认后侧栏把正在进行的这一轮冲掉了——
+// 刚发的用户消息不见、回复接到上一条回复后面（或因对话 id 对不上整条不显示）
+test.describe("询问打断发送后，正在进行的这一轮完整保留", () => {
+  async function sendAndAnswer(page: Page, text: string, label: string) {
+    await page.getByPlaceholder(/输入消息/).fill(text);
+    await page.getByPlaceholder(/输入消息/).press("Enter");
+    const cid = await page.evaluate(
+      () => (window as unknown as { __getChatCid: () => string }).__getChatCid(),
+    );
+    await triggerInitDialog(page, { ...PAYLOAD, conversation_id: cid });
+    await page.getByLabel(label).click();
+    await page.getByRole("button", { name: "确定" }).click();
+    await expect(page.getByRole("dialog")).toBeHidden();
+    return cid;
+  }
+
+  async function streamReply(page: Page, cid: string, reply: string) {
+    await page.evaluate(
+      ({ cid, reply }) => {
+        const emit = (
+          window as unknown as { __emitMockEvent: (e: string, p: unknown) => void }
+        ).__emitMockEvent;
+        emit("ai:token", { conversation_id: cid, text: reply });
+        emit("ai:done", { conversation_id: cid, stop_reason: "end_turn", usage: null });
+      },
+      { cid, reply },
+    );
+  }
+
+  test("选'临时全局'连发两轮：两条用户消息都在，两条回复各自成气泡", async ({ page }) => {
+    await setup(page);
+
+    const cid1 = await sendAndAnswer(page, "第一条消息", "不用，这次临时用一下");
+    // 对话标题会自动取第一条消息，所以页面上应有两处：标题 + 用户消息气泡
+    await expect(page.getByText("第一条消息", { exact: true })).toHaveCount(2);
+    await streamReply(page, cid1, "第一条回复");
+    await expect(page.getByText("第一条回复", { exact: true })).toBeVisible();
+
+    const cid2 = await sendAndAnswer(page, "第二条消息", "不用，这次临时用一下");
+    expect(cid2).toBe(cid1);
+    await expect(page.getByText("第二条消息", { exact: true })).toHaveCount(1);
+    await streamReply(page, cid2, "第二条回复");
+    await expect(page.getByText("第二条回复", { exact: true })).toBeVisible();
+    await expect(page.getByText("第一条回复", { exact: true })).toBeVisible();
+  });
+
+  test("选'初始化为项目'：用户消息还在，回复能显示", async ({ page }) => {
+    await setup(page);
+
+    const cid = await sendAndAnswer(page, "项目里的第一条", "是，初始化为项目（推荐）");
+    await expect(page.getByText("项目里的第一条", { exact: true })).toHaveCount(2);
+    expect(
+      await page.evaluate(
+        () => (window as unknown as { __getChatCid: () => string }).__getChatCid(),
+      ),
+    ).toBe(cid);
+    await streamReply(page, cid, "项目里的回复");
+    await expect(page.getByText("项目里的回复", { exact: true })).toBeVisible();
+  });
+});

@@ -6,6 +6,7 @@ import {
   providersTestConnection,
   type ProviderConfigDto,
 } from "../lib/tauri";
+import { formatBackendError } from "../lib/backendError";
 
 export default function ProviderList() {
   const { t } = useTranslation();
@@ -101,9 +102,9 @@ export function ProviderRow({ dto, onSaved }: ProviderRowProps) {
     setTestResult(null);
     try {
       const r = await providersTestConnection(dto.id);
-      setTestResult({ ok: r.ok, msg: r.message });
+      setTestResult({ ok: r.ok, msg: formatBackendError(r.message) });
     } catch (e) {
-      setTestResult({ ok: false, msg: String(e) });
+      setTestResult({ ok: false, msg: formatBackendError(e) });
     } finally {
       setTesting(false);
     }

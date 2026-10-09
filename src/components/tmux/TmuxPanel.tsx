@@ -13,6 +13,7 @@ import {
   SquareTerminal,
 } from "../icons";
 import InputDialog from "../InputDialog";
+import { formatBackendError } from "../../lib/backendError";
 import ConfirmActionDialog, {
   type ConfirmActionRequest,
 } from "../ConfirmActionDialog";
@@ -320,7 +321,7 @@ export default function TmuxPanel() {
           data-testid="tmux-error"
           className="border-b border-[var(--c-border)] px-3 py-2 text-xs text-[var(--c-error)]"
         >
-          {error}
+          {formatBackendError(error)}
         </div>
       )}
 
@@ -496,7 +497,7 @@ function SessionRow({
           </div>
           {preview?.error ? (
             <p className="px-2 pb-2 text-[11px] text-[var(--c-error)]">
-              {preview.error}
+              {formatBackendError(preview.error)}
             </p>
           ) : preview?.text === null || preview === undefined ? (
             <p className="px-2 pb-2 text-[11px] text-[var(--c-text-faint)]">

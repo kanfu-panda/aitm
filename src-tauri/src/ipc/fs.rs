@@ -28,6 +28,64 @@ use notify_debouncer_full::{DebounceEventResult, Debouncer, FileIdMap, new_debou
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
 
+use crate::ui_error::ui_err;
+
+// ====== 界面可见的错误：编码 + 参数 + 中文兜底（见 `ui_error`）======
+
+fn err_canonicalize(path: &str, e: &std::io::Error) -> String {
+    ui_err(
+        "fs.canonicalizeFailed",
+        &[("path", path.to_string()), ("error", e.to_string())],
+        format!("路径无法 canonicalize：{path}：{e}"),
+    )
+}
+
+fn err_metadata(path: &Path, e: &std::io::Error) -> String {
+    ui_err(
+        "fs.metadataFailed",
+        &[
+            ("path", path.display().to_string()),
+            ("error", e.to_string()),
+        ],
+        format!("读不到 metadata：{}：{e}", path.display()),
+    )
+}
+
+fn err_not_dir(path: &Path) -> String {
+    ui_err(
+        "fs.notDir",
+        &[("path", path.display().to_string())],
+        format!("不是目录：{}", path.display()),
+    )
+}
+
+fn err_not_file(path: &Path) -> String {
+    ui_err(
+        "fs.notFile",
+        &[("path", path.display().to_string())],
+        format!("不是文件：{}", path.display()),
+    )
+}
+
+fn err_read_failed(path: &Path, e: &std::io::Error) -> String {
+    ui_err(
+        "fs.readFailed",
+        &[
+            ("path", path.display().to_string()),
+            ("error", e.to_string()),
+        ],
+        format!("读文件失败：{}：{e}", path.display()),
+    )
+}
+
+fn err_not_absolute(path: &str) -> String {
+    ui_err(
+        "fs.pathNotAbsolute",
+        &[("path", path.to_string())],
+        format!("path 必须是绝对路径：{path}"),
+    )
+}
+
 /// 硬编码跳过名单。命中精确 name 即不进树。
 const SKIP_NAMES: &[&str] = &[
     ".git",
@@ -66,12 +124,10 @@ pub struct TreeNode {
 /// 子项排序：dir 在前 file 在后；同类按 name 升序。
 #[tauri::command]
 pub fn fs_tree(path: String, max_depth: u32) -> Result<TreeNode, String> {
-    let canonical =
-        std::fs::canonicalize(&path).map_err(|e| format!("路径无法 canonicalize：{path}：{e}"))?;
-    let meta = std::fs::metadata(&canonical)
-        .map_err(|e| format!("读不到 metadata：{}：{e}", canonical.display()))?;
+    let canonical = std::fs::canonicalize(&path).map_err(|e| err_canonicalize(&path, &e))?;
+    let meta = std::fs::metadata(&canonical).map_err(|e| err_metadata(&canonical, &e))?;
     if !meta.is_dir() {
-        return Err(format!("不是目录：{}", canonical.display()));
+        return Err(err_not_dir(&canonical));
     }
     Ok(build_node(&canonical, max_depth))
 }
@@ -289,12 +345,10 @@ fn to_base64(bytes: &[u8]) -> String {
 /// 全部失败路径返 Err（前端显示"读取失败"红框）。
 #[tauri::command]
 pub fn fs_read_preview(path: String) -> Result<PreviewResult, String> {
-    let canonical =
-        std::fs::canonicalize(&path).map_err(|e| format!("路径无法 canonicalize：{path}：{e}"))?;
-    let meta = std::fs::metadata(&canonical)
-        .map_err(|e| format!("读不到 metadata：{}：{e}", canonical.display()))?;
+    let canonical = std::fs::canonicalize(&path).map_err(|e| err_canonicalize(&path, &e))?;
+    let meta = std::fs::metadata(&canonical).map_err(|e| err_metadata(&canonical, &e))?;
     if !meta.is_file() {
-        return Err(format!("不是文件：{}", canonical.display()));
+        return Err(err_not_file(&canonical));
     }
 
     let size = meta.len();
@@ -308,8 +362,7 @@ pub fn fs_read_preview(path: String) -> Result<PreviewResult, String> {
                 max_size: IMAGE_MAX_BYTES,
             });
         }
-        let bytes = std::fs::read(&canonical)
-            .map_err(|e| format!("读文件失败：{}：{e}", canonical.display()))?;
+        let bytes = std::fs::read(&canonical).map_err(|e| err_read_failed(&canonical, &e))?;
         return Ok(PreviewResult::Image {
             mime: mime.to_string(),
             base64: to_base64(&bytes),
@@ -324,8 +377,7 @@ pub fn fs_read_preview(path: String) -> Result<PreviewResult, String> {
         });
     }
 
-    let mut bytes = std::fs::read(&canonical)
-        .map_err(|e| format!("读文件失败：{}：{e}", canonical.display()))?;
+    let mut bytes = std::fs::read(&canonical).map_err(|e| err_read_failed(&canonical, &e))?;
 
     // 二进制嗅探：嗅探整个文件而非前 4096 字节，避免多字节 UTF-8 字符跨越
     // 4096 边界被切断导致中文 markdown / 代码文件被误判为二进制（v0.5.3 维护者
@@ -333,7 +385,7 @@ pub fn fs_read_preview(path: String) -> Result<PreviewResult, String> {
     // 限制到 1MB，嗅探整文件性能可接受（~1ms）。
     if !is_text_content(&bytes) {
         return Ok(PreviewResult::Binary {
-            reason: "包含非 UTF-8 / NUL 字节".to_string(),
+            reason: ui_err("fs.binaryReason", &[], "包含非 UTF-8 / NUL 字节"),
         });
     }
 
@@ -524,6 +576,14 @@ pub async fn fs_stat(path: String) -> Result<FileMeta, String> {
 
 // ====== v0.10.2 #6：文件树 CRUD（新建/重命名/删除）======
 
+fn err_create_in_system_dir(path: &str) -> String {
+    ui_err(
+        "fs.createInSystemDir",
+        &[("path", path.to_string())],
+        format!("禁止在系统目录新建：{path}"),
+    )
+}
+
 /// 在 `path` 新建空文件。
 ///
 /// 行为：
@@ -535,10 +595,10 @@ pub async fn fs_stat(path: String) -> Result<FileMeta, String> {
 pub async fn fs_create_file(path: String) -> Result<(), String> {
     let p = std::path::PathBuf::from(&path);
     if !p.is_absolute() {
-        return Err(format!("path 必须是绝对路径：{path}"));
+        return Err(err_not_absolute(&path));
     }
     if is_blacklisted_path(&p) {
-        return Err(format!("禁止在系统目录新建：{path}"));
+        return Err(err_create_in_system_dir(&path));
     }
     // create_new = true：已存在直接 Err，不覆盖
     match tokio::fs::OpenOptions::new()
@@ -548,10 +608,16 @@ pub async fn fs_create_file(path: String) -> Result<(), String> {
         .await
     {
         Ok(_) => Ok(()),
-        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-            Err(format!("文件已存在：{}", p.display()))
-        }
-        Err(e) => Err(format!("新建文件失败：{}：{e}", p.display())),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Err(ui_err(
+            "fs.fileExists",
+            &[("path", p.display().to_string())],
+            format!("文件已存在：{}", p.display()),
+        )),
+        Err(e) => Err(ui_err(
+            "fs.createFileFailed",
+            &[("path", p.display().to_string()), ("error", e.to_string())],
+            format!("新建文件失败：{}：{e}", p.display()),
+        )),
     }
 }
 
@@ -562,17 +628,25 @@ pub async fn fs_create_file(path: String) -> Result<(), String> {
 pub async fn fs_create_dir(path: String) -> Result<(), String> {
     let p = std::path::PathBuf::from(&path);
     if !p.is_absolute() {
-        return Err(format!("path 必须是绝对路径：{path}"));
+        return Err(err_not_absolute(&path));
     }
     if is_blacklisted_path(&p) {
-        return Err(format!("禁止在系统目录新建：{path}"));
+        return Err(err_create_in_system_dir(&path));
     }
     if p.exists() {
-        return Err(format!("路径已存在：{}", p.display()));
+        return Err(ui_err(
+            "fs.pathExists",
+            &[("path", p.display().to_string())],
+            format!("路径已存在：{}", p.display()),
+        ));
     }
-    tokio::fs::create_dir(&p)
-        .await
-        .map_err(|e| format!("新建目录失败：{}：{e}", p.display()))
+    tokio::fs::create_dir(&p).await.map_err(|e| {
+        ui_err(
+            "fs.createDirFailed",
+            &[("path", p.display().to_string()), ("error", e.to_string())],
+            format!("新建目录失败：{}：{e}", p.display()),
+        )
+    })
 }
 
 /// 重命名 / 移动 `from` 到 `to`（同卷 rename，跨卷会失败）。
@@ -586,17 +660,33 @@ pub async fn fs_rename(from: String, to: String) -> Result<(), String> {
     let pf = std::path::PathBuf::from(&from);
     let pt = std::path::PathBuf::from(&to);
     if !pf.is_absolute() || !pt.is_absolute() {
-        return Err("from / to 都必须是绝对路径".to_string());
+        return Err(ui_err(
+            "fs.renameNeedAbsolute",
+            &[],
+            "from / to 都必须是绝对路径",
+        ));
     }
     if is_blacklisted_path(&pf) || is_blacklisted_path(&pt) {
-        return Err("禁止读写系统目录".to_string());
+        return Err(ui_err("fs.systemDirForbidden", &[], "禁止读写系统目录"));
     }
     if pt.exists() {
-        return Err(format!("目标路径已存在：{}", pt.display()));
+        return Err(ui_err(
+            "fs.targetExists",
+            &[("path", pt.display().to_string())],
+            format!("目标路径已存在：{}", pt.display()),
+        ));
     }
-    tokio::fs::rename(&pf, &pt)
-        .await
-        .map_err(|e| format!("重命名失败：{} → {}：{e}", pf.display(), pt.display()))
+    tokio::fs::rename(&pf, &pt).await.map_err(|e| {
+        ui_err(
+            "fs.renameFailed",
+            &[
+                ("from", pf.display().to_string()),
+                ("to", pt.display().to_string()),
+                ("error", e.to_string()),
+            ],
+            format!("重命名失败：{} → {}：{e}", pf.display(), pt.display()),
+        )
+    })
 }
 
 /// 删除文件或目录（目录递归删除）。
@@ -609,22 +699,33 @@ pub async fn fs_rename(from: String, to: String) -> Result<(), String> {
 pub async fn fs_delete(path: String) -> Result<(), String> {
     let p = std::path::PathBuf::from(&path);
     if !p.is_absolute() {
-        return Err(format!("path 必须是绝对路径：{path}"));
+        return Err(err_not_absolute(&path));
     }
     if is_blacklisted_path(&p) {
-        return Err(format!("禁止删除系统目录：{path}"));
+        return Err(ui_err(
+            "fs.deleteSystemDir",
+            &[("path", path.clone())],
+            format!("禁止删除系统目录：{path}"),
+        ));
     }
+    let path_err = |code: &str, label: &str, e: std::io::Error| {
+        ui_err(
+            code,
+            &[("path", p.display().to_string()), ("error", e.to_string())],
+            format!("{label}：{}：{e}", p.display()),
+        )
+    };
     let meta = tokio::fs::metadata(&p)
         .await
-        .map_err(|e| format!("访问路径失败：{}：{e}", p.display()))?;
+        .map_err(|e| path_err("fs.accessFailed", "访问路径失败", e))?;
     if meta.is_dir() {
         tokio::fs::remove_dir_all(&p)
             .await
-            .map_err(|e| format!("删除目录失败：{}：{e}", p.display()))
+            .map_err(|e| path_err("fs.deleteDirFailed", "删除目录失败", e))
     } else {
         tokio::fs::remove_file(&p)
             .await
-            .map_err(|e| format!("删除文件失败：{}：{e}", p.display()))
+            .map_err(|e| path_err("fs.deleteFileFailed", "删除文件失败", e))
     }
 }
 
@@ -1650,5 +1751,214 @@ mod tests {
             },
         );
         assert!(res.is_err(), "监听不存在路径应返回 Err");
+    }
+    // ====== 错误编码：界面可见的错误带 code / params，plain() 取回原中文 ======
+
+    /// 解析 `ui_err` 生成的错误串，返回 (code, params, message)。
+    fn parse_ui_err(e: &str) -> (String, serde_json::Value, String) {
+        let v: serde_json::Value = serde_json::from_str(e).expect("应是 ui_err 生成的 JSON");
+        (
+            v["code"].as_str().unwrap().to_string(),
+            v["params"].clone(),
+            v["message"].as_str().unwrap().to_string(),
+        )
+    }
+
+    #[test]
+    fn 应该_当fs_tree传入文件时_返回fs_notdir编码() {
+        let tmp = TempDir::new().unwrap();
+        let f = tmp.path().join("a.txt");
+        fs::write(&f, "x").unwrap();
+        let canonical = fs::canonicalize(&f).unwrap();
+        let err = fs_tree(f.to_string_lossy().into_owned(), 1).unwrap_err();
+        let (code, params, msg) = parse_ui_err(&err);
+        assert_eq!(code, "fs.notDir");
+        assert_eq!(params["path"], canonical.display().to_string());
+        assert_eq!(msg, format!("不是目录：{}", canonical.display()));
+        assert_eq!(crate::ui_error::plain(&err), msg);
+    }
+
+    #[test]
+    fn 应该_当fs_tree路径不存在时_返回canonicalize失败编码() {
+        let path = "/this/path/should/not/exist/aitm-code".to_string();
+        let err = fs_tree(path.clone(), 1).unwrap_err();
+        let (code, params, msg) = parse_ui_err(&err);
+        assert_eq!(code, "fs.canonicalizeFailed");
+        assert_eq!(params["path"], path);
+        assert!(params["error"].as_str().is_some_and(|s| !s.is_empty()));
+        assert!(msg.starts_with(&format!("路径无法 canonicalize：{path}：")));
+    }
+
+    #[test]
+    fn 应该_当预览目录时_返回fs_notfile编码() {
+        let tmp = TempDir::new().unwrap();
+        let canonical = fs::canonicalize(tmp.path()).unwrap();
+        let err = fs_read_preview(tmp.path().to_string_lossy().into_owned()).unwrap_err();
+        let (code, params, msg) = parse_ui_err(&err);
+        assert_eq!(code, "fs.notFile");
+        assert_eq!(params["path"], canonical.display().to_string());
+        assert_eq!(msg, format!("不是文件：{}", canonical.display()));
+    }
+
+    #[test]
+    fn 应该_当预览二进制文件时_reason为fs_binaryreason编码() {
+        let tmp = TempDir::new().unwrap();
+        let f = tmp.path().join("bin.dat");
+        fs::write(&f, [0x48, 0x00, 0x49]).unwrap();
+        let r = fs_read_preview(f.to_string_lossy().into_owned()).unwrap();
+        match r {
+            PreviewResult::Binary { reason } => {
+                let (code, _, msg) = parse_ui_err(&reason);
+                assert_eq!(code, "fs.binaryReason");
+                assert_eq!(msg, "包含非 UTF-8 / NUL 字节");
+                assert_eq!(crate::ui_error::plain(&reason), "包含非 UTF-8 / NUL 字节");
+            }
+            _ => panic!("应是 Binary"),
+        }
+    }
+
+    #[tokio::test]
+    async fn 应该_当新建文件传入相对路径或系统目录时_返回对应编码() {
+        let err = fs_create_file("rel.txt".into()).await.unwrap_err();
+        let (code, params, msg) = parse_ui_err(&err);
+        assert_eq!(code, "fs.pathNotAbsolute");
+        assert_eq!(params["path"], "rel.txt");
+        assert_eq!(msg, "path 必须是绝对路径：rel.txt");
+
+        let err = fs_create_file("/etc/aitm-x".into()).await.unwrap_err();
+        let (code, params, msg) = parse_ui_err(&err);
+        assert_eq!(code, "fs.createInSystemDir");
+        assert_eq!(params["path"], "/etc/aitm-x");
+        assert_eq!(msg, "禁止在系统目录新建：/etc/aitm-x");
+    }
+
+    #[tokio::test]
+    async fn 应该_当新建文件已存在时_返回fs_fileexists编码() {
+        let tmp = TempDir::new().unwrap();
+        let f = tmp.path().join("a.txt");
+        fs::write(&f, "x").unwrap();
+        let err = fs_create_file(f.to_string_lossy().into_owned())
+            .await
+            .unwrap_err();
+        let (code, params, msg) = parse_ui_err(&err);
+        assert_eq!(code, "fs.fileExists");
+        assert_eq!(params["path"], f.display().to_string());
+        assert_eq!(msg, format!("文件已存在：{}", f.display()));
+    }
+
+    #[tokio::test]
+    async fn 应该_当新建文件父目录不存在时_返回fs_createfilefailed编码() {
+        let tmp = TempDir::new().unwrap();
+        let f = tmp.path().join("no-parent/a.txt");
+        let err = fs_create_file(f.to_string_lossy().into_owned())
+            .await
+            .unwrap_err();
+        let (code, params, msg) = parse_ui_err(&err);
+        assert_eq!(code, "fs.createFileFailed");
+        assert_eq!(params["path"], f.display().to_string());
+        assert!(params["error"].as_str().is_some_and(|s| !s.is_empty()));
+        assert!(msg.starts_with(&format!("新建文件失败：{}：", f.display())));
+    }
+
+    #[tokio::test]
+    async fn 应该_当新建目录相对路径系统目录或已存在时_返回对应编码() {
+        let err = fs_create_dir("rel".into()).await.unwrap_err();
+        assert_eq!(parse_ui_err(&err).0, "fs.pathNotAbsolute");
+
+        let err = fs_create_dir("/usr/aitm-x".into()).await.unwrap_err();
+        let (code, params, msg) = parse_ui_err(&err);
+        assert_eq!(code, "fs.createInSystemDir");
+        assert_eq!(msg, "禁止在系统目录新建：/usr/aitm-x");
+        assert_eq!(params["path"], "/usr/aitm-x");
+
+        let tmp = TempDir::new().unwrap();
+        let err = fs_create_dir(tmp.path().to_string_lossy().into_owned())
+            .await
+            .unwrap_err();
+        let (code, params, msg) = parse_ui_err(&err);
+        assert_eq!(code, "fs.pathExists");
+        assert_eq!(params["path"], tmp.path().display().to_string());
+        assert_eq!(msg, format!("路径已存在：{}", tmp.path().display()));
+
+        let sub = tmp.path().join("a/b");
+        let err = fs_create_dir(sub.to_string_lossy().into_owned())
+            .await
+            .unwrap_err();
+        let (code, params, _) = parse_ui_err(&err);
+        assert_eq!(code, "fs.createDirFailed");
+        assert_eq!(params["path"], sub.display().to_string());
+    }
+
+    #[tokio::test]
+    async fn 应该_当重命名入参不合法或目标已存在时_返回对应编码() {
+        let err = fs_rename("a".into(), "/tmp/b".into()).await.unwrap_err();
+        let (code, params, msg) = parse_ui_err(&err);
+        assert_eq!(code, "fs.renameNeedAbsolute");
+        assert!(params.as_object().unwrap().is_empty());
+        assert_eq!(msg, "from / to 都必须是绝对路径");
+
+        let err = fs_rename("/etc/a".into(), "/tmp/b".into())
+            .await
+            .unwrap_err();
+        let (code, _, msg) = parse_ui_err(&err);
+        assert_eq!(code, "fs.systemDirForbidden");
+        assert_eq!(msg, "禁止读写系统目录");
+
+        let tmp = TempDir::new().unwrap();
+        let a = tmp.path().join("a");
+        let b = tmp.path().join("b");
+        fs::write(&a, "x").unwrap();
+        fs::write(&b, "y").unwrap();
+        let err = fs_rename(
+            a.to_string_lossy().into_owned(),
+            b.to_string_lossy().into_owned(),
+        )
+        .await
+        .unwrap_err();
+        let (code, params, msg) = parse_ui_err(&err);
+        assert_eq!(code, "fs.targetExists");
+        assert_eq!(params["path"], b.display().to_string());
+        assert_eq!(msg, format!("目标路径已存在：{}", b.display()));
+    }
+
+    #[tokio::test]
+    async fn 应该_当重命名源不存在时_返回fs_renamefailed编码() {
+        let tmp = TempDir::new().unwrap();
+        let a = tmp.path().join("missing");
+        let b = tmp.path().join("b");
+        let err = fs_rename(
+            a.to_string_lossy().into_owned(),
+            b.to_string_lossy().into_owned(),
+        )
+        .await
+        .unwrap_err();
+        let (code, params, msg) = parse_ui_err(&err);
+        assert_eq!(code, "fs.renameFailed");
+        assert_eq!(params["from"], a.display().to_string());
+        assert_eq!(params["to"], b.display().to_string());
+        assert!(params["error"].as_str().is_some_and(|s| !s.is_empty()));
+        assert!(msg.starts_with(&format!("重命名失败：{} → {}：", a.display(), b.display())));
+    }
+
+    #[tokio::test]
+    async fn 应该_当删除相对路径系统目录或不存在时_返回对应编码() {
+        let err = fs_delete("rel".into()).await.unwrap_err();
+        assert_eq!(parse_ui_err(&err).0, "fs.pathNotAbsolute");
+
+        let err = fs_delete("/System/aitm-x".into()).await.unwrap_err();
+        let (code, params, msg) = parse_ui_err(&err);
+        assert_eq!(code, "fs.deleteSystemDir");
+        assert_eq!(params["path"], "/System/aitm-x");
+        assert_eq!(msg, "禁止删除系统目录：/System/aitm-x");
+
+        let tmp = TempDir::new().unwrap();
+        let missing = tmp.path().join("missing");
+        let err = fs_delete(missing.to_string_lossy().into_owned())
+            .await
+            .unwrap_err();
+        let (code, params, msg) = parse_ui_err(&err);
+        assert_eq!(code, "fs.accessFailed");
+        assert_eq!(params["path"], missing.display().to_string());
+        assert!(msg.starts_with(&format!("访问路径失败：{}：", missing.display())));
     }
 }

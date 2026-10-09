@@ -2,6 +2,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useBrowserModalGuard } from "../lib/useBrowserModalGuard";
+import { formatBackendError } from "../lib/backendError";
 
 interface Props {
   /** null = 关闭；非空 = 待删除目标。 */
@@ -49,7 +50,7 @@ export default function FsDeleteConfirmDialog({
       await onConfirm(pending.path);
       // 成功 → caller 应该 setPending(null) 关 dialog
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(formatBackendError(e));
       setSubmitting(false);
     }
   };

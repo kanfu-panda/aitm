@@ -5,6 +5,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::ui_error::ui_err;
+
 /// Provider 的能力标志，运行时可查。
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Capabilities {
@@ -147,6 +149,25 @@ pub enum ProviderError {
     Other(String),
 }
 
+impl ProviderError {
+    /// 发往界面的错误：编码 + 参数 + 中文兜底（兜底与 `Display` 完全一致）。
+    ///
+    /// `Display`（`#[error]`）用于日志，也可能流向模型，保持纯中文文本不变；
+    /// 只有显示给用户的地方用本方法，界面按语言包渲染。
+    pub fn ui_message(&self) -> String {
+        let text = self.to_string();
+        match self {
+            Self::Http(e) => ui_err("provider.error.http", &[("detail", e.to_string())], text),
+            Self::Unauthorized => ui_err("provider.error.unauthorized", &[], text),
+            Self::RateLimited => ui_err("provider.error.rateLimited", &[], text),
+            Self::Protocol(s) => ui_err("provider.error.protocol", &[("detail", s.clone())], text),
+            Self::Config(s) => ui_err("provider.error.config", &[("detail", s.clone())], text),
+            Self::Timeout => ui_err("provider.error.timeout", &[], text),
+            Self::Other(s) => ui_err("provider.error.other", &[("detail", s.clone())], text),
+        }
+    }
+}
+
 /// 构造 Provider 共用的 HTTP 客户端（120 秒超时）。
 ///
 /// 构造失败（如 TLS 后端初始化失败）返回错误而不是 panic：这条路径在用户保存
@@ -257,5 +278,65 @@ mod tests {
     fn provider_error_unauthorized_显示() {
         let e = ProviderError::Unauthorized;
         assert!(e.to_string().contains("鉴权"));
+    }
+
+    fn coded(e: &ProviderError) -> (String, serde_json::Value, String) {
+        let v: serde_json::Value = serde_json::from_str(&e.ui_message()).expect("应是编码 JSON");
+        (
+            v["code"].as_str().unwrap().to_string(),
+            v["params"].clone(),
+            v["message"].as_str().unwrap().to_string(),
+        )
+    }
+
+    #[test]
+    fn 应该_当错误无动态内容时_ui_message_只带编码且中文兜底等于_display() {
+        for (e, code) in [
+            (ProviderError::Unauthorized, "provider.error.unauthorized"),
+            (ProviderError::RateLimited, "provider.error.rateLimited"),
+            (ProviderError::Timeout, "provider.error.timeout"),
+        ] {
+            let (c, params, msg) = coded(&e);
+            assert_eq!(c, code);
+            assert!(params.as_object().unwrap().is_empty());
+            assert_eq!(msg, e.to_string());
+        }
+    }
+
+    #[test]
+    fn 应该_当错误带详情时_ui_message_把详情放进_detail_参数() {
+        for (e, code) in [
+            (
+                ProviderError::Protocol("SSE 坏了".into()),
+                "provider.error.protocol",
+            ),
+            (
+                ProviderError::Config("缺 key".into()),
+                "provider.error.config",
+            ),
+            (ProviderError::Other("奇怪".into()), "provider.error.other"),
+        ] {
+            let (c, params, msg) = coded(&e);
+            assert_eq!(c, code);
+            let detail = params["detail"].as_str().unwrap();
+            assert!(!detail.is_empty());
+            assert_eq!(msg, e.to_string(), "中文兜底必须与 Display 一致");
+            assert!(msg.ends_with(detail));
+        }
+    }
+
+    #[tokio::test]
+    async fn 应该_当_http_错误时_ui_message_的详情是底层错误而不含中文前缀() {
+        let err = reqwest::Client::new()
+            .get("http://127.0.0.1:1")
+            .send()
+            .await
+            .unwrap_err();
+        let detail = err.to_string();
+        let e = ProviderError::Http(err);
+        let (c, params, msg) = coded(&e);
+        assert_eq!(c, "provider.error.http");
+        assert_eq!(params["detail"], detail);
+        assert_eq!(msg, format!("HTTP 失败: {detail}"));
     }
 }

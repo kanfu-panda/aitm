@@ -20,6 +20,7 @@
  * ========================================================================== */
 
 import { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import type { OpenFile } from "../stores/file-editor";
 import { File as FileIcon, X } from "./icons";
 
@@ -58,6 +59,7 @@ export default function FileTabBar({
   onCloseRight,
   onCloseAll,
 }: Props) {
+  const { t } = useTranslation();
   /** v0.9.1 HR4-6：右键菜单状态。null = 未显示；非空 = 在指定 tab 上点了右键。 */
   const [contextMenu, setContextMenu] = useState<{
     tabId: string;
@@ -101,7 +103,7 @@ export default function FileTabBar({
     <>
       <div
         role="tablist"
-        aria-label="文件编辑器 tab"
+        aria-label={t("fileTabBar.tablistAria")}
         data-testid="file-tab-bar"
         className="flex flex-wrap items-stretch border-b border-[var(--c-border)] bg-[var(--c-bg-elev-1)]"
       >
@@ -156,7 +158,7 @@ export default function FileTabBar({
               {/* 右侧区域：dirty 时显圆点（hover 时变 X）；非 dirty hover 显 X */}
               <button
                 type="button"
-                aria-label={`关闭 ${basename(f.path)}`}
+                aria-label={t("fileTabBar.closeAria", { name: basename(f.path) })}
                 data-testid={`file-tab-close-${f.id}`}
                 className={
                   "ml-auto flex h-4 w-4 flex-shrink-0 items-center justify-center rounded text-[var(--c-text-dim)] hover:bg-[var(--c-bg-elev-3)] hover:text-[var(--c-text-base)] " +
@@ -201,7 +203,7 @@ export default function FileTabBar({
       {contextMenu && (
         <div
           role="menu"
-          aria-label="文件 tab 上下文菜单"
+          aria-label={t("fileTabBar.menuAria")}
           data-testid="file-tab-context-menu"
           style={{ top: contextMenu.y, left: contextMenu.x }}
           className="fixed z-50 min-w-[180px] rounded border border-[var(--c-border)] bg-[var(--c-bg-elev-2)] py-1 text-xs font-mono text-[var(--c-text-base)] shadow-lg"
@@ -219,7 +221,7 @@ export default function FileTabBar({
               onCloseRequested(id);
             }}
           >
-            关闭
+            {t("fileTabBar.close")}
           </button>
           <button
             type="button"
@@ -233,7 +235,7 @@ export default function FileTabBar({
               onCloseOthers?.(id);
             }}
           >
-            关闭其他
+            {t("fileTabBar.closeOthers")}
           </button>
           <button
             type="button"
@@ -247,7 +249,7 @@ export default function FileTabBar({
               onCloseRight?.(id);
             }}
           >
-            关闭右侧
+            {t("fileTabBar.closeRight")}
           </button>
           <div
             className="my-1 h-px bg-[var(--c-border)]"
@@ -264,7 +266,7 @@ export default function FileTabBar({
               onCloseAll?.();
             }}
           >
-            全部关闭
+            {t("fileTabBar.closeAll")}
           </button>
         </div>
       )}

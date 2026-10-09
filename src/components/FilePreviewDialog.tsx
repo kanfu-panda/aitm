@@ -53,6 +53,7 @@ import {
 import { useBrowserModalGuard } from "../lib/useBrowserModalGuard";
 import { usePreviewStore } from "../stores/preview";
 import { useSettingsStore } from "../stores/settings";
+import { formatBackendError } from "../lib/backendError";
 
 // 一次性注册所有支持的语言（hljs 用 alias 解析）
 const REGISTERED = new Set<string>();
@@ -191,7 +192,7 @@ export default function FilePreviewDialog() {
       })
       .catch((e) => {
         if (alive) {
-          setError(String(e));
+          setError(formatBackendError(e));
           setLoading(false);
         }
       });
@@ -637,7 +638,7 @@ function PreviewBody({ result, path }: BodyProps) {
     case "image":
       return <ImageView mime={result.mime} base64={result.base64} />;
     case "binary":
-      return <UnsupportedFallback path={path} reason={result.reason} />;
+      return <UnsupportedFallback path={path} reason={formatBackendError(result.reason)} />;
     case "too_large":
       return (
         <UnsupportedFallback
@@ -782,7 +783,7 @@ function UnsupportedFallback({ path, reason }: { path: string; reason: string })
       // 打开成功 → 关 Dialog（用户已切到外部 app）
       setPreviewPath(null);
     } catch (e) {
-      setOpenError(String(e));
+      setOpenError(formatBackendError(e));
     } finally {
       setOpening(false);
     }

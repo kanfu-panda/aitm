@@ -7,6 +7,7 @@ import {
   onAiToolRequest,
   type AiToolRequestEvent,
 } from "../lib/tauri";
+import { formatBackendError } from "../lib/backendError";
 import { useBrowserModalGuard } from "../lib/useBrowserModalGuard";
 import DiffView from "./DiffView";
 
@@ -113,15 +114,15 @@ export default function ConfirmDialog({ conversationId }: Props) {
               (isDestructive ? "text-[var(--c-error)]" : "text-[var(--c-text-base)]")
             }
           >
-            {isDestructive ? "⚠ AI 请求执行危险操作" : "AI 请求执行工具"}
+            {isDestructive ? t("confirmDialog.titleDestructive") : t("confirmDialog.title")}
           </Dialog.Title>
 
           <Dialog.Description className="sr-only">
-            审批或拒绝 AI 发起的工具调用
+            {t("confirmDialog.srDescription")}
           </Dialog.Description>
 
           <div className="mb-3 text-xs text-[var(--c-text-muted)]">
-            工具:{" "}
+            {t("confirmDialog.toolLabel")}{" "}
             <code className="rounded bg-[var(--c-bg-elev-2)] px-1.5 py-0.5 font-mono text-[var(--c-text-base)]">
               {pending.name}
             </code>
@@ -132,8 +133,8 @@ export default function ConfirmDialog({ conversationId }: Props) {
               className="mb-3 rounded border border-[var(--c-border)] bg-[var(--c-bg-base)] px-2 py-1 text-[11px] text-[var(--c-text-muted)]"
               aria-label={t("confirmDialog.riskReasonAria")}
             >
-              <span className="text-[var(--c-text-dim)]">评分原因：</span>
-              <span className="text-[var(--c-text-muted)]">{pending.risk_reason}</span>
+              <span className="text-[var(--c-text-dim)]">{t("confirmDialog.riskReasonLabel")}</span>
+              <span className="text-[var(--c-text-muted)]">{formatBackendError(pending.risk_reason)}</span>
             </div>
           )}
 

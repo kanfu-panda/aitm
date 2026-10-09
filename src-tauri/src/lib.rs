@@ -18,6 +18,7 @@ pub mod settings;
 pub mod skills;
 pub mod store;
 pub mod tools;
+pub mod ui_error;
 pub mod version;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

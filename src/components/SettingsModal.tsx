@@ -578,7 +578,7 @@ function TerminalTab() {
             <ThemeSwatch
               key={th.id}
               themeId={th.id}
-              displayName={th.display_name}
+              displayName={th.id === "default" ? t("terminal.themeDefault") : th.display_name}
               preview={th.preview}
               active={settings.terminal.theme === th.id}
               onSelect={() => update({ terminal: { theme: th.id } })}

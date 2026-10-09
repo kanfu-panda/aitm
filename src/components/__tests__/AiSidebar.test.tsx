@@ -681,4 +681,58 @@ describe("AiSidebar", () => {
       expect(toolFinListener.subs.length).toBe(0);
     });
   });
+
+  it("应该_当_ai_error_带编码且界面为英文时_横幅按英文显示错误原因", async () => {
+    const i18n = (await import("../../lib/i18n")).default;
+    try {
+      render(<AiSidebar />);
+      await waitReady();
+      sendText("hello");
+      await waitFor(() => expect(mockAiChatSend).toHaveBeenCalledTimes(1));
+      // 页面辅助函数按中文取元素，发完消息再切英文
+      await act(async () => {
+        await i18n.changeLanguage("en");
+      });
+
+      act(() =>
+        errorListener.fire("conv-1", {
+          conversation_id: "conv-1",
+          message: JSON.stringify({
+            code: "provider.error.rateLimited",
+            params: {},
+            message: "限流（429）：稍后重试",
+          }),
+          kind: "rate_limited",
+        }),
+      );
+
+      await screen.findByText(/Rate limited \(429\): try again later/);
+      expect(screen.queryByText(/限流/)).toBeNull();
+    } finally {
+      await i18n.changeLanguage("zh-CN");
+    }
+  });
+
+  it("应该_当发送消息的调用失败且错误带编码时_横幅按英文显示", async () => {
+    const i18n = (await import("../../lib/i18n")).default;
+    try {
+      mockAiChatSend.mockRejectedValueOnce(
+        JSON.stringify({
+          code: "ai.providerNotFound",
+          params: { id: "qwen" },
+          message: "provider 不存在: qwen",
+        }),
+      );
+      render(<AiSidebar />);
+      await waitReady();
+      sendText("hello");
+      await screen.findByText(/provider 不存在: qwen/);
+      await act(async () => {
+        await i18n.changeLanguage("en");
+      });
+      await screen.findByText(/Provider does not exist: qwen/);
+    } finally {
+      await i18n.changeLanguage("zh-CN");
+    }
+  });
 });

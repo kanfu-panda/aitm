@@ -14,6 +14,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import i18n from "../../../lib/i18n";
 
 // 重组件 stub：避免 xterm 在 jsdom 起重。F3：透传 isActive，用 data-active 属性
 // 断言"TerminalPaneGroup 是否把正确的 isActive 传给 TerminalView"——真实
@@ -304,6 +305,27 @@ describe("TerminalPaneGroup", () => {
       "shadow-[inset_0_-2px_0_0_var(--c-success)]",
     );
     expect(inactiveTab.className).toContain("min-w-[104px]");
+  });
+
+  it("应该_当界面是英文时_标签的关闭按钮_未读徽标_标题输入框的读屏名称跟着用英文", async () => {
+    await i18n.changeLanguage("en");
+    try {
+      useTabsStore.setState({
+        tabs: [{ id: "t1", title: "~/proj", sessionId: "s1", auto_title: true }],
+        activeId: "t1",
+        unreadByTab: { t1: 3 },
+      });
+      render(<TerminalPaneGroup group={makeGroup({ tab_ids: ["t1"], active_tab_id: "t1" })} />);
+
+      expect(screen.getByLabelText("Close tab")).toBeTruthy();
+      expect(screen.getByLabelText("3 unread")).toBeTruthy();
+      expect(screen.queryByLabelText("关闭标签")).toBeNull();
+
+      fireEvent.doubleClick(screen.getByText("~/proj"));
+      expect(screen.getByLabelText("Tab title editor")).toBeTruthy();
+    } finally {
+      await i18n.changeLanguage("zh-CN");
+    }
   });
 
   it("应该_当标签接着_tmux_会话时_标题前显示_tmux_图标并在悬停提示里写明", () => {

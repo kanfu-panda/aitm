@@ -17,6 +17,7 @@ use serde_json::{Value, json};
 
 use super::browser::{BrowserNavigateTool, current_active_tab};
 use super::{RiskClass, Tool, ToolContext, ToolError, ToolResult};
+use crate::ui_error::{plain, ui_err};
 
 pub struct BrowserOpenTool;
 
@@ -59,7 +60,7 @@ impl Tool for BrowserOpenTool {
 
     async fn execute(&self, args: Value, ctx: &ToolContext) -> Result<ToolResult, ToolError> {
         let parsed: OpenArgs = serde_json::from_value(args)
-            .map_err(|e| ToolError::InvalidArgs(format!("browser_open 参数: {e}")))?;
+            .map_err(|e| super::browser::invalid_args("browser_open", &e))?;
         let url = parsed
             .url
             .as_deref()
@@ -69,9 +70,11 @@ impl Tool for BrowserOpenTool {
 
         // 跟 browser_navigate 一致的结构化失败（v0.9.2 HR5-4 反幻觉约定）：
         // 失败也返 Ok(ToolResult) 但 content 里 ok=false，让 LLM 看得见失败信号。
+        // reason 传入时可能是编码：界面显示翻译，模型看到的 JSON 里仍是中文原文
         let make_fail = |reason: String| -> ToolResult {
+            let body = json!({ "ok": false, "reason": plain(&reason) }).to_string();
             ToolResult {
-                content: json!({ "ok": false, "reason": reason }).to_string(),
+                content: ui_err("tool.browser.openFailed", &[("reason", reason)], body),
                 is_error: true,
             }
         };
@@ -81,13 +84,23 @@ impl Tool for BrowserOpenTool {
             match u.parse::<tauri::Url>() {
                 Ok(parsed_url) => {
                     if !matches!(parsed_url.scheme(), "http" | "https") {
-                        return Ok(make_fail(format!(
-                            "不允许的 URL scheme: {}（仅 http/https）",
-                            parsed_url.scheme()
+                        return Ok(make_fail(ui_err(
+                            "tool.browser.schemeNotAllowed",
+                            &[("scheme", parsed_url.scheme().to_string())],
+                            format!(
+                                "不允许的 URL scheme: {}（仅 http/https）",
+                                parsed_url.scheme()
+                            ),
                         )));
                     }
                 }
-                Err(e) => return Ok(make_fail(format!("URL 解析失败: {e}"))),
+                Err(e) => {
+                    return Ok(make_fail(ui_err(
+                        "tool.browser.urlParseFailed",
+                        &[("error", e.to_string())],
+                        format!("URL 解析失败: {e}"),
+                    )));
+                }
             }
         }
 
@@ -101,8 +114,10 @@ impl Tool for BrowserOpenTool {
             if let Err(msg) =
                 crate::ipc::browser::request_frontend_open(&ctx.browser_state, None).await
             {
-                return Ok(make_fail(format!(
-                    "浏览器当前 tab 状态不一致，尝试让前端重新确立失败: {msg}"
+                return Ok(make_fail(ui_err(
+                    "tool.browser.tabStateInconsistent",
+                    &[("error", msg.clone())],
+                    format!("浏览器当前 tab 状态不一致，尝试让前端重新确立失败: {msg}"),
                 )));
             }
         }
@@ -119,13 +134,7 @@ impl Tool for BrowserOpenTool {
                         .await
                 }
                 None => Ok(ToolResult {
-                    content: json!({
-                        "ok": true,
-                        "already_open": true,
-                        "tab_id": tab_id,
-                        "note": "浏览器面板已经打开，复用当前 tab；要换页调 browser_navigate",
-                    })
-                    .to_string(),
+                    content: already_open_content(&tab_id),
                     is_error: false,
                 }),
             };
@@ -158,36 +167,84 @@ impl Tool for BrowserOpenTool {
                     (String::new(), String::new(), true)
                 };
 
-                let requested_url = url.clone().unwrap_or_else(|| "about:blank".to_string());
-                let display_url = if !final_url.is_empty() {
-                    final_url.clone()
-                } else {
-                    requested_url.clone()
-                };
-                let note = match (url.as_deref(), loaded) {
-                    (Some(_), true) => format!("已打开内嵌浏览器并加载完成: {display_url}"),
-                    (Some(u), false) => format!(
-                        "已打开内嵌浏览器并导航到 {u}，但 10s 内页面未完成加载（可能仍在加载中，可稍后重新 snapshot 确认）"
-                    ),
-                    (None, _) => "已打开内嵌浏览器（空白页）".to_string(),
-                };
-
                 Ok(ToolResult {
-                    content: json!({
-                        "ok": true,
-                        "already_open": false,
-                        "tab_id": tab_id,
-                        "url": display_url,
-                        "title": final_title,
-                        "loaded": loaded,
-                        "note": note,
-                    })
-                    .to_string(),
+                    content: build_open_success_content(
+                        &tab_id,
+                        url.as_deref(),
+                        &final_url,
+                        &final_title,
+                        loaded,
+                    ),
                     is_error: false,
                 })
             }
-            Err(msg) => Ok(make_fail(format!("打开内嵌浏览器失败: {msg}"))),
+            Err(msg) => Ok(make_fail(ui_err(
+                "tool.browser.openBrowserFailed",
+                &[("error", msg.clone())],
+                format!("打开内嵌浏览器失败: {msg}"),
+            ))),
         }
+    }
+}
+
+/// 浏览器已开着、复用当前 tab 的 content（编码；`plain()` 还原为模型看到的中文 JSON）。
+fn already_open_content(tab_id: &str) -> String {
+    let body = json!({
+        "ok": true,
+        "already_open": true,
+        "tab_id": tab_id,
+        "note": "浏览器面板已经打开，复用当前 tab；要换页调 browser_navigate",
+    })
+    .to_string();
+    ui_err("tool.browser.alreadyOpen", &[], body)
+}
+
+/// 新开浏览器成功后的 content。`url` 是请求的地址（`None` 即空白页），
+/// `final_url` / `final_title` 是加载完成后的落地信息（可能为空）。
+fn build_open_success_content(
+    tab_id: &str,
+    url: Option<&str>,
+    final_url: &str,
+    final_title: &str,
+    loaded: bool,
+) -> String {
+    let requested_url = url.unwrap_or("about:blank");
+    let display_url = if final_url.is_empty() {
+        requested_url
+    } else {
+        final_url
+    };
+    // 编码必须写成字面量（测试会扫描源码核对语言包），所以每个分支各自调 ui_err
+    let body = |note: &str| {
+        json!({
+            "ok": true,
+            "already_open": false,
+            "tab_id": tab_id,
+            "url": display_url,
+            "title": final_title,
+            "loaded": loaded,
+            "note": note,
+        })
+        .to_string()
+    };
+    match (url, loaded) {
+        (Some(_), true) => ui_err(
+            "tool.browser.openedLoaded",
+            &[("url", display_url.to_string())],
+            body(&format!("已打开内嵌浏览器并加载完成: {display_url}")),
+        ),
+        (Some(u), false) => ui_err(
+            "tool.browser.openedLoadTimeout",
+            &[("url", u.to_string())],
+            body(&format!(
+                "已打开内嵌浏览器并导航到 {u}，但 10s 内页面未完成加载（可能仍在加载中，可稍后重新 snapshot 确认）"
+            )),
+        ),
+        (None, _) => ui_err(
+            "tool.browser.openedBlank",
+            &[],
+            body("已打开内嵌浏览器（空白页）"),
+        ),
     }
 }
 
@@ -233,7 +290,7 @@ mod tests {
             .await
             .expect("失败也应返 Ok(ToolResult)");
         assert!(r.is_error);
-        let body: Value = serde_json::from_str(&r.content).unwrap();
+        let body: Value = serde_json::from_str(&plain(&r.content)).unwrap();
         assert_eq!(body["ok"], json!(false));
         assert!(!r.content.contains("已打开内嵌浏览器"));
         // pending 不残留
@@ -248,7 +305,7 @@ mod tests {
             .await
             .unwrap();
         assert!(r.is_error);
-        let body: Value = serde_json::from_str(&r.content).unwrap();
+        let body: Value = serde_json::from_str(&plain(&r.content)).unwrap();
         assert_eq!(body["ok"], json!(false));
         assert!(
             body["reason"].as_str().unwrap_or("").contains("scheme"),
@@ -265,7 +322,7 @@ mod tests {
             .execute(json!({"url": "   "}), &ctx)
             .await
             .unwrap();
-        let body: Value = serde_json::from_str(&r.content).unwrap();
+        let body: Value = serde_json::from_str(&plain(&r.content)).unwrap();
         // 无 AppHandle 仍会失败，但 reason 必须是"打开失败"而非"URL 解析失败"
         assert_eq!(body["ok"], json!(false));
         let reason = body["reason"].as_str().unwrap_or("");
@@ -295,6 +352,102 @@ mod tests {
         match r {
             Err(ToolError::InvalidArgs(msg)) => assert!(msg.contains("browser_open")),
             other => panic!("应是 InvalidArgs，实际 {other:?}"),
+        }
+    }
+
+    // =====================================================================
+    // 结果编码化：界面按语言显示，交给模型时 plain() 还原中文
+    // =====================================================================
+
+    fn coded(s: &str) -> Value {
+        serde_json::from_str(s).unwrap_or_else(|e| panic!("应是编码字符串: {e}: {s}"))
+    }
+
+    #[tokio::test]
+    async fn 应该_当_scheme_不允许时_失败结果带编码且模型看到原_json() {
+        let ctx = make_ctx();
+        let r = BrowserOpenTool
+            .execute(json!({"url": "ftp://x.test"}), &ctx)
+            .await
+            .unwrap();
+        let v = coded(&r.content);
+        assert_eq!(v["code"], "tool.browser.openFailed");
+        assert_eq!(
+            coded(v["params"]["reason"].as_str().unwrap())["code"],
+            "tool.browser.schemeNotAllowed"
+        );
+        let body: Value = serde_json::from_str(&crate::ui_error::plain(&r.content)).unwrap();
+        assert_eq!(body["ok"], json!(false));
+        assert_eq!(
+            body["reason"],
+            json!("不允许的 URL scheme: ftp（仅 http/https）")
+        );
+    }
+
+    #[tokio::test]
+    async fn 应该_当前端打不开浏览器时_reason_带打开失败编码() {
+        let ctx = make_ctx();
+        let r = BrowserOpenTool.execute(json!({}), &ctx).await.unwrap();
+        let v = coded(&r.content);
+        assert_eq!(v["code"], "tool.browser.openFailed");
+        let reason = coded(v["params"]["reason"].as_str().unwrap());
+        assert_eq!(reason["code"], "tool.browser.openBrowserFailed");
+        assert!(crate::ui_error::plain(&r.content).contains("打开内嵌浏览器失败: "));
+    }
+
+    #[tokio::test]
+    async fn 应该_当参数类型不对时_报带工具名的编码参数错误() {
+        let ctx = make_ctx();
+        let Err(ToolError::InvalidArgs(msg)) =
+            BrowserOpenTool.execute(json!({"url": 1}), &ctx).await
+        else {
+            panic!("应是 InvalidArgs");
+        };
+        let v = coded(&msg);
+        assert_eq!(v["code"], "tool.browser.invalidArgs");
+        assert_eq!(v["params"]["tool"], "browser_open");
+    }
+
+    #[test]
+    fn 应该_当浏览器已打开时_复用结果带编码且原文提示不变() {
+        let c = already_open_content("t1");
+        assert_eq!(coded(&c)["code"], "tool.browser.alreadyOpen");
+        let body: Value = serde_json::from_str(&crate::ui_error::plain(&c)).unwrap();
+        assert_eq!(body["already_open"], json!(true));
+        assert_eq!(
+            body["note"],
+            json!("浏览器面板已经打开，复用当前 tab；要换页调 browser_navigate")
+        );
+    }
+
+    #[test]
+    fn 应该_按加载情况为新开浏览器的结果选对编码和原文提示() {
+        let cases: [(Option<&str>, bool, &str, &str); 3] = [
+            (
+                Some("https://a.test"),
+                true,
+                "tool.browser.openedLoaded",
+                "已打开内嵌浏览器并加载完成: https://a.test/x",
+            ),
+            (
+                Some("https://a.test"),
+                false,
+                "tool.browser.openedLoadTimeout",
+                "已打开内嵌浏览器并导航到 https://a.test，但 10s 内页面未完成加载（可能仍在加载中，可稍后重新 snapshot 确认）",
+            ),
+            (
+                None,
+                true,
+                "tool.browser.openedBlank",
+                "已打开内嵌浏览器（空白页）",
+            ),
+        ];
+        for (url, loaded, code, note) in cases {
+            let c = build_open_success_content("t1", url, "https://a.test/x", "T", loaded);
+            assert_eq!(coded(&c)["code"], code);
+            let body: Value = serde_json::from_str(&crate::ui_error::plain(&c)).unwrap();
+            assert_eq!(body["note"], json!(note));
+            assert_eq!(body["tab_id"], json!("t1"));
         }
     }
 }

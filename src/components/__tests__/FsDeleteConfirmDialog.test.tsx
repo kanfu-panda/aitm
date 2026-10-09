@@ -32,6 +32,7 @@ vi.mock("../../lib/tauri", async (orig) => {
 });
 
 import FsDeleteConfirmDialog from "../FsDeleteConfirmDialog";
+import i18n from "../../lib/i18n";
 
 afterEach(() => {
   cleanup();
@@ -208,5 +209,28 @@ describe("FsDeleteConfirmDialog", () => {
       key: "Escape",
     });
     expect(onCancel).toHaveBeenCalled();
+  });
+});
+
+describe("FsDeleteConfirmDialog 后端错误跟随界面语言", () => {
+  afterEach(async () => {
+    await i18n.changeLanguage("zh-CN");
+  });
+
+  it("应该_当界面为英文且后端返回带编码的错误时_显示英文文案", async () => {
+    await i18n.changeLanguage("en");
+    const onConfirm = vi.fn().mockRejectedValue(
+      JSON.stringify({ code: "fs.deleteSystemDir", params: { path: "/etc/x" }, message: "禁止删除系统目录：/etc/x" }),
+    );
+    render(
+      <FsDeleteConfirmDialog
+        pending={{ path: "/etc/x", name: "x", isDir: false }}
+        onConfirm={onConfirm}
+        onCancel={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("fs-delete-dialog-confirm"));
+    const box = await screen.findByTestId("fs-delete-dialog-error");
+    expect(box.textContent).toBe("Deleting a system directory is not allowed: /etc/x");
   });
 });

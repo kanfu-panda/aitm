@@ -1,3 +1,5 @@
+import { useTranslation } from "react-i18next";
+
 import type { NotificationLevel } from "../stores/notifications";
 
 /**
@@ -19,24 +21,19 @@ const LEVEL_TO_CLASS: Record<NotificationLevel, string> = {
   error: "bg-[var(--c-error)]",
 };
 
-const LEVEL_TO_TITLE: Record<NotificationLevel, string> = {
-  running: "运行中",
-  done: "完成",
-  waiting: "等待审批",
-  error: "出错",
-};
-
 interface Props {
   level: NotificationLevel;
 }
 
 export default function StatusRing({ level }: Props) {
+  const { t } = useTranslation();
+  const title = t(`notify.level.${level}`);
   return (
     <span
       className={`inline-block h-2 w-2 rounded-full ${LEVEL_TO_CLASS[level]}`}
       role="status"
-      aria-label={`通知：${LEVEL_TO_TITLE[level]}`}
-      title={LEVEL_TO_TITLE[level]}
+      aria-label={t("tabs.notification", { level: title })}
+      title={title}
       data-testid={`tab-status-${level}`}
     />
   );

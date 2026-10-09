@@ -42,7 +42,8 @@ pub struct NotificationEvent {
     /// 关联的后端 session id；前端通过 sessionId → tabId 路由到对应 tab
     pub session_id: String,
     pub level: NotificationLevel,
-    /// 通知文案；空时前端用默认值（"AI 完成" / "AI 等审批" 等）
+    /// 通知文案。来源为 AI 工具循环时只放细节（工具名 / 错误详情 / 空），
+    /// 句子由前端按界面语言拼；来源为终端程序（OSC）时是程序自己的文字
     pub message: String,
     pub source: NotificationSource,
     pub timestamp_ms: u64,

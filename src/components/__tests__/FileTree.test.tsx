@@ -42,6 +42,7 @@ vi.mock("../../lib/tauri", async (orig) => {
 });
 
 import FileTree from "../FileTree";
+import i18n from "../../lib/i18n";
 import { useTabsStore } from "../../stores/tabs";
 import { useFileEditorStore } from "../../stores/file-editor";
 import { useGitStatusStore } from "../../stores/git-status";
@@ -245,6 +246,24 @@ describe("FileTree", () => {
     await waitFor(() => {
       expect(screen.getByText(/读取失败/)).toBeTruthy();
     });
+  });
+
+  it("应该_当界面为英文且读取目录树被后端拒绝时_显示英文文案", async () => {
+    await i18n.changeLanguage("en");
+    try {
+      const tabId = useTabsStore.getState().addTab();
+      useTabsStore.getState().setSessionId(tabId, "sid");
+      sessionCurrentCwdMock.mockResolvedValue("/a");
+      fsTreeMock.mockRejectedValue(
+        JSON.stringify({ code: "fs.notDir", params: { path: "/a" }, message: "不是目录：/a" }),
+      );
+      render(<FileTree />);
+      await waitFor(() => {
+        expect(screen.getByText(/Not a directory: \/a/)).toBeTruthy();
+      });
+    } finally {
+      await i18n.changeLanguage("zh-CN");
+    }
   });
 
   it(".markdown 后缀（大小写不敏感）也触发 openFile", async () => {

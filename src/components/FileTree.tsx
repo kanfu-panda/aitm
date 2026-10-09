@@ -36,6 +36,7 @@ import { ChevronDown, ChevronRight, RotateCw } from "./icons";
 import { getFileIcon, getFolderIcon } from "../lib/file-icon";
 import InputDialog from "./InputDialog";
 import FsDeleteConfirmDialog from "./FsDeleteConfirmDialog";
+import { formatBackendError } from "../lib/backendError";
 
 /** v0.9.1 HR3-6：git status 轮询间隔（ms）。
  *  5s 在大 repo 下也 < 50ms 单次开销可接受；调高会让用户感觉"刚改的文件半天没变色"。 */
@@ -295,7 +296,7 @@ export default function FileTree() {
       } catch (e) {
         if (!alive) return;
         setRootNode(null);
-        setError(String(e));
+        setError(formatBackendError(e));
       }
     };
 
@@ -519,7 +520,7 @@ export default function FileTree() {
         return next;
       });
     } catch (e) {
-      setLoadErrorByPath((prev) => ({ ...prev, [path]: String(e) }));
+      setLoadErrorByPath((prev) => ({ ...prev, [path]: formatBackendError(e) }));
     }
   }, []);
 
@@ -846,9 +847,9 @@ function FileTreeRow({
   const nodeIconLabel =
     node.kind === "dir"
       ? expanded
-        ? "已展开文件夹"
-        : "文件夹"
-      : "文件";
+        ? t("fileTree.iconDirOpen")
+        : t("fileTree.iconDir")
+      : t("fileTree.iconFile");
   const ArrowIcon =
     node.kind === "dir" ? (expanded ? ChevronDown : ChevronRight) : null;
 
@@ -911,7 +912,7 @@ function FileTreeRow({
         {fileBadge && (
           <span
             className={`ml-auto pl-1 flex-shrink-0 font-mono text-xs font-bold ${fileBadge.colorClass}`}
-            aria-label={`git 状态：${fileBadge.letter}`}
+            aria-label={t("fileTree.gitStatusAria", { letter: fileBadge.letter })}
             data-testid="git-file-status-badge"
           >
             {fileBadge.letter}
@@ -933,7 +934,7 @@ function FileTreeRow({
               style={{ paddingLeft: padLeft + 16 }}
               role="status"
             >
-              读取失败：{loadError}
+              {t("fileTree.loadFailed", { error: loadError })}
             </div>
           )}
           {!loadError && children && children.length === 0 && (
@@ -941,7 +942,7 @@ function FileTreeRow({
               className="py-1 text-xs text-[var(--c-text-faint)]"
               style={{ paddingLeft: padLeft + 16 }}
             >
-              (空)
+              {t("fileTree.empty")}
             </div>
           )}
           {!loadError && children && children.length > 0 && (

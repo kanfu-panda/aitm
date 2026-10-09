@@ -64,23 +64,36 @@ pub struct ToolPreview {
 }
 
 /// 工具执行错误。
+///
+/// 内层细节可以是普通中文，也可以是 [`crate::ui_error::ui_err`] 生成的编码字符串；
+/// `Display`（给大模型和日志看）一律还原成中文。
 #[derive(Debug, Error)]
 pub enum ToolError {
-    #[error("参数无效: {0}")]
+    #[error("参数无效: {}", crate::ui_error::plain(.0))]
     InvalidArgs(String),
-    #[error("拒绝执行：{reason}")]
+    #[error("拒绝执行：{}", crate::ui_error::plain(reason))]
     Blocked { reason: String },
-    #[error("执行失败: {0}")]
+    #[error("执行失败: {}", crate::ui_error::plain(.0))]
     Exec(String),
-    #[error("会话不存在: {0}")]
+    #[error("会话不存在: {}", crate::ui_error::plain(.0))]
     SessionNotFound(String),
 }
 
 impl From<ToolError> for ToolResult {
-    /// 把 ToolError 翻成 is_error=true 的 ToolResult，统一喂给 LLM。
+    /// 把 ToolError 翻成 is_error=true 的 ToolResult。
+    ///
+    /// content 是带编码的字符串：界面按语言显示（内层细节也可带编码）；交给大模型前
+    /// 由工具循环用 [`crate::ui_error::plain`] 还原成中文。
     fn from(e: ToolError) -> Self {
+        let message = e.to_string();
+        let (code, detail) = match e {
+            ToolError::InvalidArgs(d) => ("tool.invalidArgs", d),
+            ToolError::Blocked { reason } => ("tool.blocked", reason),
+            ToolError::Exec(d) => ("tool.exec", d),
+            ToolError::SessionNotFound(d) => ("tool.sessionNotFound", d),
+        };
         Self {
-            content: e.to_string(),
+            content: crate::ui_error::ui_err(code, &[("detail", detail)], message),
             is_error: true,
         }
     }
@@ -132,6 +145,13 @@ pub trait Tool: Send + Sync {
     async fn preview(&self, _args: &Value, _ctx: &ToolContext) -> Option<ToolPreview> {
         None
     }
+}
+
+/// 测试辅助：把 `ui_err` 编码字符串拆成 (code, params)。
+#[cfg(test)]
+pub(crate) fn decode_ui_err(s: &str) -> (String, serde_json::Value) {
+    let v: serde_json::Value = serde_json::from_str(s).expect("应是 ui_err 编码");
+    (v["code"].as_str().unwrap().to_string(), v["params"].clone())
 }
 
 #[cfg(test)]
@@ -282,5 +302,31 @@ mod tests {
         assert_eq!(got.path, "hello.txt");
         assert_eq!(got.old_text, "");
         assert_eq!(got.new_text, "world");
+    }
+
+    // 工具错误转成结果时带编码，内层细节可以本身也是编码
+    #[test]
+    fn 应该_当工具错误转成结果时_带变体编码且内层细节可嵌套编码() {
+        let inner = crate::ui_error::ui_err("x.inner", &[("p", "1".into())], "细节");
+        let e = ToolError::Exec(inner.clone());
+        assert_eq!(
+            e.to_string(),
+            "执行失败: 细节",
+            "Display 给模型和日志看，应还原内层中文"
+        );
+        let r: ToolResult = e.into();
+        assert!(r.is_error);
+        let v: serde_json::Value = serde_json::from_str(&r.content).unwrap();
+        assert_eq!(v["code"], "tool.exec");
+        assert_eq!(v["params"]["detail"], inner);
+        assert_eq!(crate::ui_error::plain(&r.content), "执行失败: 细节");
+
+        let r: ToolResult = ToolError::Blocked {
+            reason: "在黑名单里".into(),
+        }
+        .into();
+        let v: serde_json::Value = serde_json::from_str(&r.content).unwrap();
+        assert_eq!(v["code"], "tool.blocked");
+        assert_eq!(v["params"]["detail"], "在黑名单里");
     }
 }

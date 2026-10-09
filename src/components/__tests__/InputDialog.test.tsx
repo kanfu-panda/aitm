@@ -11,6 +11,7 @@ vi.mock("../../lib/useBrowserModalGuard", () => ({
 }));
 
 import InputDialog from "../InputDialog";
+import i18n from "../../lib/i18n";
 
 afterEach(() => {
   cleanup();
@@ -23,7 +24,7 @@ function Harness({
   onSubmit = () => {},
 }: {
   focusTerminalOnSubmit?: boolean;
-  onSubmit?: () => void;
+  onSubmit?: () => void | Promise<void>;
 }) {
   return <HarnessInner opts={{ focusTerminalOnSubmit, onSubmit }} />;
 }
@@ -32,7 +33,7 @@ import { useState } from "react";
 function HarnessInner({
   opts,
 }: {
-  opts: { focusTerminalOnSubmit?: boolean; onSubmit: () => void };
+  opts: { focusTerminalOnSubmit?: boolean; onSubmit: () => void | Promise<void> };
 }) {
   const [open, setOpen] = useState(false);
   return (
@@ -56,6 +57,24 @@ function HarnessInner({
     </>
   );
 }
+
+describe("InputDialog 后端错误跟随界面语言", () => {
+  afterEach(async () => {
+    await i18n.changeLanguage("zh-CN");
+  });
+
+  it("应该_当界面为英文且提交被后端拒绝时_显示英文文案", async () => {
+    await i18n.changeLanguage("en");
+    const onSubmit = vi.fn().mockRejectedValue(
+      JSON.stringify({ code: "fs.fileExists", params: { path: "/a/b.txt" }, message: "文件已存在：/a/b.txt" }),
+    );
+    render(<Harness onSubmit={onSubmit} />);
+    fireEvent.click(screen.getByTestId("trigger"));
+    fireEvent.click(await screen.findByTestId("input-dialog-ok"));
+    const box = await screen.findByTestId("input-dialog-error");
+    expect(box.textContent).toBe("File already exists: /a/b.txt");
+  });
+});
 
 describe("InputDialog 关闭后的焦点去向", () => {
   it("应该_当配置了提交后聚焦终端且提交成功时_关闭后请求聚焦终端而不是还给触发按钮", async () => {

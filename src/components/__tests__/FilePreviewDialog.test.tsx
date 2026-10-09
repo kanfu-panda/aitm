@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import FilePreviewDialog from "../FilePreviewDialog";
+import i18n from "../../lib/i18n";
 import { usePreviewStore } from "../../stores/preview";
 import { useSettingsStore } from "../../stores/settings";
 
@@ -262,6 +263,53 @@ describe("FilePreviewDialog", () => {
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toContain("读取失败");
     expect(alert.textContent).toContain("不存在");
+  });
+
+  it("应该_当界面为英文且读取预览被后端拒绝时_显示英文文案", async () => {
+    await i18n.changeLanguage("en");
+    try {
+      mockPreview.mockRejectedValue(
+        JSON.stringify({ code: "fs.notFile", params: { path: "/tmp/d" }, message: "不是文件：/tmp/d" }),
+      );
+      render(<FilePreviewDialog />);
+      setPath("/tmp/d");
+      const alert = await screen.findByRole("alert");
+      expect(alert.textContent).toContain("Not a file: /tmp/d");
+    } finally {
+      await i18n.changeLanguage("zh-CN");
+    }
+  });
+
+  it("应该_当界面为英文且预览为二进制时_原因显示英文文案", async () => {
+    await i18n.changeLanguage("en");
+    try {
+      mockPreview.mockResolvedValue({
+        kind: "binary",
+        reason: JSON.stringify({ code: "fs.binaryReason", params: {}, message: "包含非 UTF-8 / NUL 字节" }),
+      });
+      render(<FilePreviewDialog />);
+      setPath("/tmp/x.dmg");
+      await screen.findByTestId("preview-open-default-app");
+      expect(screen.getByText(/Contains non-UTF-8 \/ NUL bytes/)).toBeTruthy();
+    } finally {
+      await i18n.changeLanguage("zh-CN");
+    }
+  });
+
+  it("应该_当界面为英文且用默认应用打开被后端拒绝时_显示英文文案", async () => {
+    await i18n.changeLanguage("en");
+    try {
+      mockPreview.mockResolvedValue({ kind: "binary", reason: "x" });
+      mockShellOpen.mockRejectedValueOnce(
+        JSON.stringify({ code: "shell.pathNotFound", params: { path: "/tmp/x.dmg" }, message: "路径不存在：/tmp/x.dmg" }),
+      );
+      render(<FilePreviewDialog />);
+      setPath("/tmp/x.dmg");
+      (await screen.findByTestId("preview-open-default-app")).click();
+      expect(await screen.findByText(/Path does not exist: \/tmp\/x\.dmg/)).toBeTruthy();
+    } finally {
+      await i18n.changeLanguage("zh-CN");
+    }
   });
 
   // ===== v0.6.0-A T4 浮动窗口行为 =====

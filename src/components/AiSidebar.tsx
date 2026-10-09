@@ -28,6 +28,7 @@ import InitProjectDialog from "./conversation/InitProjectDialog";
 import { RotateCcw, Sparkles, Square } from "./icons";
 import { trackEvent } from "../lib/analytics";
 import { collectRuntimeContext } from "../lib/aiContext";
+import { formatBackendError } from "../lib/backendError";
 import { useChatStore } from "../stores/chat";
 import { useSidebarStore } from "../stores/sidebar";
 import { useTabsStore } from "../stores/tabs";
@@ -579,7 +580,7 @@ function ChatBody({ providerId, modelId }: { providerId: string; modelId: string
             ? t("aiSidebar.errorUnauthorized")
             : t("aiSidebar.errorGeneric")}
           {t("aiSidebar.errorSeparator")}
-          {error.message}
+          {formatBackendError(error.message)}
           {/* A2：error banner 也给一个重试入口，跟末条 assistant 气泡的重试按钮走同一逻辑 */}
           <button
             onClick={retry}

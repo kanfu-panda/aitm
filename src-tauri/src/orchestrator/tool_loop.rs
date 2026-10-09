@@ -22,6 +22,7 @@ use crate::providers::LlmProvider;
 use crate::providers::types::*;
 use crate::safety::{blacklist, risk, whitelist};
 use crate::tools::{RiskClass, Tool, ToolContext, ToolPreview, ToolResult, registry::ToolRegistry};
+use crate::ui_error::ui_err;
 
 /// 工具调用最大轮数（防止 LLM 无限循环调工具）。
 pub const MAX_STEPS: u32 = 10;
@@ -200,7 +201,9 @@ impl EventSink for TauriSink {
 /// v1.3.0 A1：自动放行原因文案——本会话已被用户授权过该工具。
 /// 前端 [`ToolCallBubble`] 复用既有的 `auto_approved_reason` 徽章展示它，
 /// 保证用户**始终看得见**哪些调用是自动放行的。
-pub const SESSION_GRANT_REASON: &str = "本会话已授权";
+pub fn session_grant_reason() -> String {
+    ui_err("risk.sessionGranted", &[], "本会话已授权")
+}
 
 /// 一条待审批的工具调用。
 ///
@@ -399,16 +402,16 @@ pub async fn run_tool_loop(
         {
             Ok(t) => t,
             Err(e) => {
-                let msg = e.to_string();
                 notify_ai_loop(
                     sink.as_ref(),
                     ctx.active_session_id.as_deref(),
                     crate::notifications::NotificationLevel::Error,
-                    format!("AI 出错：{msg}"),
+                    e.ui_message(),
                 );
+                // 发往界面的横幅用带编码的消息，由前端按界面语言渲染
                 sink.emit_error(&AiErrorEvent {
                     conversation_id: cid.clone(),
-                    message: msg,
+                    message: e.ui_message(),
                 });
                 return;
             }
@@ -428,7 +431,7 @@ pub async fn run_tool_loop(
                 sink.as_ref(),
                 ctx.active_session_id.as_deref(),
                 crate::notifications::NotificationLevel::Done,
-                "AI 完成".to_string(),
+                String::new(),
             );
             sink.emit_done(&AiDoneEvent {
                 conversation_id: cid.clone(),
@@ -459,7 +462,9 @@ pub async fn run_tool_loop(
             .zip(results)
             .map(|(tc, r)| ContentBlock::ToolResult {
                 tool_use_id: tc.id.clone(),
-                content: r.content,
+                // 工具结果里 aitm 自己写的文字带编码（给界面按语言显示），
+                // 交给大模型时还原成中文原文
+                content: crate::ui_error::plain(&r.content),
                 is_error: r.is_error,
             })
             .collect();
@@ -653,7 +658,7 @@ fn build_assistant_message(turn: &OneTurn) -> Message {
 //   └──────┬───────┘
 //          ▼ miss
 //   ┌──────────────┐
-//   │ L2 == Low?   │── yes ─→ 自动批 (auto_approved_reason="L2：<reason>")
+//   │ L2 == Low?   │── yes ─→ 自动批 (auto_approved_reason=L2 评分原因，ui_err 编码，中文 "L2：<reason>")
 //   └──────┬───────┘
 //          ▼ no
 //   High → ask_user(high, risk_reason="L2：<reason>")
@@ -729,7 +734,7 @@ async fn execute_tool_calls(
         .into_iter()
         .map(|r| {
             r.unwrap_or_else(|| ToolResult {
-                content: "工具未执行".into(),
+                content: ui_err("tool.notExecuted", &[], "工具未执行"),
                 is_error: true,
             })
         })
@@ -779,7 +784,11 @@ async fn handle_one_tool_call(
         Some(t) => t,
         None => {
             let r = ToolResult {
-                content: format!("未知工具: {}", tc.name),
+                content: ui_err(
+                    "tool.unknownTool",
+                    &[("name", tc.name.clone())],
+                    format!("未知工具: {}", tc.name),
+                ),
                 is_error: true,
             };
             sink.emit_tool_finished(&AiToolFinishedEvent {
@@ -816,7 +825,7 @@ async fn handle_one_tool_call(
             ctx,
             sink,
             cid,
-            Some(SESSION_GRANT_REASON.to_string()),
+            Some(session_grant_reason()),
             preview,
         )
         .await;
@@ -885,7 +894,14 @@ async fn handle_run_command(
     // L1 黑名单
     if let Some(label) = blacklist::is_blacklisted(cmd) {
         let r = ToolResult {
-            content: format!("L1 黑名单拦截：{label}（命令 = {cmd}）"),
+            content: ui_err(
+                "tool.blacklisted",
+                &[
+                    ("label", blacklist::label_ui(label)),
+                    ("cmd", cmd.to_string()),
+                ],
+                format!("L1 黑名单拦截：{label}（命令 = {cmd}）"),
+            ),
             is_error: true,
         };
         sink.emit_tool_finished(&AiToolFinishedEvent {
@@ -909,7 +925,7 @@ async fn handle_run_command(
             let approved = ask_user(
                 tc,
                 RiskClass::Destructive,
-                Some(format!("L2：{}", assessment.reason)),
+                Some(assessment.reason.clone()),
                 handle,
                 sink,
                 cid,
@@ -925,15 +941,27 @@ async fn handle_run_command(
 
         // LOW：自动批准（白名单 / L2 都给 LOW，emit reason 让 UI 标识）
         RiskClass::Low => {
-            let reason = format!("L2：{}", assessment.reason);
-            execute_tool(tc, tool, ctx, sink, cid, Some(reason), preview).await
+            execute_tool(
+                tc,
+                tool,
+                ctx,
+                sink,
+                cid,
+                Some(assessment.reason.clone()),
+                preview,
+            )
+            .await
         }
 
         // HIGH：先看 L3 白名单
         RiskClass::High => {
             if let Some(pattern) = whitelist::is_whitelisted(&ctx.whitelist, cmd) {
                 // 白名单命中 → 降级 LOW 自动批
-                let reason = format!("白名单：{pattern}");
+                let reason = ui_err(
+                    "risk.whitelist",
+                    &[("pattern", pattern.to_string())],
+                    format!("白名单：{pattern}"),
+                );
                 return execute_tool(tc, tool, ctx, sink, cid, Some(reason), preview).await;
             }
             // 🔴 run_command **不参与**会话级「本会话都允许」（维护者 2026-07-27 拍板）。
@@ -946,7 +974,7 @@ async fn handle_run_command(
             let approved = ask_user(
                 tc,
                 RiskClass::High,
-                Some(format!("L2：{}", assessment.reason)),
+                Some(assessment.reason.clone()),
                 handle,
                 sink,
                 cid,
@@ -970,7 +998,7 @@ fn reject_tool(
     preview: Option<ToolPreview>,
 ) -> ToolResult {
     let r = ToolResult {
-        content: "用户拒绝执行此操作".into(),
+        content: ui_err("tool.rejectedByUser", &[], "用户拒绝执行此操作"),
         is_error: true,
     };
     sink.emit_tool_finished(&AiToolFinishedEvent {
@@ -1025,6 +1053,9 @@ async fn execute_tool(
 
 /// v0.5.0-A T6 helper：发 AI 工具循环通知（差异化核心，plan §4）。
 ///
+/// `message` 只放细节（等待审批时是工具名、出错时是错误详情、完成时为空），
+/// 通知的句子由前端按界面语言拼，这里不写任何语言的文案。
+///
 /// session_id 是 None / 空字符串时跳过（前端通过 session_id → tabId 路由，
 /// 空值找不到 tab）。timestamp 用 epoch ms。
 fn notify_ai_loop(
@@ -1078,7 +1109,7 @@ async fn ask_user(
         sink,
         session_id,
         crate::notifications::NotificationLevel::Waiting,
-        format!("AI 等待审批：{}", tc.name),
+        tc.name.clone(),
     );
 
     let args_preview = serde_json::to_string_pretty(&tc.input).unwrap_or_default();
@@ -1158,7 +1189,7 @@ async fn summarize_and_done(
                 sink,
                 session_id,
                 crate::notifications::NotificationLevel::Done,
-                "AI 完成（总结收尾）".to_string(),
+                String::new(),
             );
             sink.emit_done(&AiDoneEvent {
                 conversation_id: cid.to_string(),
@@ -1171,17 +1202,36 @@ async fn summarize_and_done(
             });
         }
         Err(e) => {
-            let msg = format!("总结阶段失败: {e}");
+            let msg = summary_failed_message(&e);
             notify_ai_loop(
                 sink,
                 session_id,
                 crate::notifications::NotificationLevel::Error,
-                msg.clone(),
+                e.ui_message(),
             );
             sink.emit_error(&AiErrorEvent {
                 conversation_id: cid.to_string(),
                 message: msg,
             });
+        }
+    }
+}
+
+/// "总结阶段失败"的界面消息。
+///
+/// 把"总结阶段失败"这句话与具体原因拼在一起，原因本身也得跟随界面语言，所以
+/// 按错误种类分别用编码，而不是把中文原因塞进参数。中文兜底与原文一致。
+fn summary_failed_message(e: &ProviderError) -> String {
+    let text = format!("总结阶段失败: {e}");
+    match e {
+        ProviderError::Unauthorized => ui_err("ai.summaryFailedUnauthorized", &[], text),
+        ProviderError::RateLimited => ui_err("ai.summaryFailedRateLimited", &[], text),
+        ProviderError::Timeout => ui_err("ai.summaryFailedTimeout", &[], text),
+        ProviderError::Http(inner) => {
+            ui_err("ai.summaryFailed", &[("detail", inner.to_string())], text)
+        }
+        ProviderError::Protocol(s) | ProviderError::Config(s) | ProviderError::Other(s) => {
+            ui_err("ai.summaryFailed", &[("detail", s.clone())], text)
         }
     }
 }
@@ -1695,7 +1745,10 @@ mod tests {
         let reqs = sink.tool_requests.lock().unwrap();
         assert_eq!(reqs.len(), 1);
         assert_eq!(reqs[0].risk, RiskClass::Destructive);
-        let reason = reqs[0].risk_reason.as_deref().unwrap_or("");
+        let raw = reqs[0].risk_reason.as_deref().unwrap_or("");
+        let v: serde_json::Value = serde_json::from_str(raw).expect("risk_reason 应为编码字符串");
+        assert_eq!(v["code"], "risk.sudo");
+        let reason = crate::ui_error::plain(raw);
         assert!(reason.contains("L2"), "risk_reason 应带 L2 前缀: {reason}");
         assert!(reason.contains("sudo"), "risk_reason 应说明 sudo: {reason}");
         // 拒绝 → tool_started 不该触发
@@ -1730,7 +1783,10 @@ mod tests {
         );
         let fin = sink.tool_finished.lock().unwrap();
         assert_eq!(fin.len(), 1);
-        let reason = fin[0].auto_approved_reason.as_deref().unwrap_or("");
+        let raw = fin[0].auto_approved_reason.as_deref().unwrap_or("");
+        let v: serde_json::Value = serde_json::from_str(raw).expect("应为编码字符串");
+        assert_eq!(v["code"], "risk.readonlyCommand");
+        let reason = crate::ui_error::plain(raw);
         assert!(
             reason.contains("L2") && reason.contains("ls"),
             "auto_approved_reason 应说明 L2 + ls: {reason}"
@@ -1763,7 +1819,11 @@ mod tests {
         );
         let fin = sink.tool_finished.lock().unwrap();
         assert_eq!(fin.len(), 1);
-        let reason = fin[0].auto_approved_reason.as_deref().unwrap_or("");
+        let raw = fin[0].auto_approved_reason.as_deref().unwrap_or("");
+        let v: serde_json::Value = serde_json::from_str(raw).expect("应为编码字符串");
+        assert_eq!(v["code"], "risk.whitelist");
+        assert_eq!(v["params"]["pattern"], "mv *");
+        let reason = crate::ui_error::plain(raw);
         assert!(
             reason.contains("白名单") && reason.contains("mv *"),
             "auto_approved_reason 应说明白名单 + 模式: {reason}"
@@ -1923,6 +1983,8 @@ mod tests {
             crate::notifications::NotificationLevel::Done
         );
         assert_eq!(notifs[0].session_id, "test-session-id");
+        // 句子由前端按界面语言拼，后端只给细节；完成通知没有细节
+        assert_eq!(notifs[1].message, "", "Done 通知不应带写死语言的文案");
         assert_eq!(
             notifs[0].source,
             crate::notifications::NotificationSource::AiToolLoop
@@ -2031,9 +2093,9 @@ mod tests {
             .iter()
             .find(|n| n.level == crate::notifications::NotificationLevel::Waiting)
             .unwrap();
-        assert!(
-            waiting.message.contains("run_command"),
-            "Waiting 通知 message 应含工具名"
+        assert_eq!(
+            waiting.message, "run_command",
+            "Waiting 通知 message 只放工具名，句子由前端按界面语言拼"
         );
     }
 
@@ -2064,7 +2126,78 @@ mod tests {
             .iter()
             .any(|n| n.level == crate::notifications::NotificationLevel::Error);
         assert!(has_error, "provider 失败应 emit Error");
+        let err = notifs
+            .iter()
+            .find(|n| n.level == crate::notifications::NotificationLevel::Error)
+            .unwrap();
+        assert!(
+            !err.message.starts_with("AI 出错"),
+            "Error 通知 message 只放错误详情，句子由前端按界面语言拼"
+        );
+        // 错误详情本身也要跟随界面语言：发编码，由前端格式化
+        let v: serde_json::Value =
+            serde_json::from_str(&err.message).expect("Error 通知的详情应是带编码的 ui_err 字符串");
+        assert!(v["code"].as_str().unwrap().starts_with("provider.error."));
         assert_eq!(sink.errors.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn 应该_当_provider_失败时_横幅错误与通知详情都带编码() {
+        let provider = Arc::new(FakeProvider::failing());
+        let sink = Arc::new(MockSink::default());
+        run_tool_loop(
+            base_request(),
+            provider,
+            Arc::new(ToolRegistry::with_defaults()),
+            make_ctx_with_session(),
+            sink.clone(),
+            "c1".into(),
+            Arc::new(ToolLoopHandle::new()),
+            None,
+        )
+        .await;
+
+        let errors = sink.errors.lock().unwrap();
+        let v: serde_json::Value = serde_json::from_str(&errors[0].message).expect("应是编码 JSON");
+        assert_eq!(v["code"], "provider.error.other");
+        assert_eq!(v["params"]["detail"], "fake provider 注入失败");
+        assert_eq!(
+            crate::ui_error::plain(&errors[0].message),
+            "其他: fake provider 注入失败"
+        );
+        // 系统通知的错误详情同样带编码，由前端 systemNotification 按界面语言格式化
+        let notifs = sink.notifications.lock().unwrap();
+        let err = notifs
+            .iter()
+            .find(|n| n.level == crate::notifications::NotificationLevel::Error)
+            .unwrap();
+        assert_eq!(err.message, errors[0].message);
+    }
+
+    #[test]
+    fn 应该_总结阶段失败时_按错误种类给出编码且中文兜底与原文一致() {
+        let parse = |e: &ProviderError| -> (String, serde_json::Value, String) {
+            let v: serde_json::Value = serde_json::from_str(&summary_failed_message(e)).unwrap();
+            (
+                v["code"].as_str().unwrap().to_string(),
+                v["params"].clone(),
+                v["message"].as_str().unwrap().to_string(),
+            )
+        };
+        let (c, _, m) = parse(&ProviderError::Unauthorized);
+        assert_eq!(c, "ai.summaryFailedUnauthorized");
+        assert_eq!(m, "总结阶段失败: 鉴权失败（401/403）：检查 API key");
+        assert_eq!(
+            parse(&ProviderError::RateLimited).0,
+            "ai.summaryFailedRateLimited"
+        );
+        let (c, _, m) = parse(&ProviderError::Timeout);
+        assert_eq!(c, "ai.summaryFailedTimeout");
+        assert_eq!(m, "总结阶段失败: 超时");
+        let (c, p, m) = parse(&ProviderError::Protocol("坏包".into()));
+        assert_eq!(c, "ai.summaryFailed");
+        assert_eq!(p["detail"], "坏包");
+        assert_eq!(m, "总结阶段失败: 协议解析失败: 坏包");
     }
 
     // ============================================================
@@ -2648,8 +2781,11 @@ mod tests {
         // 第一次走弹窗批准 → 无自动批准徽章
         assert!(fin[0].auto_approved_reason.is_none());
         // 第二次自动放行 → 必须带可见徽章说明原因
+        let raw = fin[1].auto_approved_reason.as_deref().unwrap_or("");
+        let v: serde_json::Value = serde_json::from_str(raw).expect("应为编码字符串");
+        assert_eq!(v["code"], "risk.sessionGranted");
         assert_eq!(
-            fin[1].auto_approved_reason.as_deref(),
+            Some(crate::ui_error::plain(raw).as_str()),
             Some("本会话已授权"),
             "自动放行必须带「本会话已授权」徽章"
         );
@@ -2947,6 +3083,38 @@ mod tests {
             "并发执行总耗时应远小于串行 240ms，实际 {elapsed:?}"
         );
         assert_eq!(sink.tool_finished.lock().unwrap().len(), 3);
+    }
+
+    // 工具结果里 aitm 自己写的中文（如"未知工具"）在界面上不随语言切换
+    #[tokio::test]
+    async fn 应该_当工具结果带编码时_界面收到编码而模型收到中文原文() {
+        let provider = provider_batch(&[("tu1", "no_such_tool", serde_json::json!({}))]);
+        let sink = Arc::new(MockSink::default());
+        let (tools, _peak, _log) = readonly_registry(20);
+        let provider_ref = provider.clone();
+        run_tool_loop(
+            base_request(),
+            provider,
+            tools,
+            make_ctx(),
+            sink.clone(),
+            "c1".into(),
+            Arc::new(ToolLoopHandle::new()),
+            None,
+        )
+        .await;
+
+        let finished = sink.tool_finished.lock().unwrap();
+        let v: serde_json::Value =
+            serde_json::from_str(&finished[0].content).expect("界面收到的应是带编码的结果");
+        assert_eq!(v["code"], "tool.unknownTool");
+        assert_eq!(v["params"]["name"], "no_such_tool");
+
+        let results = provider_ref.tool_results_of_round(1);
+        assert_eq!(
+            results[0].1, "未知工具: no_such_tool",
+            "模型收到的应是中文原文"
+        );
     }
 
     #[tokio::test]

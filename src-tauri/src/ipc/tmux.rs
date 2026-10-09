@@ -7,6 +7,8 @@
 use serde::{Deserialize, Serialize};
 use std::process::Command;
 
+use crate::ui_error::ui_err;
+
 /// 字段分隔符：ASCII Unit Separator (0x1F)。
 ///
 /// 不用制表符 / 竖线，是因为会话名、窗格标题、工作目录里都可能出现这些可见字符，
@@ -158,9 +160,13 @@ fn parse_or_report(stdout: &str) -> Result<Vec<TmuxSession>, String> {
     let sessions = parse_sessions(stdout);
     let non_empty_lines = stdout.lines().filter(|l| !l.trim().is_empty()).count();
     if sessions.is_empty() && non_empty_lines > 0 {
-        return Err(format!(
-            "tmux 返回了 {non_empty_lines} 行，但一条都解析不出来——\
-             分隔符可能被环境改写（检查 LANG / LC_CTYPE）"
+        return Err(ui_err(
+            "tmux.parseFailed",
+            &[("count", non_empty_lines.to_string())],
+            format!(
+                "tmux 返回了 {non_empty_lines} 行，但一条都解析不出来——\
+                 分隔符可能被环境改写（检查 LANG / LC_CTYPE）"
+            ),
         ));
     }
     Ok(sessions)
@@ -212,7 +218,11 @@ fn build_attach_command(bin: &str, id: &str, takeover: bool) -> Result<String, S
 fn validate_session_id(id: &str) -> Result<(), String> {
     let digits = id.strip_prefix('$').unwrap_or("");
     if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
-        return Err(format!("无效的会话 id：{id:?}"));
+        return Err(ui_err(
+            "tmux.sessionIdInvalid",
+            &[("id", format!("{id:?}"))],
+            format!("无效的会话 id：{id:?}"),
+        ));
     }
     Ok(())
 }
@@ -230,13 +240,21 @@ fn pane_target(id: &str) -> Result<String, String> {
 /// - 控制字符会弄乱列表显示，也没有正当用途
 fn validate_session_name(name: &str) -> Result<(), String> {
     if name.trim().is_empty() {
-        return Err("会话名不能为空".to_string());
+        return Err(ui_err("tmux.sessionNameEmpty", &[], "会话名不能为空"));
     }
     if name.contains('.') || name.contains(':') {
-        return Err("会话名不能包含 . 或 :".to_string());
+        return Err(ui_err(
+            "tmux.sessionNameSeparator",
+            &[],
+            "会话名不能包含 . 或 :",
+        ));
     }
     if name.chars().any(char::is_control) {
-        return Err("会话名不能包含控制字符".to_string());
+        return Err(ui_err(
+            "tmux.sessionNameControl",
+            &[],
+            "会话名不能包含控制字符",
+        ));
     }
     Ok(())
 }
@@ -298,24 +316,48 @@ fn tmux_command() -> Command {
     cmd
 }
 
+/// 启动 tmux 进程失败时的界面错误：找不到可执行文件是"未安装"，其余带上系统错误。
+fn spawn_error(e: &std::io::Error) -> String {
+    if e.kind() == std::io::ErrorKind::NotFound {
+        ui_err("tmux.notInstalled", &[], "本机未安装 tmux")
+    } else {
+        ui_err(
+            "tmux.spawnFailed",
+            &[("error", e.to_string())],
+            format!("执行 tmux 失败：{e}"),
+        )
+    }
+}
+
+/// 子进程调度（spawn_blocking）本身失败时的界面错误。
+fn task_failed(e: impl std::fmt::Display) -> String {
+    ui_err(
+        "tmux.taskFailed",
+        &[("error", e.to_string())],
+        format!("执行 tmux 任务失败：{e}"),
+    )
+}
+
+/// tmux 退出码非零时的界面错误：有 stderr 就原样透出（那是 tmux 自己的报错），
+/// 没有才用通用文案。
+fn failure_message(stderr: &str) -> String {
+    if stderr.is_empty() {
+        ui_err("tmux.commandFailed", &[], "tmux 命令执行失败")
+    } else {
+        stderr.to_string()
+    }
+}
+
 /// 跑一条 tmux 子命令，成功时返回 stdout。参数以数组传递，**不经过 shell**。
 async fn run_tmux_output(args: Vec<String>) -> Result<String, String> {
     let out = tokio::task::spawn_blocking(move || tmux_command().args(&args).output())
         .await
-        .map_err(|e| format!("执行 tmux 任务失败：{e}"))?;
+        .map_err(task_failed)?;
 
     match out {
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err("本机未安装 tmux".to_string()),
-        Err(e) => Err(format!("执行 tmux 失败：{e}")),
+        Err(e) => Err(spawn_error(&e)),
         Ok(o) if o.status.success() => Ok(String::from_utf8_lossy(&o.stdout).into_owned()),
-        Ok(o) => {
-            let stderr = String::from_utf8_lossy(&o.stderr).trim().to_string();
-            Err(if stderr.is_empty() {
-                "tmux 命令执行失败".to_string()
-            } else {
-                stderr
-            })
-        }
+        Ok(o) => Err(failure_message(String::from_utf8_lossy(&o.stderr).trim())),
     }
 }
 
@@ -448,7 +490,13 @@ pub async fn tmux_session_of_tab(
 pub async fn tmux_available() -> Result<bool, String> {
     tokio::task::spawn_blocking(|| tmux_command().arg("-V").output().is_ok())
         .await
-        .map_err(|e| format!("探测 tmux 失败：{e}"))
+        .map_err(|e| {
+            ui_err(
+                "tmux.probeFailed",
+                &[("error", e.to_string())],
+                format!("探测 tmux 失败：{e}"),
+            )
+        })
 }
 
 /// 列出本机所有 tmux 会话。
@@ -462,12 +510,12 @@ pub async fn tmux_list_sessions() -> Result<Vec<TmuxSession>, String> {
             .output()
     })
     .await
-    .map_err(|e| format!("执行 tmux 任务失败：{e}"))?;
+    .map_err(task_failed)?;
 
     match out {
         // 没装 tmux → 空列表，让 UI 走"未检测到 tmux"空状态
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
-        Err(e) => Err(format!("执行 tmux 失败：{e}")),
+        Err(e) => Err(spawn_error(&e)),
         Ok(o) if o.status.success() => {
             let mut sessions = parse_or_report(&String::from_utf8_lossy(&o.stdout))?;
             // 列表里带的是当前窗口的活动时间；再取一次所有窗口的，覆盖成最新值。
@@ -532,7 +580,13 @@ pub async fn tmux_new_session(name: String, cwd: Option<String>) -> Result<Strin
     let cwd = cwd.filter(|d| std::path::Path::new(d).is_dir());
     let out = run_tmux_output(new_session_args(&name, cwd.as_deref())).await?;
     let id = out.trim().to_string();
-    validate_session_id(&id).map_err(|_| format!("tmux 没有返回新会话的 id：{id:?}"))?;
+    validate_session_id(&id).map_err(|_| {
+        ui_err(
+            "tmux.newSessionNoId",
+            &[("id", format!("{id:?}"))],
+            format!("tmux 没有返回新会话的 id：{id:?}"),
+        )
+    })?;
     Ok(id)
 }
 
@@ -566,6 +620,7 @@ pub async fn tmux_capture_pane(id: String) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ui_error::plain;
 
     /// 拼一行 tmux 格式串输出，字段顺序与 `LIST_FORMAT` 一致。
     ///
@@ -743,7 +798,7 @@ mod tests {
     fn ut_b21_有输出却一条都解析不出来时报错_而不是当成没有会话() {
         // 这正是安装版里看到的 stdout：tmux 把 0x1f 换成了 `_`
         let mangled = "aim-quant_1_1_1700000000_/tmp_zsh_title\nother_1_0_1700000001_/tmp_zsh_t";
-        let err = parse_or_report(mangled).unwrap_err();
+        let err = plain(&parse_or_report(mangled).unwrap_err());
         assert!(err.contains("2 行"), "应报出实际行数，实际：{err}");
         assert!(
             err.contains("LANG") || err.contains("LC_CTYPE"),
@@ -1330,5 +1385,99 @@ mod tests {
         tmux_available()
             .await
             .expect("探测 tmux 可用性不应返回错误");
+    }
+
+    // === 错误编码：界面可见的错误要带编码，中文兜底与原文一致 ===
+
+    /// 解析编码错误，返回 (code, params, message)。
+    fn parse_coded(s: &str) -> (String, serde_json::Value, String) {
+        let v: serde_json::Value = serde_json::from_str(s).expect("应是 ui_err 生成的 JSON");
+        (
+            v["code"].as_str().unwrap().to_string(),
+            v["params"].clone(),
+            v["message"].as_str().unwrap().to_string(),
+        )
+    }
+
+    #[test]
+    fn 应该_当会话名为空时_返回编码错误且中文兜底不变() {
+        let (code, _, msg) = parse_coded(&validate_session_name("  ").unwrap_err());
+        assert_eq!(code, "tmux.sessionNameEmpty");
+        assert_eq!(msg, "会话名不能为空");
+    }
+
+    #[test]
+    fn 应该_当会话名含点或冒号时_返回编码错误且中文兜底不变() {
+        for bad in ["a.b", "a:b"] {
+            let (code, _, msg) = parse_coded(&validate_session_name(bad).unwrap_err());
+            assert_eq!(code, "tmux.sessionNameSeparator");
+            assert_eq!(msg, "会话名不能包含 . 或 :");
+        }
+    }
+
+    #[test]
+    fn 应该_当会话名含控制字符时_返回编码错误且中文兜底不变() {
+        let (code, _, msg) = parse_coded(&validate_session_name("x\u{7}y").unwrap_err());
+        assert_eq!(code, "tmux.sessionNameControl");
+        assert_eq!(msg, "会话名不能包含控制字符");
+    }
+
+    #[test]
+    fn 应该_当会话_id_非法时_返回带_id_参数的编码错误() {
+        let err = validate_session_id("work").unwrap_err();
+        let (code, params, msg) = parse_coded(&err);
+        assert_eq!(code, "tmux.sessionIdInvalid");
+        assert_eq!(params["id"], "\"work\"");
+        assert_eq!(msg, "无效的会话 id：\"work\"");
+        assert_eq!(plain(&err), msg);
+    }
+
+    #[test]
+    fn 应该_当解析不出任何会话时_返回带行数参数的编码错误() {
+        let err = parse_or_report("a_1_1\nb_1_0").unwrap_err();
+        let (code, params, msg) = parse_coded(&err);
+        assert_eq!(code, "tmux.parseFailed");
+        assert_eq!(params["count"], "2");
+        assert_eq!(
+            msg,
+            "tmux 返回了 2 行，但一条都解析不出来——分隔符可能被环境改写（检查 LANG / LC_CTYPE）"
+        );
+    }
+
+    #[test]
+    fn 应该_当未找到_tmux_可执行文件时_返回未安装编码() {
+        let e = std::io::Error::from(std::io::ErrorKind::NotFound);
+        let (code, _, msg) = parse_coded(&spawn_error(&e));
+        assert_eq!(code, "tmux.notInstalled");
+        assert_eq!(msg, "本机未安装 tmux");
+    }
+
+    #[test]
+    fn 应该_当启动_tmux_失败时_返回带错误详情的编码() {
+        let e = std::io::Error::other("boom");
+        let (code, params, msg) = parse_coded(&spawn_error(&e));
+        assert_eq!(code, "tmux.spawnFailed");
+        assert_eq!(params["error"], "boom");
+        assert_eq!(msg, "执行 tmux 失败：boom");
+    }
+
+    #[test]
+    fn 应该_当_tmux_无输出失败时_返回通用失败编码_有输出则原样透出() {
+        let (code, _, msg) = parse_coded(&failure_message(""));
+        assert_eq!(code, "tmux.commandFailed");
+        assert_eq!(msg, "tmux 命令执行失败");
+        // tmux 自己的报错是它的原文，不编码
+        assert_eq!(
+            failure_message("duplicate session: x"),
+            "duplicate session: x"
+        );
+    }
+
+    #[test]
+    fn 应该_当任务执行失败时_返回带错误详情的编码() {
+        let (code, params, msg) = parse_coded(&task_failed("join"));
+        assert_eq!(code, "tmux.taskFailed");
+        assert_eq!(params["error"], "join");
+        assert_eq!(msg, "执行 tmux 任务失败：join");
     }
 }

@@ -13,8 +13,19 @@
 
 use std::process::Command;
 
+use crate::ui_error::ui_err;
+
 /// URL 白名单 prefix。比较前对 url 整体 trim + 转小写。
 const ALLOWED_SCHEMES: &[&str] = &["http://", "https://", "mailto:"];
+
+/// 当前平台没有对应的系统打开 / 定位命令。
+fn err_unsupported_platform() -> String {
+    ui_err(
+        "shell.unsupportedPlatform",
+        &[("os", std::env::consts::OS.to_string())],
+        format!("不支持的平台：{}", std::env::consts::OS),
+    )
+}
 
 /// 校验 URL scheme 是否在白名单。`Ok(trimmed)` 通过；`Err(reason)` 拒绝。
 ///
@@ -38,7 +49,11 @@ fn validate_url(url: &str) -> Result<&str, String> {
     // 提取 scheme 给错误信息更友好；冒号前的部分；没冒号就报全 url
     let scheme_end = trimmed.find(':').unwrap_or(trimmed.len());
     let scheme = &trimmed[..scheme_end];
-    Err(format!("不支持的 URL scheme: {scheme}"))
+    Err(ui_err(
+        "shell.unsupportedScheme",
+        &[("scheme", scheme.to_string())],
+        format!("不支持的 URL scheme: {scheme}"),
+    ))
 }
 
 /// 用系统默认应用打开 URL（http/https/mailto 白名单）。
@@ -60,11 +75,15 @@ pub fn shell_open(url: String) -> Result<(), String> {
             .spawn()
             .is_ok()
     } else {
-        return Err(format!("不支持的平台：{}", std::env::consts::OS));
+        return Err(err_unsupported_platform());
     };
 
     if !spawned {
-        return Err("系统打开命令 spawn 失败".to_string());
+        return Err(ui_err(
+            "shell.openSpawnFailed",
+            &[],
+            "系统打开命令 spawn 失败",
+        ));
     }
     Ok(())
 }
@@ -78,14 +97,22 @@ pub fn shell_open(url: String) -> Result<(), String> {
 fn validate_reveal_path(path: &str) -> Result<std::path::PathBuf, String> {
     let trimmed = path.trim();
     if trimmed.is_empty() {
-        return Err("路径为空".to_string());
+        return Err(ui_err("shell.pathEmpty", &[], "路径为空"));
     }
     let p = std::path::Path::new(trimmed);
     if !p.is_absolute() {
-        return Err(format!("只接受绝对路径：{trimmed}"));
+        return Err(ui_err(
+            "shell.pathNotAbsolute",
+            &[("path", trimmed.to_string())],
+            format!("只接受绝对路径：{trimmed}"),
+        ));
     }
     if !p.exists() {
-        return Err(format!("路径不存在：{trimmed}"));
+        return Err(ui_err(
+            "shell.pathNotFound",
+            &[("path", trimmed.to_string())],
+            format!("路径不存在：{trimmed}"),
+        ));
     }
     Ok(p.to_path_buf())
 }
@@ -122,11 +149,15 @@ pub fn shell_reveal(path: String) -> Result<(), String> {
         };
         Command::new("xdg-open").arg(dir).spawn().is_ok()
     } else {
-        return Err(format!("不支持的平台：{}", std::env::consts::OS));
+        return Err(err_unsupported_platform());
     };
 
     if !spawned {
-        return Err("文件管理器 spawn 失败".to_string());
+        return Err(ui_err(
+            "shell.revealSpawnFailed",
+            &[],
+            "文件管理器 spawn 失败",
+        ));
     }
     Ok(())
 }
@@ -252,5 +283,56 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let padded = format!("  {}  ", dir.path().to_str().unwrap());
         assert!(validate_reveal_path(&padded).is_ok());
+    }
+
+    // === 错误编码：界面可见的错误带 code / params，plain() 取回原中文 ===
+
+    fn parse_ui_err(e: &str) -> (String, serde_json::Value, String) {
+        let v: serde_json::Value = serde_json::from_str(e).expect("应是 ui_err 生成的 JSON");
+        (
+            v["code"].as_str().unwrap().to_string(),
+            v["params"].clone(),
+            v["message"].as_str().unwrap().to_string(),
+        )
+    }
+
+    #[test]
+    fn 应该_当scheme不在白名单时_返回shell_unsupportedscheme编码() {
+        let err = validate_url("javascript:alert(1)").unwrap_err();
+        let (code, params, msg) = parse_ui_err(&err);
+        assert_eq!(code, "shell.unsupportedScheme");
+        assert_eq!(params["scheme"], "javascript");
+        assert_eq!(msg, "不支持的 URL scheme: javascript");
+        assert_eq!(crate::ui_error::plain(&err), msg);
+    }
+
+    #[test]
+    fn 应该_当定位路径为空时_返回shell_pathempty编码() {
+        let err = validate_reveal_path("  ").unwrap_err();
+        let (code, params, msg) = parse_ui_err(&err);
+        assert_eq!(code, "shell.pathEmpty");
+        assert!(params.as_object().unwrap().is_empty());
+        assert_eq!(msg, "路径为空");
+    }
+
+    #[test]
+    fn 应该_当定位路径是相对路径时_返回shell_pathnotabsolute编码() {
+        let err = validate_reveal_path("./foo.txt").unwrap_err();
+        let (code, params, msg) = parse_ui_err(&err);
+        assert_eq!(code, "shell.pathNotAbsolute");
+        assert_eq!(params["path"], "./foo.txt");
+        assert_eq!(msg, "只接受绝对路径：./foo.txt");
+    }
+
+    #[test]
+    fn 应该_当定位路径不存在时_返回shell_pathnotfound编码() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("没有这个文件.txt");
+        let missing_str = missing.to_str().unwrap();
+        let err = validate_reveal_path(missing_str).unwrap_err();
+        let (code, params, msg) = parse_ui_err(&err);
+        assert_eq!(code, "shell.pathNotFound");
+        assert_eq!(params["path"], missing_str);
+        assert_eq!(msg, format!("路径不存在：{missing_str}"));
     }
 }

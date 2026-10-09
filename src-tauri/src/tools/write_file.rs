@@ -15,6 +15,7 @@ use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
 use super::{RiskClass, Tool, ToolContext, ToolError, ToolPreview, ToolResult};
+use crate::ui_error::ui_err;
 
 pub struct WriteFileTool;
 
@@ -56,30 +57,55 @@ impl Tool for WriteFileTool {
     }
 
     async fn execute(&self, args: Value, ctx: &ToolContext) -> Result<ToolResult, ToolError> {
-        let parsed: Args = serde_json::from_value(args)
-            .map_err(|e| ToolError::InvalidArgs(format!("write_file 参数: {e}")))?;
+        let parsed: Args = serde_json::from_value(args).map_err(|e| {
+            ToolError::InvalidArgs(ui_err(
+                "tool.file.argsParse",
+                &[("tool", "write_file".into()), ("error", e.to_string())],
+                format!("write_file 参数: {e}"),
+            ))
+        })?;
 
-        let canonical_cwd = ctx
-            .cwd
-            .canonicalize()
-            .map_err(|e| ToolError::Exec(format!("cwd 不存在: {e}")))?;
+        let canonical_cwd = ctx.cwd.canonicalize().map_err(|e| {
+            ToolError::Exec(ui_err(
+                "tool.file.cwdMissing",
+                &[("error", e.to_string())],
+                format!("cwd 不存在: {e}"),
+            ))
+        })?;
         let target = sandboxed_target(&parsed.path, &canonical_cwd)?;
 
         if let Some(parent) = target.parent() {
             if !parent.exists() {
-                tokio::fs::create_dir_all(parent)
-                    .await
-                    .map_err(|e| ToolError::Exec(format!("创建目录失败: {e}")))?;
+                tokio::fs::create_dir_all(parent).await.map_err(|e| {
+                    ToolError::Exec(ui_err(
+                        "tool.file.mkdirFailed",
+                        &[("error", e.to_string())],
+                        format!("创建目录失败: {e}"),
+                    ))
+                })?;
             }
         }
 
         tokio::fs::write(&target, &parsed.content)
             .await
-            .map_err(|e| ToolError::Exec(format!("写文件失败: {e}")))?;
+            .map_err(|e| {
+                ToolError::Exec(ui_err(
+                    "tool.file.writeFailed",
+                    &[("error", e.to_string())],
+                    format!("写文件失败: {e}"),
+                ))
+            })?;
 
         let line_count = parsed.content.lines().count();
         Ok(ToolResult {
-            content: format!("已写入 {line_count} 行到 {}", target.display()),
+            content: ui_err(
+                "tool.file.written",
+                &[
+                    ("lines", line_count.to_string()),
+                    ("path", target.display().to_string()),
+                ],
+                format!("已写入 {line_count} 行到 {}", target.display()),
+            ),
             is_error: false,
         })
     }
@@ -113,7 +139,11 @@ fn sandboxed_target(raw_path: &str, canonical_cwd: &Path) -> Result<PathBuf, Too
 
     if !normalized.starts_with(canonical_cwd) {
         return Err(ToolError::Blocked {
-            reason: format!("路径越界沙盒（不在 {} 内）", canonical_cwd.display()),
+            reason: ui_err(
+                "tool.file.outOfSandbox",
+                &[("cwd", canonical_cwd.display().to_string())],
+                format!("路径越界沙盒（不在 {} 内）", canonical_cwd.display()),
+            ),
         });
     }
 
@@ -123,22 +153,34 @@ fn sandboxed_target(raw_path: &str, canonical_cwd: &Path) -> Result<PathBuf, Too
     while !existing_ancestor.exists() {
         let name = existing_ancestor
             .file_name()
-            .ok_or_else(|| ToolError::InvalidArgs("路径无效".into()))?
+            .ok_or_else(|| {
+                ToolError::InvalidArgs(ui_err("tool.file.invalidPath", &[], "路径无效"))
+            })?
             .to_os_string();
         tail.push(name);
         existing_ancestor = existing_ancestor
             .parent()
-            .ok_or_else(|| ToolError::InvalidArgs("路径无效".into()))?
+            .ok_or_else(|| {
+                ToolError::InvalidArgs(ui_err("tool.file.invalidPath", &[], "路径无效"))
+            })?
             .to_path_buf();
     }
 
-    let canonical_ancestor = existing_ancestor
-        .canonicalize()
-        .map_err(|e| ToolError::Exec(format!("路径解析失败: {e}")))?;
+    let canonical_ancestor = existing_ancestor.canonicalize().map_err(|e| {
+        ToolError::Exec(ui_err(
+            "tool.file.resolveFailed",
+            &[("error", e.to_string())],
+            format!("路径解析失败: {e}"),
+        ))
+    })?;
 
     if !canonical_ancestor.starts_with(canonical_cwd) {
         return Err(ToolError::Blocked {
-            reason: format!("路径越界沙盒（不在 {} 内）", canonical_cwd.display()),
+            reason: ui_err(
+                "tool.file.outOfSandbox",
+                &[("cwd", canonical_cwd.display().to_string())],
+                format!("路径越界沙盒（不在 {} 内）", canonical_cwd.display()),
+            ),
         });
     }
 
@@ -301,5 +343,75 @@ mod tests {
             .execute(json!({ "path": "a.txt" }), &ctx)
             .await;
         assert!(matches!(r, Err(ToolError::InvalidArgs(_))));
+    }
+
+    #[tokio::test]
+    async fn 应该_当写入成功时_返回带编码的结果且还原为中文() {
+        let dir = TempDir::new().unwrap();
+        let ctx = make_ctx(dir.path().to_path_buf());
+        let r = WriteFileTool
+            .execute(json!({ "path": "h.txt", "content": "a\nb" }), &ctx)
+            .await
+            .unwrap();
+        let (code, params) = crate::tools::decode_ui_err(&r.content);
+        assert_eq!(code, "tool.file.written");
+        assert_eq!(params["lines"], "2");
+        let target = dir.path().canonicalize().unwrap().join("h.txt");
+        assert_eq!(
+            crate::ui_error::plain(&r.content),
+            format!("已写入 2 行到 {}", target.display())
+        );
+    }
+
+    #[tokio::test]
+    async fn 应该_当路径越界时_原因带编码且还原为中文() {
+        let dir = TempDir::new().unwrap();
+        let ctx = make_ctx(dir.path().to_path_buf());
+        let e = WriteFileTool
+            .execute(json!({ "path": "../x.txt", "content": "a" }), &ctx)
+            .await
+            .unwrap_err();
+        let ToolError::Blocked { reason } = e else {
+            panic!("应是 Blocked")
+        };
+        assert_eq!(
+            crate::tools::decode_ui_err(&reason).0,
+            "tool.file.outOfSandbox"
+        );
+        assert!(crate::ui_error::plain(&reason).starts_with("路径越界沙盒（不在 "));
+    }
+
+    #[tokio::test]
+    async fn 应该_当参数缺失时_细节带编码() {
+        let dir = TempDir::new().unwrap();
+        let ctx = make_ctx(dir.path().to_path_buf());
+        let e = WriteFileTool.execute(json!({}), &ctx).await.unwrap_err();
+        let ToolError::InvalidArgs(d) = e else {
+            panic!("应是 InvalidArgs")
+        };
+        let (code, params) = crate::tools::decode_ui_err(&d);
+        assert_eq!(code, "tool.file.argsParse");
+        assert_eq!(params["tool"], "write_file");
+    }
+
+    #[tokio::test]
+    async fn 应该_当目标是文件而父级也是文件时_写入失败带编码() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(dir.path().join("f"), "x").unwrap();
+        let ctx = make_ctx(dir.path().to_path_buf());
+        let e = WriteFileTool
+            .execute(json!({ "path": "f/g.txt", "content": "a" }), &ctx)
+            .await
+            .unwrap_err();
+        let msg = e.to_string();
+        assert!(msg.starts_with("执行失败: "), "{msg}");
+        let ToolError::Exec(d) = e else {
+            panic!("应是 Exec")
+        };
+        let code = crate::tools::decode_ui_err(&d).0;
+        assert!(
+            code == "tool.file.writeFailed" || code == "tool.file.mkdirFailed",
+            "{code}"
+        );
     }
 }

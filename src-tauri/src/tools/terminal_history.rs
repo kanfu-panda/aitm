@@ -9,6 +9,7 @@ use serde_json::{Value, json};
 
 use super::ansi::strip_for_llm;
 use super::{RiskClass, Tool, ToolContext, ToolError, ToolResult};
+use crate::ui_error::ui_err;
 
 /// get_terminal_history 单次能拉的最大行数（防 LLM 灌爆上下文）。
 const MAX_LINES: u32 = 500;
@@ -34,7 +35,11 @@ fn resolve_session_id(arg: Option<&str>, ctx: &ToolContext) -> Result<String, To
     let needs_fallback = matches!(trimmed, "" | "current" | "default" | "active" | "main");
     if needs_fallback {
         return ctx.active_session_id.clone().ok_or_else(|| {
-            ToolError::SessionNotFound("无活跃 tab —— 用户需要先打开一个终端 tab".into())
+            ToolError::SessionNotFound(ui_err(
+                "tool.history.noActiveTab",
+                &[],
+                "无活跃 tab —— 用户需要先打开一个终端 tab",
+            ))
         });
     }
     Ok(trimmed.to_string())
@@ -77,8 +82,13 @@ impl Tool for GetTerminalHistoryTool {
     }
 
     async fn execute(&self, args: Value, ctx: &ToolContext) -> Result<ToolResult, ToolError> {
-        let parsed: GetArgs = serde_json::from_value(args)
-            .map_err(|e| ToolError::InvalidArgs(format!("get_terminal_history: {e}")))?;
+        let parsed: GetArgs = serde_json::from_value(args).map_err(|e| {
+            ToolError::InvalidArgs(ui_err(
+                "tool.history.invalidArgs",
+                &[("error", e.to_string())],
+                format!("get_terminal_history: {e}"),
+            ))
+        })?;
         let lines = parsed.lines.min(MAX_LINES) as usize;
         let session_id = resolve_session_id(parsed.session_id.as_deref(), ctx)?;
 
@@ -165,14 +175,23 @@ impl Tool for SearchHistoryTool {
     }
 
     async fn execute(&self, args: Value, ctx: &ToolContext) -> Result<ToolResult, ToolError> {
-        let parsed: SearchArgs = serde_json::from_value(args)
-            .map_err(|e| ToolError::InvalidArgs(format!("search_history: {e}")))?;
+        let parsed: SearchArgs = serde_json::from_value(args).map_err(|e| {
+            ToolError::InvalidArgs(ui_err(
+                "tool.history.searchInvalidArgs",
+                &[("error", e.to_string())],
+                format!("search_history: {e}"),
+            ))
+        })?;
         let max = parsed.max_results.min(MAX_RESULTS) as usize;
 
         let hits = ctx.session_state.search_recent(&parsed.query, max).await;
         if hits.is_empty() {
             return Ok(ToolResult {
-                content: format!("未找到包含 '{}' 的输出", parsed.query),
+                content: ui_err(
+                    "tool.history.noMatch",
+                    &[("query", parsed.query.clone())],
+                    format!("未找到包含 '{}' 的输出", parsed.query),
+                ),
                 is_error: false,
             });
         }
@@ -364,4 +383,67 @@ mod tests {
 
     // 真实 ring buffer 写入 + 读取的端到端测试需要起 PTY，
     // session/pty_session.rs::e2e_tests 已覆盖；这里只测 trait 层的参数解析 + 错误路径。
+
+    /// 解析编码字符串，返回 (code, params)。
+    fn parse_code(s: &str) -> (String, serde_json::Value) {
+        let v: serde_json::Value =
+            serde_json::from_str(s).unwrap_or_else(|_| panic!("不是编码串：{s}"));
+        (v["code"].as_str().unwrap().to_string(), v["params"].clone())
+    }
+
+    #[test]
+    fn 应该_当无活跃_tab时_返回编码化的会话错误() {
+        let ctx = make_ctx();
+        let Err(ToolError::SessionNotFound(s)) = resolve_session_id(None, &ctx) else {
+            panic!("应返回 SessionNotFound");
+        };
+        assert_eq!(parse_code(&s).0, "tool.history.noActiveTab");
+        assert_eq!(
+            crate::ui_error::plain(&s),
+            "无活跃 tab —— 用户需要先打开一个终端 tab"
+        );
+    }
+
+    #[tokio::test]
+    async fn 应该_当读取历史参数类型错误时_返回编码化的参数错误() {
+        let ctx = make_ctx();
+        let Err(ToolError::InvalidArgs(s)) = GetTerminalHistoryTool
+            .execute(json!({ "lines": "x" }), &ctx)
+            .await
+        else {
+            panic!("应返回 InvalidArgs");
+        };
+        let (code, params) = parse_code(&s);
+        assert_eq!(code, "tool.history.invalidArgs");
+        assert!(params["error"].as_str().is_some());
+        assert!(crate::ui_error::plain(&s).starts_with("get_terminal_history: "));
+    }
+
+    #[tokio::test]
+    async fn 应该_当搜索缺_query时_返回编码化的参数错误() {
+        let ctx = make_ctx();
+        let Err(ToolError::InvalidArgs(s)) = SearchHistoryTool.execute(json!({}), &ctx).await
+        else {
+            panic!("应返回 InvalidArgs");
+        };
+        assert_eq!(parse_code(&s).0, "tool.history.searchInvalidArgs");
+        assert!(crate::ui_error::plain(&s).starts_with("search_history: "));
+    }
+
+    #[tokio::test]
+    async fn 应该_当搜索无命中时_返回编码化的提示() {
+        let ctx = make_ctx();
+        let r = SearchHistoryTool
+            .execute(json!({ "query": "不存在的词" }), &ctx)
+            .await
+            .unwrap();
+        assert!(!r.is_error);
+        let (code, params) = parse_code(&r.content);
+        assert_eq!(code, "tool.history.noMatch");
+        assert_eq!(params["query"], "不存在的词");
+        assert_eq!(
+            crate::ui_error::plain(&r.content),
+            "未找到包含 '不存在的词' 的输出"
+        );
+    }
 }

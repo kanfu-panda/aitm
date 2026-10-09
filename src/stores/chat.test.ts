@@ -539,6 +539,69 @@ describe("useChatStore", () => {
     if (tc.kind === "tool_call") expect(tc.status).toBe("done");
   });
 
+  // 发消息时后端要先问"要不要初始化为项目"，用户确认后切换作用域。
+  // 这时这一轮还在进行（用户消息与回复占位都只在内存里），切换不能把它冲掉
+  describe("loadFromScope keepActive：切换作用域时保留正在进行的这一轮", () => {
+    function startInFlightTurn(text: string) {
+      useChatStore.getState().createConversation();
+      useChatStore.getState().appendUserMessage(text);
+      useChatStore.getState().startAssistant();
+      return useChatStore.getState().activeId;
+    }
+
+    it("应该_当全局桶里已有这轮对话的旧版本时_保留内存里的版本且不取消请求", async () => {
+      const cid = startInFlightTurn("第二条");
+      mockCancel.mockClear();
+      vi.mocked(convList).mockResolvedValueOnce([convRow(cid), convRow("other")]);
+      vi.mocked(convGetMessages).mockResolvedValueOnce([
+        msgRow(1, "user", { content: "第一条" }),
+      ]);
+
+      await useChatStore
+        .getState()
+        .loadFromScope({ kind: "global" }, { keepActive: true });
+
+      const st = useChatStore.getState();
+      expect(st.activeId).toBe(cid);
+      expect(st.conversationId).toBe(cid);
+      expect(st.streaming).toBe(true);
+      expect(st.messages.map((m) => m.kind)).toEqual(["user", "assistant"]);
+      if (st.messages[0].kind === "user") expect(st.messages[0].content).toBe("第二条");
+      expect(st.conversations.map((c) => c.id).sort()).toEqual([cid, "other"].sort());
+      expect(st.scope).toEqual({ kind: "global" });
+      expect(mockCancel).not.toHaveBeenCalled();
+    });
+
+    it("应该_当切到还没有对话的新项目时_保留原对话_id_与消息", async () => {
+      const cid = startInFlightTurn("项目里的第一条");
+      const scope = { kind: "project" as const, uuid: "u1", root_path: "/p" };
+      vi.mocked(convList).mockResolvedValueOnce([]);
+
+      await useChatStore.getState().loadFromScope(scope, { keepActive: true });
+
+      const st = useChatStore.getState();
+      expect(st.activeId).toBe(cid);
+      expect(st.conversations).toHaveLength(1);
+      expect(st.messages.map((m) => m.kind)).toEqual(["user", "assistant"]);
+      expect(st.streaming).toBe(true);
+      expect(st.scope).toEqual(scope);
+    });
+
+    it("不传_keepActive_时行为不变：按数据库内容加载", async () => {
+      startInFlightTurn("会被替换");
+      vi.mocked(convList).mockResolvedValueOnce([convRow("db1")]);
+      vi.mocked(convGetMessages).mockResolvedValueOnce([
+        msgRow(1, "user", { content: "库里的" }),
+      ]);
+
+      await useChatStore.getState().loadFromScope({ kind: "global" });
+
+      const st = useChatStore.getState();
+      expect(st.activeId).toBe("db1");
+      expect(st.messages).toHaveLength(1);
+    });
+  });
+
   // ============================================================
   // A1：stopStreaming
   // ============================================================

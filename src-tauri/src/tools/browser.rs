@@ -20,6 +20,7 @@ use crate::ipc::browser::BrowserState;
 use std::sync::Arc;
 
 use super::{RiskClass, Tool, ToolContext, ToolError, ToolResult};
+use crate::ui_error::{plain, ui_err};
 
 // ============================================================
 // 共享 helper：resolve active tab id
@@ -65,9 +66,13 @@ pub(crate) fn decide_tab(
         return match resolution {
             crate::ipc::browser::ActiveTabResolution::Resolved(id) => TabDecision::Use(id),
             crate::ipc::browser::ActiveTabResolution::NoTab => TabDecision::NoTab,
-            crate::ipc::browser::ActiveTabResolution::Ambiguous(n) => TabDecision::Reject(format!(
-                "后端有 {n} 个浏览器 webview，但无法确定哪个是用户当前看得见的那个，\
-                 已拒绝操作（操作错页面比失败更糟）。请调用 browser_open 重新确立当前 tab 后重试。"
+            crate::ipc::browser::ActiveTabResolution::Ambiguous(n) => TabDecision::Reject(ui_err(
+                "tool.browser.tabAmbiguous",
+                &[("count", n.to_string())],
+                format!(
+                    "后端有 {n} 个浏览器 webview，但无法确定哪个是用户当前看得见的那个，\
+                     已拒绝操作（操作错页面比失败更糟）。请调用 browser_open 重新确立当前 tab 后重试。"
+                ),
             )),
         };
     };
@@ -76,16 +81,24 @@ pub(crate) fn decide_tab(
         return TabDecision::NoTab;
     }
     if !tab_ids.iter().any(|t| t == id) {
-        return TabDecision::Reject(format!(
-            "tab {id} 在后端不存在（多半是上一轮结果里的历史 tab_id，webview 已被关闭或重建）。\
-             省略 tab_id 参数即可操作用户当前看得见的 tab。"
+        return TabDecision::Reject(ui_err(
+            "tool.browser.tabNotFound",
+            &[("id", id.to_string())],
+            format!(
+                "tab {id} 在后端不存在（多半是上一轮结果里的历史 tab_id，webview 已被关闭或重建）。\
+                 省略 tab_id 参数即可操作用户当前看得见的 tab。"
+            ),
         ));
     }
     if let crate::ipc::browser::ActiveTabResolution::Resolved(ref visible) = resolution {
         if visible != id {
-            return TabDecision::Reject(format!(
-                "tab {id} 不是用户当前看得见的 tab（当前可见的是 {visible}），已拒绝操作。\
-                 不要复用历史 tab_id，省略 tab_id 参数即可。"
+            return TabDecision::Reject(ui_err(
+                "tool.browser.tabNotVisible",
+                &[("id", id.to_string()), ("visible", visible.clone())],
+                format!(
+                    "tab {id} 不是用户当前看得见的 tab（当前可见的是 {visible}），已拒绝操作。\
+                     不要复用历史 tab_id，省略 tab_id 参数即可。"
+                ),
             ));
         }
     }
@@ -103,11 +116,12 @@ async fn resolve_tab_id(
         TabDecision::Use(id) => Ok(id),
         // v1.2.0 T-B3：文案引导 AI 自救——AI 有 browser_open 工具，
         // 不该把活推回给用户。
-        TabDecision::NoTab => Err(ToolError::Exec(
+        TabDecision::NoTab => Err(ToolError::Exec(ui_err(
+            "tool.browser.noActiveTab",
+            &[],
             "浏览器面板未打开或无 active tab；请先调用 browser_open 工具自己打开浏览器，\
-             不要让用户手动去点地球图标"
-                .to_string(),
-        )),
+             不要让用户手动去点地球图标",
+        ))),
         TabDecision::Reject(msg) => Err(ToolError::Exec(msg)),
     }
 }
@@ -138,15 +152,59 @@ pub(crate) async fn current_active_tab(browser_state: &Arc<BrowserState>) -> Opt
     }
 }
 
+/// 工具参数反序列化失败的统一编码错误；`tool` 是工具名。
+pub(crate) fn invalid_args(tool: &str, e: &serde_json::Error) -> ToolError {
+    ToolError::InvalidArgs(ui_err(
+        "tool.browser.invalidArgs",
+        &[("tool", tool.to_string()), ("error", e.to_string())],
+        format!("{tool} 参数: {e}"),
+    ))
+}
+
+/// click 成功的 content（编码；`plain()` 还原为模型看到的中文）。
+fn clicked_content(r#ref: &str, tab_id: &str) -> String {
+    ui_err(
+        "tool.browser.clicked",
+        &[("ref", r#ref.to_string()), ("tab", tab_id.to_string())],
+        format!("已点击 ref={} (tab {tab_id})", r#ref),
+    )
+}
+
+/// fill 成功的 content。`count` 是填入的字符数。
+fn filled_content(r#ref: &str, count: usize, tab_id: &str) -> String {
+    ui_err(
+        "tool.browser.filled",
+        &[
+            ("ref", r#ref.to_string()),
+            ("count", count.to_string()),
+            ("tab", tab_id.to_string()),
+        ],
+        format!("已填 ref={} value=<{count}字符> (tab {tab_id})", r#ref),
+    )
+}
+
+/// eval 成功的 content。`count` 是脚本字符数。
+fn evaluated_content(count: usize, tab_id: &str) -> String {
+    ui_err(
+        "tool.browser.evaluated",
+        &[("count", count.to_string()), ("tab", tab_id.to_string())],
+        format!("已 eval JS（{count} 字符，tab {tab_id}）"),
+    )
+}
+
 /// 从 BrowserState 拿 Webview handle（含 ref 校验）。
 async fn get_webview(
     tab_id: &str,
     browser_state: &Arc<BrowserState>,
 ) -> Result<tauri::Webview, ToolError> {
     let map = browser_state.active.lock().await;
-    map.get(tab_id)
-        .cloned()
-        .ok_or_else(|| ToolError::Exec(format!("tab {tab_id} 不存在或已 suspend")))
+    map.get(tab_id).cloned().ok_or_else(|| {
+        ToolError::Exec(ui_err(
+            "tool.browser.tabSuspended",
+            &[("tab_id", tab_id.to_string())],
+            format!("tab {tab_id} 不存在或已 suspend"),
+        ))
+    })
 }
 
 // ============================================================
@@ -191,8 +249,8 @@ impl Tool for BrowserSnapshotTool {
     }
 
     async fn execute(&self, args: Value, ctx: &ToolContext) -> Result<ToolResult, ToolError> {
-        let parsed: SnapshotArgs = serde_json::from_value(args)
-            .map_err(|e| ToolError::InvalidArgs(format!("browser_snapshot 参数: {e}")))?;
+        let parsed: SnapshotArgs =
+            serde_json::from_value(args).map_err(|e| invalid_args("browser_snapshot", &e))?;
         let tab_id = resolve_tab_id(parsed.tab_id.as_deref(), &ctx.browser_state).await?;
 
         // 复用 ipc::browser::browser_inject_snapshot 的核心逻辑（注入 SCRIPT + 等 oneshot）。
@@ -213,7 +271,11 @@ impl Tool for BrowserSnapshotTool {
                 .lock()
                 .await
                 .remove(&req_id);
-            return Err(ToolError::Exec(format!("注入 snapshot JS 失败: {e}")));
+            return Err(ToolError::Exec(ui_err(
+                "tool.browser.injectFailed",
+                &[("error", e.to_string())],
+                format!("注入 snapshot JS 失败: {e}"),
+            )));
         }
 
         match tokio::time::timeout(std::time::Duration::from_secs(5), rx).await {
@@ -221,14 +283,22 @@ impl Tool for BrowserSnapshotTool {
                 content: json,
                 is_error: false,
             }),
-            Ok(Err(_)) => Err(ToolError::Exec("snapshot oneshot 通道异常".to_string())),
+            Ok(Err(_)) => Err(ToolError::Exec(ui_err(
+                "tool.browser.snapshotChannel",
+                &[],
+                "snapshot oneshot 通道异常",
+            ))),
             Err(_) => {
                 ctx.browser_state
                     .pending_snapshots
                     .lock()
                     .await
                     .remove(&req_id);
-                Err(ToolError::Exec("snapshot 等待超时（5s）".to_string()))
+                Err(ToolError::Exec(ui_err(
+                    "tool.browser.snapshotTimeout",
+                    &[],
+                    "snapshot 等待超时（5s）",
+                )))
             }
         }
     }
@@ -283,23 +353,26 @@ impl Tool for BrowserNavigateTool {
             Ok(p) => p,
             Err(e) => {
                 // 连 url 都没解析出 → 无 attempted_url 可填，returns Err
-                return Err(ToolError::InvalidArgs(format!(
-                    "browser_navigate 参数: {e}"
-                )));
+                return Err(invalid_args("browser_navigate", &e));
             }
         };
         let attempted_url = parsed.url.clone();
 
         // 辅助：构造失败 ToolResult
+        // reason 传入时可能是编码：界面显示翻译，模型看到的 JSON 里仍是中文原文
         let make_fail = |reason: String| -> ToolResult {
             let body = json!({
                 "ok": false,
                 "attempted_url": attempted_url,
-                "reason": reason,
+                "reason": plain(&reason),
             })
             .to_string();
             ToolResult {
-                content: body,
+                content: ui_err(
+                    "tool.browser.navigateFailed",
+                    &[("url", attempted_url.clone()), ("reason", reason)],
+                    body,
+                ),
                 is_error: true,
             }
         };
@@ -308,12 +381,19 @@ impl Tool for BrowserNavigateTool {
         // 都能给 LLM 一个明确的"URL 本身就不合法 / scheme 不对"信号。
         let url: tauri::Url = match parsed.url.parse() {
             Ok(u) => u,
-            Err(e) => return Ok(make_fail(format!("URL 解析失败: {e}"))),
+            Err(e) => {
+                return Ok(make_fail(ui_err(
+                    "tool.browser.urlParseFailed",
+                    &[("error", e.to_string())],
+                    format!("URL 解析失败: {e}"),
+                )));
+            }
         };
         if !matches!(url.scheme(), "http" | "https") {
-            return Ok(make_fail(format!(
-                "不允许的 URL scheme: {}（仅 http/https）",
-                url.scheme()
+            return Ok(make_fail(ui_err(
+                "tool.browser.schemeNotAllowed",
+                &[("scheme", url.scheme().to_string())],
+                format!("不允许的 URL scheme: {}（仅 http/https）", url.scheme()),
             )));
         }
 
@@ -333,19 +413,28 @@ impl Tool for BrowserNavigateTool {
                 )
                 .await
                 {
-                    Ok(new_tab_id) => Ok(ToolResult {
-                        content: json!({
+                    Ok(new_tab_id) => {
+                        let body = json!({
                             "ok": true,
                             "url": parsed.url.clone(),
                             "title": "",
                             "note": "浏览器面板原本未打开，已自动打开并直接导航到该 URL",
                             "tab_id": new_tab_id,
                         })
-                        .to_string(),
-                        is_error: false,
-                    }),
-                    Err(msg) => Ok(make_fail(format!(
-                        "浏览器面板未打开，自动打开也失败: {msg}"
+                        .to_string();
+                        Ok(ToolResult {
+                            content: ui_err(
+                                "tool.browser.autoOpenedNavigated",
+                                &[("url", parsed.url.clone())],
+                                body,
+                            ),
+                            is_error: false,
+                        })
+                    }
+                    Err(msg) => Ok(make_fail(ui_err(
+                        "tool.browser.autoOpenFailed",
+                        &[("error", msg.clone())],
+                        format!("浏览器面板未打开，自动打开也失败: {msg}"),
                     ))),
                 };
             }
@@ -354,7 +443,13 @@ impl Tool for BrowserNavigateTool {
         let wv = match get_webview(&tab_id, &ctx.browser_state).await {
             Ok(wv) => wv,
             Err(ToolError::Exec(msg)) => return Ok(make_fail(msg)),
-            Err(e) => return Ok(make_fail(format!("获取 webview 失败: {e:?}"))),
+            Err(e) => {
+                return Ok(make_fail(ui_err(
+                    "tool.browser.getWebviewFailed",
+                    &[("error", format!("{e:?}"))],
+                    format!("获取 webview 失败: {e:?}"),
+                )));
+            }
         };
 
         // v1.3.0 P4：发起导航前先记一次 generation baseline，才能分辨"这一次
@@ -363,7 +458,11 @@ impl Tool for BrowserNavigateTool {
             crate::ipc::browser::current_load_generation(&ctx.browser_state, &tab_id).await;
 
         if let Err(e) = wv.navigate(url) {
-            return Ok(make_fail(format!("navigate 失败: {e}")));
+            return Ok(make_fail(ui_err(
+                "tool.browser.navigateCmdFailed",
+                &[("error", e.to_string())],
+                format!("navigate 失败: {e}"),
+            )));
         }
         // v0.5.9：emit 给主 webview 同步 URL 栏。用 emit_to(EventTarget::webview("main"))
         // 显式指定，避免 emit() 广播到 child webview 时主 webview 漏收。
@@ -411,22 +510,25 @@ impl Tool for BrowserNavigateTool {
             }
         }
 
-        let body = build_navigate_success_body(&tab_id, &parsed.url, outcome).to_string();
+        let content = build_navigate_success_body(&tab_id, &parsed.url, outcome);
         Ok(ToolResult {
-            content: body,
+            content,
             is_error: false,
         })
     }
 }
 
-/// 把 [`crate::ipc::browser::wait_for_page_load`] 的结果拼成 AI 工具最终看到的
-/// JSON body。抽成纯函数方便单测（不需要真 Webview 就能验证"超时不谎报已完成"
+/// 把 [`crate::ipc::browser::wait_for_page_load`] 的结果拼成 AI 工具最终的
+/// content。抽成纯函数方便单测（不需要真 Webview 就能验证"超时不谎报已完成"
 /// 这条反幻觉要求）。
+///
+/// 返回的是编码字符串：界面按语言显示 note，`plain()` 还原后是模型一直看到的
+/// 那份中文 JSON。
 fn build_navigate_success_body(
     tab_id: &str,
     requested_url: &str,
     outcome: crate::ipc::browser::LoadWaitOutcome,
-) -> Value {
+) -> String {
     match outcome {
         crate::ipc::browser::LoadWaitOutcome::Loaded(snapshot) => {
             let final_url = if snapshot.url.is_empty() {
@@ -434,7 +536,7 @@ fn build_navigate_success_body(
             } else {
                 snapshot.url
             };
-            json!({
+            let body = json!({
                 "ok": true,
                 "url": final_url,
                 "title": snapshot.title,
@@ -442,17 +544,31 @@ fn build_navigate_success_body(
                 "note": "页面已加载完成",
                 "tab_id": tab_id,
             })
+            .to_string();
+            ui_err(
+                "tool.browser.pageLoaded",
+                &[("url", final_url), ("title", snapshot.title)],
+                body,
+            )
         }
-        crate::ipc::browser::LoadWaitOutcome::TimedOut => json!({
-            "ok": true,
-            "url": requested_url,
-            "title": "",
-            "loaded": false,
-            "note": format!(
-                "已导航到 {requested_url}，但 10s 内页面未完成加载（可能仍在加载中，可稍后重新 snapshot 确认）"
-            ),
-            "tab_id": tab_id,
-        }),
+        crate::ipc::browser::LoadWaitOutcome::TimedOut => {
+            let body = json!({
+                "ok": true,
+                "url": requested_url,
+                "title": "",
+                "loaded": false,
+                "note": format!(
+                    "已导航到 {requested_url}，但 10s 内页面未完成加载（可能仍在加载中，可稍后重新 snapshot 确认）"
+                ),
+                "tab_id": tab_id,
+            })
+            .to_string();
+            ui_err(
+                "tool.browser.loadTimeout",
+                &[("url", requested_url.to_string())],
+                body,
+            )
+        }
     }
 }
 
@@ -496,8 +612,8 @@ impl Tool for BrowserClickTool {
     }
 
     async fn execute(&self, args: Value, ctx: &ToolContext) -> Result<ToolResult, ToolError> {
-        let parsed: ClickArgs = serde_json::from_value(args)
-            .map_err(|e| ToolError::InvalidArgs(format!("browser_click 参数: {e}")))?;
+        let parsed: ClickArgs =
+            serde_json::from_value(args).map_err(|e| invalid_args("browser_click", &e))?;
         let tab_id = resolve_tab_id(parsed.tab_id.as_deref(), &ctx.browser_state).await?;
         let wv = get_webview(&tab_id, &ctx.browser_state).await?;
 
@@ -508,11 +624,16 @@ impl Tool for BrowserClickTool {
               if (el) {{ el.click(); }}
             }})();"#
         );
-        wv.eval(&script)
-            .map_err(|e| ToolError::Exec(format!("click eval 失败: {e}")))?;
+        wv.eval(&script).map_err(|e| {
+            ToolError::Exec(ui_err(
+                "tool.browser.clickEvalFailed",
+                &[("error", e.to_string())],
+                format!("click eval 失败: {e}"),
+            ))
+        })?;
 
         Ok(ToolResult {
-            content: format!("已点击 ref={} (tab {tab_id})", parsed.r#ref),
+            content: clicked_content(&parsed.r#ref, &tab_id),
             is_error: false,
         })
     }
@@ -559,8 +680,8 @@ impl Tool for BrowserFillTool {
     }
 
     async fn execute(&self, args: Value, ctx: &ToolContext) -> Result<ToolResult, ToolError> {
-        let parsed: FillArgs = serde_json::from_value(args)
-            .map_err(|e| ToolError::InvalidArgs(format!("browser_fill 参数: {e}")))?;
+        let parsed: FillArgs =
+            serde_json::from_value(args).map_err(|e| invalid_args("browser_fill", &e))?;
         let tab_id = resolve_tab_id(parsed.tab_id.as_deref(), &ctx.browser_state).await?;
         let wv = get_webview(&tab_id, &ctx.browser_state).await?;
 
@@ -576,15 +697,16 @@ impl Tool for BrowserFillTool {
               }}
             }})();"#
         );
-        wv.eval(&script)
-            .map_err(|e| ToolError::Exec(format!("fill eval 失败: {e}")))?;
+        wv.eval(&script).map_err(|e| {
+            ToolError::Exec(ui_err(
+                "tool.browser.fillEvalFailed",
+                &[("error", e.to_string())],
+                format!("fill eval 失败: {e}"),
+            ))
+        })?;
 
         Ok(ToolResult {
-            content: format!(
-                "已填 ref={} value=<{}字符> (tab {tab_id})",
-                parsed.r#ref,
-                parsed.value.chars().count()
-            ),
+            content: filled_content(&parsed.r#ref, parsed.value.chars().count(), &tab_id),
             is_error: false,
         })
     }
@@ -637,19 +759,21 @@ impl Tool for BrowserEvalTool {
     }
 
     async fn execute(&self, args: Value, ctx: &ToolContext) -> Result<ToolResult, ToolError> {
-        let parsed: EvalArgs = serde_json::from_value(args)
-            .map_err(|e| ToolError::InvalidArgs(format!("browser_eval 参数: {e}")))?;
+        let parsed: EvalArgs =
+            serde_json::from_value(args).map_err(|e| invalid_args("browser_eval", &e))?;
         let tab_id = resolve_tab_id(parsed.tab_id.as_deref(), &ctx.browser_state).await?;
         let wv = get_webview(&tab_id, &ctx.browser_state).await?;
 
-        wv.eval(&parsed.script)
-            .map_err(|e| ToolError::Exec(format!("eval 失败: {e}")))?;
+        wv.eval(&parsed.script).map_err(|e| {
+            ToolError::Exec(ui_err(
+                "tool.browser.evalFailed",
+                &[("error", e.to_string())],
+                format!("eval 失败: {e}"),
+            ))
+        })?;
 
         Ok(ToolResult {
-            content: format!(
-                "已 eval JS（{} 字符，tab {tab_id}）",
-                parsed.script.chars().count()
-            ),
+            content: evaluated_content(parsed.script.chars().count(), &tab_id),
             is_error: false,
         })
     }
@@ -838,7 +962,8 @@ mod tests {
             .await
             .expect("应返 Ok(ToolResult) 而不是 Err");
         assert!(r.is_error, "scheme 拒绝应标 is_error=true");
-        let body: serde_json::Value = serde_json::from_str(&r.content).expect("content 应是 JSON");
+        let body: serde_json::Value =
+            serde_json::from_str(&plain(&r.content)).expect("content 应是 JSON");
         assert_eq!(body["ok"], serde_json::json!(false), "ok 字段必须 false");
         assert_eq!(
             body["attempted_url"],
@@ -863,7 +988,8 @@ mod tests {
             .await
             .expect("应返 Ok(ToolResult) 而不是 Err");
         assert!(r.is_error);
-        let body: serde_json::Value = serde_json::from_str(&r.content).expect("content 应是 JSON");
+        let body: serde_json::Value =
+            serde_json::from_str(&plain(&r.content)).expect("content 应是 JSON");
         assert_eq!(body["ok"], serde_json::json!(false));
         assert_eq!(
             body["attempted_url"],
@@ -885,7 +1011,8 @@ mod tests {
             .await
             .expect("应返 Ok(ToolResult) 而不是 Err");
         assert!(r.is_error);
-        let body: serde_json::Value = serde_json::from_str(&r.content).expect("content 应是 JSON");
+        let body: serde_json::Value =
+            serde_json::from_str(&plain(&r.content)).expect("content 应是 JSON");
         assert_eq!(body["ok"], serde_json::json!(false));
         assert_eq!(body["attempted_url"], serde_json::json!("not-a-valid-url"));
         let reason = body["reason"].as_str().unwrap_or("");
@@ -935,7 +1062,7 @@ mod tests {
             .await
             .expect("应返 Ok(ToolResult)");
         assert!(r.is_error);
-        let body: serde_json::Value = serde_json::from_str(&r.content).unwrap();
+        let body: serde_json::Value = serde_json::from_str(&plain(&r.content)).unwrap();
         assert_eq!(body["ok"], serde_json::json!(false));
         let reason = body["reason"].as_str().unwrap_or("");
         assert!(
@@ -1134,7 +1261,7 @@ mod tests {
                 url: "https://github.com/login".into(),
                 title: "Sign in to GitHub · GitHub".into(),
             });
-        let body = build_navigate_success_body("tab-1", "https://github.com", outcome);
+        let body = navigate_body("tab-1", "https://github.com", outcome);
         assert_eq!(body["ok"], json!(true));
         assert_eq!(body["loaded"], json!(true));
         assert_eq!(body["url"], json!("https://github.com/login"));
@@ -1150,13 +1277,13 @@ mod tests {
                 url: String::new(),
                 title: String::new(),
             });
-        let body = build_navigate_success_body("tab-1", "https://example.com", outcome);
+        let body = navigate_body("tab-1", "https://example.com", outcome);
         assert_eq!(body["url"], json!("https://example.com"));
     }
 
     #[test]
     fn build_navigate_success_body_超时_诚实提示_不谎报已完成() {
-        let body = build_navigate_success_body(
+        let body = navigate_body(
             "tab-1",
             "https://slow-site.example",
             crate::ipc::browser::LoadWaitOutcome::TimedOut,
@@ -1170,5 +1297,200 @@ mod tests {
             !note.contains("已打开") && !note.contains("已加载完成"),
             "超时文案不能说成'已打开/已加载完成'这种误导措辞: {note}"
         );
+    }
+
+    // =====================================================================
+    // 结果编码化：界面按语言显示，交给模型时 plain() 还原中文
+    // =====================================================================
+
+    /// 取模型看到的那份 JSON（编码经 plain() 还原）。
+    fn navigate_body(
+        tab_id: &str,
+        url: &str,
+        outcome: crate::ipc::browser::LoadWaitOutcome,
+    ) -> Value {
+        let content = build_navigate_success_body(tab_id, url, outcome);
+        serde_json::from_str(&plain(&content)).unwrap()
+    }
+
+    fn coded(s: &str) -> Value {
+        serde_json::from_str(s).unwrap_or_else(|e| panic!("应是编码字符串: {e}: {s}"))
+    }
+
+    fn reject_msg(d: TabDecision) -> String {
+        match d {
+            TabDecision::Reject(m) => m,
+            other => panic!("应是 Reject，实际 {other:?}"),
+        }
+    }
+
+    #[test]
+    fn 应该_当多个_webview_判不出可见者时_拒绝并带编码与数量() {
+        let ids = vec!["a".to_string(), "b".to_string()];
+        let msg = reject_msg(decide_tab(None, &ids, None));
+        let v = coded(&msg);
+        assert_eq!(v["code"], "tool.browser.tabAmbiguous");
+        assert_eq!(v["params"]["count"], "2");
+        assert!(crate::ui_error::plain(&msg).starts_with("后端有 2 个浏览器 webview"));
+        assert!(
+            crate::ui_error::plain(&msg).contains("请调用 browser_open 重新确立当前 tab 后重试。")
+        );
+    }
+
+    #[test]
+    fn 应该_当显式_tab_id_后端不存在时_拒绝并带编码与_id() {
+        let ids = vec!["a".to_string()];
+        let msg = reject_msg(decide_tab(Some("zz"), &ids, Some("a")));
+        let v = coded(&msg);
+        assert_eq!(v["code"], "tool.browser.tabNotFound");
+        assert_eq!(v["params"]["id"], "zz");
+        assert_eq!(
+            crate::ui_error::plain(&msg),
+            "tab zz 在后端不存在（多半是上一轮结果里的历史 tab_id，webview 已被关闭或重建）。省略 tab_id 参数即可操作用户当前看得见的 tab。"
+        );
+    }
+
+    #[test]
+    fn 应该_当显式_tab_id_不是可见_tab_时_拒绝并带编码与两个_id() {
+        let ids = vec!["a".to_string(), "b".to_string()];
+        let msg = reject_msg(decide_tab(Some("a"), &ids, Some("b")));
+        let v = coded(&msg);
+        assert_eq!(v["code"], "tool.browser.tabNotVisible");
+        assert_eq!(v["params"]["id"], "a");
+        assert_eq!(v["params"]["visible"], "b");
+        assert_eq!(
+            crate::ui_error::plain(&msg),
+            "tab a 不是用户当前看得见的 tab（当前可见的是 b），已拒绝操作。不要复用历史 tab_id，省略 tab_id 参数即可。"
+        );
+    }
+
+    #[tokio::test]
+    async fn 应该_当没有任何_tab_时_报编码错误且还原为原中文() {
+        let state = Arc::new(BrowserState::default());
+        let Err(ToolError::Exec(msg)) = resolve_tab_id(None, &state).await else {
+            panic!("空 state 应报 Exec 错误");
+        };
+        assert_eq!(coded(&msg)["code"], "tool.browser.noActiveTab");
+        assert_eq!(
+            crate::ui_error::plain(&msg),
+            "浏览器面板未打开或无 active tab；请先调用 browser_open 工具自己打开浏览器，不要让用户手动去点地球图标"
+        );
+    }
+
+    #[tokio::test]
+    async fn 应该_当_tab_已不在后端时_get_webview_报编码错误() {
+        let state = Arc::new(BrowserState::default());
+        let Err(ToolError::Exec(msg)) = get_webview("t9", &state).await else {
+            panic!("应是 Exec");
+        };
+        let v = coded(&msg);
+        assert_eq!(v["code"], "tool.browser.tabSuspended");
+        assert_eq!(v["params"]["tab_id"], "t9");
+        assert_eq!(crate::ui_error::plain(&msg), "tab t9 不存在或已 suspend");
+    }
+
+    #[tokio::test]
+    async fn 应该_当参数不合法时_各工具报带工具名的编码参数错误() {
+        let ctx = make_ctx();
+        let Err(ToolError::InvalidArgs(msg)) =
+            BrowserClickTool.execute(json!({"ref": 1}), &ctx).await
+        else {
+            panic!("应是 InvalidArgs");
+        };
+        let v = coded(&msg);
+        assert_eq!(v["code"], "tool.browser.invalidArgs");
+        assert_eq!(v["params"]["tool"], "browser_click");
+        assert!(crate::ui_error::plain(&msg).starts_with("browser_click 参数: "));
+    }
+
+    #[tokio::test]
+    async fn 应该_当_scheme_不允许时_navigate_的失败结果带编码且模型看到原_json() {
+        let ctx = make_ctx();
+        let r = BrowserNavigateTool
+            .execute(json!({"url": "file:///etc/passwd"}), &ctx)
+            .await
+            .unwrap();
+        assert!(r.is_error);
+        let v = coded(&r.content);
+        assert_eq!(v["code"], "tool.browser.navigateFailed");
+        assert_eq!(v["params"]["url"], "file:///etc/passwd");
+        assert_eq!(
+            coded(v["params"]["reason"].as_str().unwrap())["code"],
+            "tool.browser.schemeNotAllowed"
+        );
+        let plain_body: Value = serde_json::from_str(&crate::ui_error::plain(&r.content)).unwrap();
+        assert_eq!(plain_body["ok"], json!(false));
+        assert_eq!(plain_body["attempted_url"], json!("file:///etc/passwd"));
+        assert_eq!(
+            plain_body["reason"],
+            json!("不允许的 URL scheme: file（仅 http/https）")
+        );
+    }
+
+    #[tokio::test]
+    async fn 应该_当_url_解析失败时_reason_带解析失败编码() {
+        let ctx = make_ctx();
+        let r = BrowserNavigateTool
+            .execute(json!({"url": "not a url"}), &ctx)
+            .await
+            .unwrap();
+        let v = coded(&r.content);
+        let reason = coded(v["params"]["reason"].as_str().unwrap());
+        assert_eq!(reason["code"], "tool.browser.urlParseFailed");
+        assert!(reason["params"]["error"].as_str().is_some());
+    }
+
+    #[test]
+    fn 应该_当页面加载完成时_成功结果带编码且模型看到原_json() {
+        let outcome =
+            crate::ipc::browser::LoadWaitOutcome::Loaded(crate::ipc::browser::PageLoadState {
+                generation: 1,
+                url: "https://a.test/x".into(),
+                title: "标题".into(),
+            });
+        let content = build_navigate_success_body("tab-1", "https://a.test", outcome);
+        let v = coded(&content);
+        assert_eq!(v["code"], "tool.browser.pageLoaded");
+        assert_eq!(v["params"]["url"], "https://a.test/x");
+        let body: Value = serde_json::from_str(&crate::ui_error::plain(&content)).unwrap();
+        assert_eq!(body["note"], json!("页面已加载完成"));
+        assert_eq!(body["loaded"], json!(true));
+    }
+
+    #[test]
+    fn 应该_当加载超时时_成功结果带超时编码且原文提示不变() {
+        let content = build_navigate_success_body(
+            "tab-1",
+            "https://slow.test",
+            crate::ipc::browser::LoadWaitOutcome::TimedOut,
+        );
+        let v = coded(&content);
+        assert_eq!(v["code"], "tool.browser.loadTimeout");
+        assert_eq!(v["params"]["url"], "https://slow.test");
+        let body: Value = serde_json::from_str(&crate::ui_error::plain(&content)).unwrap();
+        assert_eq!(
+            body["note"],
+            json!(
+                "已导航到 https://slow.test，但 10s 内页面未完成加载（可能仍在加载中，可稍后重新 snapshot 确认）"
+            )
+        );
+    }
+
+    #[test]
+    fn 应该_点击填值求值成功时_内容带编码且还原为原中文() {
+        let c = clicked_content("r5", "t1");
+        assert_eq!(coded(&c)["code"], "tool.browser.clicked");
+        assert_eq!(crate::ui_error::plain(&c), "已点击 ref=r5 (tab t1)");
+        let f = filled_content("r5", 3, "t1");
+        let v = coded(&f);
+        assert_eq!(v["code"], "tool.browser.filled");
+        assert_eq!(v["params"]["count"], "3");
+        assert_eq!(
+            crate::ui_error::plain(&f),
+            "已填 ref=r5 value=<3字符> (tab t1)"
+        );
+        let e = evaluated_content(12, "t1");
+        assert_eq!(coded(&e)["code"], "tool.browser.evaluated");
+        assert_eq!(crate::ui_error::plain(&e), "已 eval JS（12 字符，tab t1）");
     }
 }
