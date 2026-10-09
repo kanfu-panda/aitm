@@ -1,6 +1,6 @@
 [package]
 name = "aitm"
-version = "1.6.3"
+version = "1.6.4"
 description = "AI Terminal — Rust + Tauri"
 authors = ["kanfu-panda"]
 license = "Apache-2.0"
@@ -95,3 +95,9 @@ lto = true
 codegen-units = 1
 strip = true
 panic = "abort"
+
+# 过程宏与构建脚本不裁剪符号。macOS 27 的 dyld 拒绝加载被 strip 过的过程宏动态库
+# （报 "mis-aligned LINKEDIT string pool"），release 构建会在编译依赖时失败。
+# 这些产物只在编译期使用，不进安装包，主程序仍按上面的 strip = true 裁剪。
+[profile.release.build-override]
+strip = false

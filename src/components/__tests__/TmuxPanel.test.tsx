@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import i18n from "../../lib/i18n";
 import type { TmuxSession } from "../../lib/tauri";
 
 /**
@@ -540,5 +541,46 @@ describe("TmuxPanel 增强：定时刷新、新建、改名、预览、新输出
       expect(preview.textContent).toContain("can't find session"),
     );
     expect(screen.getByTestId("tmux-session-item-alpha")).toBeInTheDocument();
+  });
+
+  it("应该_当后端错误带编码且界面为英文时_面板顶部错误按英文显示", async () => {
+    await i18n.changeLanguage("en");
+    try {
+      tmuxListSessionsMock.mockRejectedValue(
+        JSON.stringify({
+          code: "tmux.spawnFailed",
+          params: { error: "boom" },
+          message: "执行 tmux 失败：boom",
+        }),
+      );
+      await renderPanel();
+      const bar = await screen.findByTestId("tmux-error");
+      expect(bar.textContent).toBe("Failed to run tmux: boom");
+    } finally {
+      await i18n.changeLanguage("zh-CN");
+    }
+  });
+
+  it("应该_当预览失败的错误带编码且界面为英文时_预览区按英文显示", async () => {
+    await i18n.changeLanguage("en");
+    try {
+      tmuxListSessionsMock.mockResolvedValue([session("alpha")]);
+      tmuxCapturePaneMock.mockRejectedValue(
+        JSON.stringify({
+          code: "tmux.sessionIdInvalid",
+          params: { id: '"work"' },
+          message: '无效的会话 id："work"',
+        }),
+      );
+      await renderPanel();
+      await screen.findByTestId("tmux-session-item-alpha");
+      fireEvent.click(screen.getByTestId("tmux-expand-alpha"));
+      const preview = await screen.findByTestId("tmux-preview-alpha");
+      await waitFor(() =>
+        expect(preview.textContent).toContain('Invalid session id: "work"'),
+      );
+    } finally {
+      await i18n.changeLanguage("zh-CN");
+    }
   });
 });

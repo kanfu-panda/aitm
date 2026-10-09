@@ -33,6 +33,15 @@
     "cancel": "キャンセル",
     "confirm": "終了"
   },
+  "fileTabBar": {
+    "tablistAria": "ファイルエディタのタブ",
+    "closeAria": "{{name}} を閉じる",
+    "menuAria": "ファイルタブのコンテキストメニュー",
+    "close": "閉じる",
+    "closeOthers": "他を閉じる",
+    "closeRight": "右側を閉じる",
+    "closeAll": "すべて閉じる"
+  },
   "fileTree": {
     "title": "ファイルツリー",
     "noActiveCwd": "現在のディレクトリが検出されません",
@@ -50,7 +59,11 @@
       "revealWindows": "エクスプローラーで表示",
       "revealGeneric": "ファイルマネージャーで表示"
     },
-    "dirtyDirAria": "未コミットの変更を含むフォルダ"
+    "dirtyDirAria": "未コミットの変更を含むフォルダ",
+    "iconDirOpen": "展開したフォルダ",
+    "iconDir": "フォルダ",
+    "iconFile": "ファイル",
+    "gitStatusAria": "git ステータス：{{letter}}"
   },
   "inputDialog": {
     "newFileTitle": "新規ファイル",
@@ -116,6 +129,217 @@
     "unreadAria": "未読 {{count}} 件",
     "notification": "通知：{{level}}"
   },
+  "notify": {
+    "level": {
+      "running": "実行中",
+      "waiting": "承認待ち",
+      "done": "完了",
+      "error": "エラー"
+    },
+    "body": {
+      "running": "AI が処理中",
+      "waiting": "AI があなたの承認を待っています",
+      "done": "AI が完了しました",
+      "error": "AI でエラーが発生しました"
+    },
+    "aiWaitingTool": "AI が承認待ち：{{tool}}",
+    "aiError": "AI エラー：{{detail}}"
+  },
+  "backendErrors": {
+    "fs": {
+      "canonicalizeFailed": "パスを解決できません：{{path}}：{{error}}",
+      "metadataFailed": "ファイル情報を読み取れません：{{path}}：{{error}}",
+      "notDir": "ディレクトリではありません：{{path}}",
+      "notFile": "ファイルではありません：{{path}}",
+      "readFailed": "ファイルの読み取りに失敗しました：{{path}}：{{error}}",
+      "binaryReason": "UTF-8 以外または NUL バイトを含んでいます",
+      "pathNotAbsolute": "パスは絶対パスで指定してください：{{path}}",
+      "createInSystemDir": "システムディレクトリには作成できません：{{path}}",
+      "deleteSystemDir": "システムディレクトリは削除できません：{{path}}",
+      "fileExists": "ファイルはすでに存在します：{{path}}",
+      "createFileFailed": "ファイルの作成に失敗しました：{{path}}：{{error}}",
+      "pathExists": "パスはすでに存在します：{{path}}",
+      "createDirFailed": "ディレクトリの作成に失敗しました：{{path}}：{{error}}",
+      "renameNeedAbsolute": "from と to はどちらも絶対パスで指定してください",
+      "systemDirForbidden": "システムディレクトリの読み書きは許可されていません",
+      "targetExists": "移動先のパスはすでに存在します：{{path}}",
+      "renameFailed": "名前の変更に失敗しました：{{from}} → {{to}}：{{error}}",
+      "accessFailed": "パスへのアクセスに失敗しました：{{path}}：{{error}}",
+      "deleteDirFailed": "ディレクトリの削除に失敗しました：{{path}}：{{error}}",
+      "deleteFileFailed": "ファイルの削除に失敗しました：{{path}}：{{error}}"
+    },
+    "shell": {
+      "unsupportedScheme": "サポートされていない URL スキームです：{{scheme}}",
+      "unsupportedPlatform": "サポートされていないプラットフォームです：{{os}}",
+      "openSpawnFailed": "システムの「開く」コマンドを起動できませんでした",
+      "revealSpawnFailed": "ファイルマネージャーを起動できませんでした",
+      "pathEmpty": "パスが空です",
+      "pathNotAbsolute": "絶対パスのみ指定できます：{{path}}",
+      "pathNotFound": "パスが存在しません：{{path}}"
+    },
+    "risk": {
+      "sudo": "{{level}}：DESTRUCTIVE：sudo による権限昇格",
+      "doas": "{{level}}：DESTRUCTIVE：doas による権限昇格",
+      "chmodOpen": "{{level}}：DESTRUCTIVE：chmod による書き込み権限の開放",
+      "chownRecursive": "{{level}}：DESTRUCTIVE：chown -R による所有者の再帰的変更",
+      "gitForcePush": "{{level}}：DESTRUCTIVE：git push --force（強制プッシュ）",
+      "gitHardReset": "{{level}}：DESTRUCTIVE：git reset --hard / clean -f",
+      "sqlDrop": "{{level}}：DESTRUCTIVE：SQL drop によるテーブル/DB の削除",
+      "kubectlDelete": "{{level}}：DESTRUCTIVE：kubectl delete",
+      "dockerRemove": "{{level}}：DESTRUCTIVE：docker rm/rmi/prune",
+      "killForce": "{{level}}：DESTRUCTIVE：kill -9 による強制終了",
+      "packagePublish": "{{level}}：DESTRUCTIVE：パッケージの公開（publish）",
+      "redirectSystemDir": "{{level}}：DESTRUCTIVE：システムディレクトリへのリダイレクト",
+      "findDelete": "{{level}}：DESTRUCTIVE：find -delete / -exec rm",
+      "readonlyCommand": "{{level}}：読み取り専用コマンド {{command}}",
+      "defaultHigh": "{{level}}：デフォルト（明確なリスクも安全の兆候もなし）",
+      "whitelist": "ホワイトリスト：{{pattern}}",
+      "sessionGranted": "このセッションで許可済み"
+    },
+    "tmux": {
+      "notInstalled": "このマシンに tmux がインストールされていません",
+      "spawnFailed": "tmux の実行に失敗しました：{{error}}",
+      "taskFailed": "tmux タスクの実行に失敗しました：{{error}}",
+      "probeFailed": "tmux の検出に失敗しました：{{error}}",
+      "commandFailed": "tmux コマンドの実行に失敗しました",
+      "sessionIdInvalid": "無効なセッション ID：{{id}}",
+      "sessionNameEmpty": "セッション名を空にすることはできません",
+      "sessionNameSeparator": "セッション名に . や : を含めることはできません",
+      "sessionNameControl": "セッション名に制御文字を含めることはできません",
+      "parseFailed": "tmux は {{count}} 行を返しましたが、1 件も解析できませんでした。区切り文字が環境によって書き換えられている可能性があります（LANG / LC_CTYPE を確認してください）",
+      "newSessionNoId": "tmux が新しいセッションの ID を返しませんでした：{{id}}"
+    },
+    "provider": {
+      "test": {
+        "notConfigured": "プロバイダーが未設定、または無効になっています",
+        "noModels": "このプロバイダーには利用可能なモデルがありません",
+        "timeout": "タイムアウトしました（10 秒）",
+        "unauthorized": "API キーが無効です（401/403）",
+        "rateLimited": "レート制限に達しました（429）",
+        "network": "ネットワークエラー：{{detail}}",
+        "networkTimeout": "ネットワークエラー：タイムアウト",
+        "protocol": "プロトコルエラー：{{detail}}"
+      },
+      "error": {
+        "http": "HTTP リクエストに失敗しました：{{detail}}",
+        "unauthorized": "認証に失敗しました（401/403）：API キーを確認してください",
+        "rateLimited": "レート制限されています（429）：しばらくしてから再試行してください",
+        "protocol": "プロトコルの解析に失敗しました：{{detail}}",
+        "config": "設定エラー：{{detail}}",
+        "timeout": "タイムアウトしました",
+        "other": "その他のエラー：{{detail}}"
+      }
+    },
+    "ai": {
+      "providerNotFound": "プロバイダーが存在しません：{{id}}",
+      "scopeSpawnFailed": "スコープの解決に失敗しました：{{error}}",
+      "summaryFailed": "要約ステップに失敗しました：{{detail}}",
+      "summaryFailedUnauthorized": "要約ステップに失敗しました：認証に失敗しました（401/403）。API キーを確認してください",
+      "summaryFailedRateLimited": "要約ステップに失敗しました：レート制限されています（429）。しばらくしてから再試行してください",
+      "summaryFailedTimeout": "要約ステップに失敗しました：タイムアウトしました",
+      "scopeResolveFailed": "プロジェクトのスコープを判定できませんでした：{{error}}"
+    },
+    "tool": {
+      "invalidArgs": "引数が無効です：{{detail}}",
+      "blocked": "実行を拒否しました：{{detail}}",
+      "exec": "実行に失敗しました：{{detail}}",
+      "sessionNotFound": "セッションが見つかりません：{{detail}}",
+      "notExecuted": "ツールは実行されませんでした",
+      "unknownTool": "不明なツール：{{name}}",
+      "blacklisted": "L1 ブラックリストでブロック：{{label}}（コマンド = {{cmd}}）",
+      "rejectedByUser": "この操作は拒否されました",
+      "file": {
+        "argsParse": "{{tool}} の引数が不正です: {{error}}",
+        "cwdMissing": "作業ディレクトリが存在しません: {{error}}",
+        "notFound": "ファイルが見つかりません: {{error}}",
+        "dirNotFound": "ディレクトリが見つかりません: {{error}}",
+        "readFailed": "ファイルの読み取りに失敗しました: {{error}}",
+        "writeFailed": "ファイルの書き込みに失敗しました: {{error}}",
+        "mkdirFailed": "ディレクトリの作成に失敗しました: {{error}}",
+        "resolveFailed": "パスの解決に失敗しました: {{error}}",
+        "invalidPath": "パスが無効です",
+        "outOfSandbox": "パスがサンドボックスの外です（{{cwd}} の外）",
+        "noMatch": "一致する箇所がありません: old_string がファイル内に見つかりません",
+        "notUnique": "old_string が一意ではありません（{{count}} 件）。前後の文脈を増やすか replace_all=true を指定してください",
+        "replaced": "{{path}} の {{count}} 箇所を置換しました",
+        "written": "{{path}} に {{lines}} 行を書き込みました"
+      },
+      "command": {
+        "noActiveTab": "アクティブなタブがありません。ユーザーが先にターミナルのタブを開く必要があります",
+        "invalidArgs": "run_command の引数: {{error}}",
+        "writePtyFailed": "PTY への書き込みに失敗しました: {{error}}",
+        "result": "{{output}}\n\n{{outcome}}",
+        "resultTruncated": "{{output}}\n\n[出力が長すぎるため先頭 {{maxBytes}} バイトに切り詰めました。出力は不完全な可能性があります]\n\n{{outcome}}",
+        "noOutput": "[出力なし]",
+        "exitCode": "[終了コード: {{code}}]",
+        "stillRunning": "[コマンドは実行中です（{{secs}} 秒待機）。出力は不完全な可能性があります。後で get_terminal_history で確認できます]",
+        "noExitDetection": "[このシェルはコマンド終了検出に対応していません（{{secs}} 秒待機）。終了コードは不明で、出力は不完全な可能性があります]",
+        "hookLost": "[ターミナルのシェルフックが有効になっていません。今回の終了コードは不明です（{{secs}} 秒待機、出力は不完全な可能性があります）。互換モードに切り替えました。次のコマンドから終了コードが戻ります]"
+      },
+      "history": {
+        "noActiveTab": "アクティブなタブがありません。ユーザーが先にターミナルのタブを開く必要があります",
+        "invalidArgs": "get_terminal_history: {{error}}",
+        "searchInvalidArgs": "search_history: {{error}}",
+        "noMatch": "'{{query}}' を含む出力は見つかりませんでした"
+      },
+      "skill": {
+        "invalidArgs": "load_skill の引数: {{error}}",
+        "listInvalidArgs": "list_skills の引数: {{error}}",
+        "searchTaskFailed": "スキルの検索タスクに失敗しました: {{error}}",
+        "loadTaskFailed": "スキルの読み込みタスクに失敗しました: {{error}}",
+        "notFound": "スキル「{{name}}」が見つかりません。{{hint}}",
+        "noneInstalled": "インストールされているスキルはありません。",
+        "available": "利用可能: {{names}}",
+        "availableMore": "利用可能: {{names}}（ほか {{more}} 件は省略）",
+        "dirInaccessible": "スキルのディレクトリにアクセスできません: {{error}}",
+        "pathNotRelative": "スキルの補助ファイルのパスは、スキルのディレクトリからの相対パスである必要があります。絶対パスと `..` は使えません: {{path}}",
+        "fileNotFound": "スキルのファイルが存在しません: {{error}}",
+        "pathEscape": "パスがスキルのディレクトリの外に出ています（{{root}} の中ではありません）",
+        "notFile": "対象は通常のファイルではありません: {{path}}",
+        "readFailed": "スキルのファイルを読み込めませんでした: {{error}}",
+        "notText": "対象はテキストファイルではありません（NUL バイトを含む）。読み込みを拒否しました"
+      },
+      "browser": {
+        "invalidArgs": "{{tool}} の引数が無効です: {{error}}",
+        "tabAmbiguous": "バックエンドにブラウザの webview が {{count}} 個ありますが、ユーザーが今見ているものを特定できないため、操作を拒否しました（誤ったページを操作するより失敗する方がましです）。browser_open を呼び出して現在のタブを確定し直してから再試行してください。",
+        "tabNotFound": "タブ {{id}} はバックエンドに存在しません（前回の結果に含まれていた古い tab_id で、webview が閉じられたか再作成された可能性が高いです）。tab_id を省略すると、ユーザーが今見ているタブを操作できます。",
+        "tabNotVisible": "タブ {{id}} はユーザーが今見ているタブではありません（現在表示中のタブは {{visible}}）。操作を拒否しました。古い tab_id を再利用せず、tab_id を省略してください。",
+        "noActiveTab": "ブラウザパネルが開いていないか、アクティブなタブがありません。browser_open ツールで自分でブラウザを開いてください。ユーザーに地球アイコンを押してもらわないでください。",
+        "tabSuspended": "タブ {{tab_id}} は存在しないか、中断されています",
+        "injectFailed": "snapshot 用 JS の注入に失敗しました: {{error}}",
+        "snapshotChannel": "snapshot の oneshot チャネルで異常が発生しました",
+        "snapshotTimeout": "snapshot の待機がタイムアウトしました（5 秒）",
+        "clickEvalFailed": "クリックの eval に失敗しました: {{error}}",
+        "fillEvalFailed": "入力の eval に失敗しました: {{error}}",
+        "evalFailed": "eval に失敗しました: {{error}}",
+        "navigateFailed": "{{url}} への移動に失敗しました: {{reason}}",
+        "urlParseFailed": "URL を解析できませんでした: {{error}}",
+        "schemeNotAllowed": "許可されていない URL スキームです: {{scheme}}（http/https のみ）",
+        "autoOpenFailed": "ブラウザパネルが開いておらず、自動で開くことにも失敗しました: {{error}}",
+        "getWebviewFailed": "webview の取得に失敗しました: {{error}}",
+        "navigateCmdFailed": "navigate に失敗しました: {{error}}",
+        "autoOpenedNavigated": "ブラウザパネルが開いていなかったため、自動で開いて {{url}} に移動しました",
+        "pageLoaded": "ページの読み込みが完了しました: {{url}}",
+        "loadTimeout": "{{url}} に移動しましたが、10 秒以内にページの読み込みが完了しませんでした（まだ読み込み中の可能性があります。しばらくしてから snapshot で確認してください）",
+        "clicked": "ref={{ref}} をクリックしました (tab {{tab}})",
+        "filled": "ref={{ref}} に入力しました value=<{{count}} 文字> (tab {{tab}})",
+        "evaluated": "JS を eval しました（{{count}} 文字、tab {{tab}}）",
+        "openFailed": "ブラウザを開けませんでした: {{reason}}",
+        "tabStateInconsistent": "ブラウザの現在のタブ状態に不整合があり、フロントエンドでの再確定にも失敗しました: {{error}}",
+        "openBrowserFailed": "内蔵ブラウザを開けませんでした: {{error}}",
+        "alreadyOpen": "ブラウザパネルはすでに開いています。現在のタブを再利用します。ページを移動するには browser_navigate を呼び出してください。",
+        "openedLoaded": "内蔵ブラウザを開き、読み込みが完了しました: {{url}}",
+        "openedLoadTimeout": "内蔵ブラウザを開いて {{url}} に移動しましたが、10 秒以内にページの読み込みが完了しませんでした（まだ読み込み中の可能性があります。しばらくしてから snapshot で確認してください）",
+        "openedBlank": "内蔵ブラウザを開きました（空白ページ）"
+      }
+    },
+    "blacklist": {
+      "rmRoot": "rm -rf /（ルートを削除）",
+      "ddDevice": "dd によるデバイスファイルへの書き込み",
+      "mkfs": "mkfs（フォーマット）",
+      "forkBomb": "fork bomb"
+    }
+  },
   "settingsModal": {
     "title": "設定",
     "tablistLabel": "設定カテゴリ",
@@ -162,13 +386,11 @@
     "general": "一般",
     "confirmQuitLabel": "終了時に確認する",
     "confirmQuitHelp": "アプリを閉じる前に「終了確認」ダイアログを表示します。オフの場合は赤い × ボタン／Cmd+Q で即座に終了します",
-    "confirmQuitAria": "終了時に確認する",
     "restoreSessionLabel": "起動時に前回のセッションを復元",
     "restoreSessionHelp": "aitm の起動時に前回のタブ・分割レイアウト・ファイルを開き直します。オフにすると毎回空のタブ 1 つで始まります",
     "notifications": "通知",
     "notificationSoundLabel": "システム通知音",
-    "notificationSoundHelp": "AI の承認待ち／完了／エラー時にシステム通知を鳴らします。オフにすると通知は無音のままです",
-    "notificationSoundAria": "システム通知音"
+    "notificationSoundHelp": "AI の承認待ち／完了／エラー時にシステム通知を鳴らします。オフにすると通知は無音のままです"
   },
   "terminal": {
     "font": "フォント",
@@ -193,7 +415,8 @@
     "shell": "Shell",
     "shellDefaultLabel": "デフォルト shell のパス（空欄なら $SHELL を継承）",
     "shellPlaceholder": "例：/bin/zsh、/opt/homebrew/bin/fish",
-    "shellHelp": "次に開くタブから適用されます。既存タブは影響を受けません"
+    "shellHelp": "次に開くタブから適用されます。既存タブは影響を受けません",
+    "themeDefault": "デフォルト"
   },
   "settings": {
     "editor": {
@@ -451,12 +674,29 @@
     "projectTooltip": "プロジェクト：{{name}}\nパス：{{path}}",
     "projectAria": "現在のスコープ：プロジェクト {{name}}"
   },
+  "initProject": {
+    "title": "✨ ここで AI プロジェクトを始めますか？",
+    "desc": "AI アシスタントを使用中ですが、このディレクトリはまだ aitm プロジェクトではありません。AI にここを長期的に記憶させますか？",
+    "nameLabel": "プロジェクト名",
+    "path": "パス：",
+    "initTitle": "はい、プロジェクトとして初期化（推奨）",
+    "initDesc": "./.aitm/ にマーカーを作成し、AI が会話とコマンドの文脈を記憶します。長期作業ディレクトリや git リポジトリ向け。",
+    "tempTitle": "いいえ、今回だけ使う",
+    "tempDesc": "会話はグローバルに保存されます。次回このディレクトリに来たときに再度確認します。",
+    "ignoreTitle": "このディレクトリでは今後確認しない",
+    "ignoreDesc": "無視リストに永久に追加し、ターミナルのみで使います。",
+    "closeSidebar": "AI サイドバーを閉じる",
+    "confirm": "OK",
+    "busy": "処理中…"
+  },
   "splitDivider": {
     "defaultAria": "幅を調整",
     "fileTreeWidth": "ファイルツリーの幅を調整",
     "aiSidebarWidth": "AI サイドバーの幅を調整",
     "terminalEditorHeight": "ターミナル / エディタ分割の高さを調整",
-    "terminalBrowserRatio": "ターミナル / ブラウザの比率を調整"
+    "terminalBrowserRatio": "ターミナル / ブラウザの比率を調整",
+    "paneHorizontal": "ドラッグして左右の分割比率を調整",
+    "paneVertical": "ドラッグして上下の分割比率を調整"
   },
   "about": {
     "version": "バージョン {{version}}",
@@ -534,7 +774,12 @@
     "reject": "拒否",
     "approve": "承認",
     "alwaysAllow": "このセッションでは常に許可",
-    "alwaysAllowTitle": "このセッション中は {{name}} を自動承認（再起動で解除）"
+    "alwaysAllowTitle": "このセッション中は {{name}} を自動承認（再起動で解除）",
+    "titleDestructive": "⚠ AI が危険な操作の実行を求めています",
+    "title": "AI がツールの実行を求めています",
+    "srDescription": "AI が要求したツール呼び出しを承認または拒否",
+    "toolLabel": "ツール:",
+    "riskReasonLabel": "評価理由："
   },
   "browserPanel": {
     "collapse": "ブラウザを折りたたむ",
@@ -545,7 +790,12 @@
     "newTab": "新しいタブ",
     "newTabTitle": "新しいタブ (⌘T)",
     "batchCloseRunning": "{{count}} 個のタブでコマンドが実行中です：{{names}}。すべて閉じるとこれらのコマンドは終了します。",
-    "batchCloseConfirm": "すべて閉じる"
+    "batchCloseConfirm": "すべて閉じる",
+    "emptyHint": "クリックして新規タブ · または",
+    "dropTop": "ここにドロップして上に分割",
+    "dropBottom": "ここにドロップして下に分割",
+    "dropLeft": "ここにドロップして左に分割",
+    "dropRight": "ここにドロップして右に分割"
   },
   "tmux": {
     "title": "tmux セッション",

@@ -27,6 +27,7 @@ use crate::providers::types::{
     ChatChunk, ChatRequest, Message, MessageContent, ProviderError, Role,
 };
 use crate::settings::{AppSettings, ProviderConfig};
+use crate::ui_error::ui_err;
 
 /// API key 解析来源（优先级 env > dotenv > config > none）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -273,7 +274,11 @@ pub async fn providers_test_connection(
         return Ok(ProviderTestResult {
             ok: false,
             elapsed_ms: 0,
-            message: "provider 未配置或已禁用".into(),
+            message: ui_err(
+                "provider.test.notConfigured",
+                &[],
+                "provider 未配置或已禁用",
+            ),
         });
     };
 
@@ -283,7 +288,7 @@ pub async fn providers_test_connection(
             return Ok(ProviderTestResult {
                 ok: false,
                 elapsed_ms: 0,
-                message: "provider 无可用模型".into(),
+                message: ui_err("provider.test.noModels", &[], "provider 无可用模型"),
             });
         }
     };
@@ -327,22 +332,33 @@ pub async fn providers_test_connection(
         Err(_) => ProviderTestResult {
             ok: false,
             elapsed_ms,
-            message: "超时（10s）".into(),
+            message: ui_err("provider.test.timeout", &[], "超时（10s）"),
         },
     })
 }
 
-/// 把 ProviderError 翻成 UI 友好的中文提示。
+/// 把 ProviderError 翻成 UI 友好的提示（编码 + 中文兜底，界面按语言渲染）。
 ///
 /// 公开为 `pub` 以便集成测试（`tests/providers_config_integration.rs`）
 /// 能直接验证错误分类映射，而无需起 Tauri State / AppHandle。
 pub fn classify_for_user(e: &ProviderError) -> String {
     match e {
-        ProviderError::Unauthorized => "API key 无效（401/403）".into(),
-        ProviderError::RateLimited => "触发限流（429）".into(),
-        ProviderError::Http(_) | ProviderError::Timeout => format!("网络错误：{e}"),
-        ProviderError::Protocol(s) => format!("协议错误：{s}"),
-        _ => format!("{e}"),
+        ProviderError::Unauthorized => {
+            ui_err("provider.test.unauthorized", &[], "API key 无效（401/403）")
+        }
+        ProviderError::RateLimited => ui_err("provider.test.rateLimited", &[], "触发限流（429）"),
+        ProviderError::Http(inner) => ui_err(
+            "provider.test.network",
+            &[("detail", inner.to_string())],
+            format!("网络错误：{e}"),
+        ),
+        ProviderError::Timeout => ui_err("provider.test.networkTimeout", &[], "网络错误：超时"),
+        ProviderError::Protocol(s) => ui_err(
+            "provider.test.protocol",
+            &[("detail", s.clone())],
+            format!("协议错误：{s}"),
+        ),
+        _ => e.ui_message(),
     }
 }
 
@@ -350,6 +366,7 @@ pub fn classify_for_user(e: &ProviderError) -> String {
 mod tests {
     use super::*;
     use crate::settings::ProviderConfig;
+    use crate::ui_error::plain;
 
     /// 串行锁：本模块测试要改 std::env，跟 registry / settings::store 共用 ENV_LOCK。
     fn with_clean_env<F: FnOnce()>(f: F) {
@@ -513,14 +530,51 @@ mod tests {
     #[test]
     fn classify_for_user_映射() {
         assert_eq!(
-            classify_for_user(&ProviderError::Unauthorized),
+            plain(&classify_for_user(&ProviderError::Unauthorized)),
             "API key 无效（401/403）"
         );
         assert_eq!(
-            classify_for_user(&ProviderError::RateLimited),
+            plain(&classify_for_user(&ProviderError::RateLimited)),
             "触发限流（429）"
         );
-        assert!(classify_for_user(&ProviderError::Timeout).contains("网络错误"));
-        assert!(classify_for_user(&ProviderError::Protocol("xx".into())).contains("协议错误"));
+        assert_eq!(
+            plain(&classify_for_user(&ProviderError::Timeout)),
+            "网络错误：超时"
+        );
+        assert!(
+            plain(&classify_for_user(&ProviderError::Protocol("xx".into()))).contains("协议错误")
+        );
+    }
+
+    #[test]
+    fn 应该_当分类连通性测试错误时_返回对应编码与参数() {
+        let code_of = |e: &ProviderError| -> (String, serde_json::Value) {
+            let v: serde_json::Value = serde_json::from_str(&classify_for_user(e)).unwrap();
+            (v["code"].as_str().unwrap().to_string(), v["params"].clone())
+        };
+        assert_eq!(
+            code_of(&ProviderError::Unauthorized).0,
+            "provider.test.unauthorized"
+        );
+        assert_eq!(
+            code_of(&ProviderError::RateLimited).0,
+            "provider.test.rateLimited"
+        );
+        assert_eq!(
+            code_of(&ProviderError::Timeout).0,
+            "provider.test.networkTimeout"
+        );
+        let (c, p) = code_of(&ProviderError::Protocol("xx".into()));
+        assert_eq!(c, "provider.test.protocol");
+        assert_eq!(p["detail"], "xx");
+        // 其余变体沿用 ProviderError 自己的界面编码
+        assert_eq!(
+            code_of(&ProviderError::Other("y".into())).0,
+            "provider.error.other"
+        );
+        assert_eq!(
+            plain(&classify_for_user(&ProviderError::Other("y".into()))),
+            "其他: y"
+        );
     }
 }

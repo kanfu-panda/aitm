@@ -18,6 +18,7 @@
  * ========================================================================== */
 
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
+import { useTranslation } from "react-i18next";
 import type { LayoutNode, PathStep } from "../../stores/pane-layout";
 import { usePaneLayoutStore } from "../../stores/pane-layout";
 import { TerminalPaneGroup } from "./TerminalPaneGroup";
@@ -34,6 +35,7 @@ function pathKey(path: PathStep[]): string {
 }
 
 export function LayoutNodeRenderer({ node, pathFromRoot = [] }: Props) {
+  const { t } = useTranslation();
   const setRatio = usePaneLayoutStore((s) => s.setRatio);
 
   if (node.kind === "leaf") {
@@ -87,8 +89,8 @@ export function LayoutNodeRenderer({ node, pathFromRoot = [] }: Props) {
         }
         aria-label={
           node.direction === "horizontal"
-            ? "拖拽调整左右分屏比例"
-            : "拖拽调整上下分屏比例"
+            ? t("splitDivider.paneHorizontal")
+            : t("splitDivider.paneVertical")
         }
       />
       <Panel

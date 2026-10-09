@@ -44,6 +44,7 @@ import {
   projectInit,
 } from "../../../lib/tauri";
 import { useChatStore } from "../../../stores/chat";
+import i18n from "../../../lib/i18n";
 import type { AiInitRequiredEvent } from "../../../lib/tauri";
 
 const mockProjectInit = projectInit as unknown as ReturnType<typeof vi.fn>;
@@ -73,6 +74,24 @@ describe("InitProjectDialog", () => {
 
   afterEach(() => {
     vi.clearAllMocks();
+  });
+
+  // 英文界面下这个对话框仍是全中文
+  it("应该_当界面为英文时_对话框文案与读屏名称都是英文", async () => {
+    await i18n.changeLanguage("en");
+    try {
+      render(<InitProjectDialog payload={PAYLOAD} onResolved={() => {}} />);
+      expect(await screen.findByText(/Start an AI project here\?/)).toBeInTheDocument();
+      expect(screen.getByLabelText("Project name")).toBeInTheDocument();
+      expect(screen.getByLabelText("Yes, initialize as a project (recommended)")).toBeInTheDocument();
+      expect(screen.getByLabelText("No, just this once")).toBeInTheDocument();
+      expect(screen.getByLabelText("Don't ask again for this folder")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "OK" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Close AI sidebar" })).toBeInTheDocument();
+      expect(screen.queryByText(/在这里开始一个 AI 项目/)).toBeNull();
+    } finally {
+      await i18n.changeLanguage("zh-CN");
+    }
   });
 
   it("payload=null 不渲染对话框", () => {
@@ -120,11 +139,15 @@ describe("InitProjectDialog", () => {
       expect(mockProjectInit).toHaveBeenCalledWith(PAYLOAD.cwd, "myapp"),
     );
     await waitFor(() =>
-      expect(mockLoadFromScope).toHaveBeenCalledWith({
-        kind: "project",
-        uuid: "uuid-1",
-        root_path: "/Users/leo/demo/myapp",
-      }),
+      expect(mockLoadFromScope).toHaveBeenCalledWith(
+        {
+          kind: "project",
+          uuid: "uuid-1",
+          root_path: "/Users/leo/demo/myapp",
+        },
+        // 发消息途中切换作用域，必须保留正在进行的这一轮
+        { keepActive: true },
+      ),
     );
     await waitFor(() =>
       expect(mockAiChatResume).toHaveBeenCalledWith(PAYLOAD.conversation_id, {
@@ -164,7 +187,7 @@ describe("InitProjectDialog", () => {
     );
     expect(mockProjectInit).not.toHaveBeenCalled();
     expect(mockMarkIgnored).not.toHaveBeenCalled();
-    expect(mockLoadFromScope).toHaveBeenCalledWith({ kind: "global" });
+    expect(mockLoadFromScope).toHaveBeenCalledWith({ kind: "global" }, { keepActive: true });
     await waitFor(() => expect(onResolved).toHaveBeenCalledTimes(1));
   });
 
@@ -280,7 +303,7 @@ describe("applyChoice helper", () => {
     await applyChoice("temp_global", PAYLOAD, "myapp");
     expect(mockProjectInit).not.toHaveBeenCalled();
     expect(mockMarkIgnored).not.toHaveBeenCalled();
-    expect(mockLoadFromScope).toHaveBeenCalledWith({ kind: "global" });
+    expect(mockLoadFromScope).toHaveBeenCalledWith({ kind: "global" }, { keepActive: true });
     expect(mockAiChatResume).toHaveBeenCalledWith("conv-1", { kind: "global" });
   });
 
@@ -288,7 +311,7 @@ describe("applyChoice helper", () => {
     mockMarkIgnored.mockRejectedValueOnce(new Error("disk full"));
     await applyChoice("ignore", PAYLOAD, "myapp");
     expect(mockMarkIgnored).toHaveBeenCalledWith(PAYLOAD.cwd);
-    expect(mockLoadFromScope).toHaveBeenCalledWith({ kind: "global" });
+    expect(mockLoadFromScope).toHaveBeenCalledWith({ kind: "global" }, { keepActive: true });
     expect(mockAiChatResume).toHaveBeenCalledWith("conv-1", { kind: "global" });
   });
 

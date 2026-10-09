@@ -395,7 +395,7 @@ export function TerminalPaneGroup({ group }: Props) {
           >
             <span className="text-5xl font-thin">+</span>
             <span className="text-sm">
-              点击新建标签 · 或按{" "}
+              {t("paneGroup.emptyHint")}{" "}
               <kbd className="rounded bg-[var(--c-bg-elev-2)] px-1.5 py-0.5 text-xs font-mono text-[var(--c-text-muted)]">
                 ⌘T
               </kbd>
@@ -652,7 +652,7 @@ function SortableTab({
             }
           }}
           onBlur={submitEdit}
-          aria-label="标签标题"
+          aria-label={t("tabs.titleInputAria")}
           className="w-32 rounded border border-[var(--c-border-strong)] bg-[var(--c-bg-base)] px-1.5 py-0.5 font-mono text-xs text-[var(--c-text-base)] focus:border-[var(--c-text-muted)] focus:outline-none"
         />
       ) : (
@@ -669,7 +669,7 @@ function SortableTab({
       {unread > 0 && (
         <span
           className="inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-[var(--c-error)] px-1 text-[10px] font-bold leading-none text-white"
-          aria-label={`${unread} 条未读`}
+          aria-label={t("tabs.unreadAria", { count: unread })}
           data-testid={`tab-unread-badge-${tabId}`}
         >
           {unread > 99 ? "99+" : unread}
@@ -679,7 +679,7 @@ function SortableTab({
         <Bell
           size={12}
           className={notifLevelColorClass(notifLevel)}
-          aria-label={`通知：${notifLevel}`}
+          aria-label={t("tabs.notification", { level: t(`notify.level.${notifLevel}`) })}
           data-testid={`tab-bell-${tabId}`}
         />
       )}
@@ -696,7 +696,7 @@ function SortableTab({
           onClose();
         }}
         className="shrink-0 rounded px-0.5 text-[var(--c-text-dim)] hover:bg-[var(--c-bg-elev-3)] hover:text-[var(--c-text-base)]"
-        aria-label="关闭标签"
+        aria-label={t("tabs.close")}
       >
         ×
       </span>
@@ -737,6 +737,7 @@ interface EdgeDroppableProps {
 }
 
 function EdgeDroppable({ groupId, side }: EdgeDroppableProps) {
+  const { t } = useTranslation();
   const { setNodeRef, isOver } = useDroppable({
     id: `group-edge-${groupId}-${side}`,
   });
@@ -764,7 +765,7 @@ function EdgeDroppable({ groupId, side }: EdgeDroppableProps) {
       ref={setNodeRef}
       className={`${baseClass} ${positionClass} ${hoverClass}`}
       data-testid={`group-edge-${groupId}-${side}`}
-      aria-label={`拖到此处在${side === "top" ? "上" : side === "bottom" ? "下" : side === "left" ? "左" : "右"}侧拆分`}
+      aria-label={t(`paneGroup.drop${side[0].toUpperCase()}${side.slice(1)}`)}
     />
   );
 }

@@ -1,5 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
+import i18n from "../../lib/i18n";
 import ToolCallBubble, {
   formatArgsPreview,
   formatElapsed,
@@ -230,6 +231,84 @@ describe("ToolCallBubble", () => {
     });
   });
 
+  // 工具结果里 aitm 自己写的中文不随界面语言切换
+  describe("工具结果跟随界面语言", () => {
+    it("应该_当界面为英文且结果为编码字符串时_显示英文且嵌套细节也翻译", async () => {
+      await i18n.changeLanguage("en");
+      try {
+        const inner = JSON.stringify({
+          code: "blacklist.mkfs",
+          params: {},
+          message: "mkfs 格式化",
+        });
+        render(
+          <ToolCallBubble
+            entry={makeEntry({
+              status: "error",
+              result: {
+                content: JSON.stringify({
+                  code: "tool.blacklisted",
+                  params: { label: inner, cmd: "mkfs /dev/sda" },
+                  message: "L1 黑名单拦截：mkfs 格式化（命令 = mkfs /dev/sda）",
+                }),
+                is_error: true,
+              },
+            })}
+          />,
+        );
+        fireEvent.click(screen.getByTestId("tool-call-toggle"));
+        expect(
+          screen.getByText("Blocked by L1 blacklist: mkfs (formats a disk) (command = mkfs /dev/sda)"),
+        ).toBeInTheDocument();
+        expect(screen.queryByText(/黑名单拦截/)).toBeNull();
+      } finally {
+        await i18n.changeLanguage("zh-CN");
+      }
+    });
+
+    it("应该_当界面为英文且命令结果带退出码说明时_说明翻译而命令输出原样保留", async () => {
+      await i18n.changeLanguage("en");
+      try {
+        const raw = "a {{b}} $t(c)";
+        const outcome = JSON.stringify({
+          code: "tool.command.exitCode",
+          params: { code: "1" },
+          message: "[退出码: 1]",
+        });
+        const { container } = render(
+          <ToolCallBubble
+            entry={makeEntry({
+              status: "done",
+              result: {
+                content: JSON.stringify({
+                  code: "tool.command.result",
+                  params: { output: raw, outcome },
+                  message: `${raw}\n\n[退出码: 1]`,
+                }),
+                is_error: false,
+              },
+            })}
+          />,
+        );
+        fireEvent.click(screen.getByTestId("tool-call-toggle"));
+        expect(container.textContent).toContain(`${raw}\n\n[Exit code: 1]`);
+        expect(container.textContent).not.toContain("退出码");
+      } finally {
+        await i18n.changeLanguage("zh-CN");
+      }
+    });
+
+    it("应该_当结果是普通文本时_原样显示", () => {
+      render(
+        <ToolCallBubble
+          entry={makeEntry({ status: "done", result: { content: "total 0", is_error: false } })}
+        />,
+      );
+      fireEvent.click(screen.getByTestId("tool-call-toggle"));
+      expect(screen.getByText("total 0")).toBeInTheDocument();
+    });
+  });
+
   describe("auto_approved_reason 徽章", () => {
     it("有 reason → 展开后显示 emerald 徽章", () => {
       render(
@@ -246,6 +325,32 @@ describe("ToolCallBubble", () => {
       const badge = screen.getByLabelText("自动批准原因");
       expect(badge).toHaveTextContent("白名单：git status *");
       expect(badge.className).toContain("text-[var(--c-success-fg)]");
+    });
+
+    it("应该_当界面为英文且原因为编码字符串时_徽章显示英文原因", async () => {
+      await i18n.changeLanguage("en");
+      try {
+        render(
+          <ToolCallBubble
+            entry={makeEntry({
+              status: "done",
+              auto_approved_reason: JSON.stringify({
+                code: "risk.readonlyCommand",
+                params: { level: "L2", command: "ls" },
+                message: "L2：只读命令 ls",
+              }),
+              result: { content: "ok", is_error: false },
+            })}
+          />,
+        );
+        fireEvent.click(screen.getByTestId("tool-call-toggle"));
+        const badge = screen.getByLabelText("Auto-approval reason");
+        expect(badge).toHaveTextContent("L2: read-only command ls");
+        expect(badge).not.toHaveTextContent("只读命令");
+        expect(badge).toHaveAttribute("title", "L2: read-only command ls");
+      } finally {
+        await i18n.changeLanguage("zh-CN");
+      }
     });
 
     it("无 reason 不渲染徽章", () => {

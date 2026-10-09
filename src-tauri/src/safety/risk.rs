@@ -16,6 +16,7 @@
 //! 是否弹窗）。即使一个命令同时命中 L1 + L2.DESTRUCTIVE，也是 L1 优先。
 
 use crate::tools::RiskClass;
+use crate::ui_error::ui_err;
 use once_cell::sync::Lazy;
 use regex::Regex;
 
@@ -23,71 +24,89 @@ use regex::Regex;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RiskAssessment {
     pub risk: RiskClass,
-    /// 为什么得到这个 risk。例如 "sudo 提权" / "只读命令 ls" / "默认 HIGH"。
+    /// 为什么得到这个 risk，已含 "L2：" 前缀，是 [`ui_err`] 编码字符串（界面按语言显示）。
+    /// 中文原文用 [`crate::ui_error::plain`] 取回，例如 "L2：DESTRUCTIVE：sudo 提权" /
+    /// "L2：只读命令 ls"。给大模型 / 日志的场合务必先 `plain`。
     pub reason: String,
 }
 
 /// DESTRUCTIVE 模式表。命中任一即升 Destructive。
 ///
+/// 每项三元组：正则、原因编码（对应语言包 `backendErrors.risk.*`）、中文标签（兜底文案用）。
+///
 /// 写法约定：
 /// - 命令名前后用 `\b` 锚定，防 `sudoku` 误判
 /// - 大小写敏感的 cmd 名（sudo/chmod 等）保持小写
 /// - SQL drop 等可能大小写混用的用 `(?i)` 前缀
-static DESTRUCTIVE_PATTERNS: Lazy<Vec<(Regex, &'static str)>> = Lazy::new(|| {
+static DESTRUCTIVE_PATTERNS: Lazy<Vec<(Regex, &'static str, &'static str)>> = Lazy::new(|| {
     vec![
         // 提权
-        (Regex::new(r"\bsudo\b").unwrap(), "sudo 提权"),
-        (Regex::new(r"\bdoas\b").unwrap(), "doas 提权"),
+        (Regex::new(r"\bsudo\b").unwrap(), "risk.sudo", "sudo 提权"),
+        (Regex::new(r"\bdoas\b").unwrap(), "risk.doas", "doas 提权"),
         // 开放写权限：chmod 777 / 666 / a+w（含可选 -R）
         (
             Regex::new(r"\bchmod\s+(-R\s+)?(777|666|a\+w)\b").unwrap(),
+            "risk.chmodOpen",
             "chmod 开放写权限",
         ),
         // 递归改 owner
         (
             Regex::new(r"\bchown\s+-R\b").unwrap(),
+            "risk.chownRecursive",
             "chown -R 递归改 owner",
         ),
         // git 强推
         (
             Regex::new(r"\bgit\s+push\s+(.*--force\b|.*-f\b)").unwrap(),
+            "risk.gitForcePush",
             "git push --force 强推",
         ),
         // git 强重置 / 强清理
         (
             Regex::new(r"\bgit\s+(reset\s+--hard|clean\s+-[a-zA-Z]*f)").unwrap(),
+            "risk.gitHardReset",
             "git reset --hard / clean -f",
         ),
         // SQL 删库删表（大小写不敏感）
         (
             Regex::new(r"(?i)\bdrop\s+(table|database|schema)\b").unwrap(),
+            "risk.sqlDrop",
             "SQL drop 删表/库",
         ),
         // kubectl 删 k8s 资源
         (
             Regex::new(r"\bkubectl\s+delete\b").unwrap(),
+            "risk.kubectlDelete",
             "kubectl delete",
         ),
         // docker 清容器/镜像
         (
             Regex::new(r"\bdocker\s+(rm\b|rmi\b|system\s+prune\b)").unwrap(),
+            "risk.dockerRemove",
             "docker rm/rmi/prune",
         ),
         // killall -9 / kill -9
-        (Regex::new(r"\bkill(all)?\s+-9\b").unwrap(), "kill -9 强杀"),
+        (
+            Regex::new(r"\bkill(all)?\s+-9\b").unwrap(),
+            "risk.killForce",
+            "kill -9 强杀",
+        ),
         // 包发布（npm / cargo / pnpm publish）
         (
             Regex::new(r"\b(npm|cargo|pnpm)\s+publish\b").unwrap(),
+            "risk.packagePublish",
             "包发布 publish",
         ),
         // 重定向到系统目录
         (
             Regex::new(r">\s*(/etc/|~/\.ssh/|/usr/|/var/|/boot/)").unwrap(),
+            "risk.redirectSystemDir",
             "重定向到系统目录",
         ),
         // find 搭配 -delete / -exec rm
         (
             Regex::new(r"\bfind\b.*\s(-delete\b|-exec\s+rm\b)").unwrap(),
+            "risk.findDelete",
             "find -delete / -exec rm",
         ),
     ]
@@ -195,16 +214,29 @@ fn has_dangerous_metachar(cmd: &str) -> bool {
     false
 }
 
+/// 只读命令的原因编码字符串。
+fn readonly_reason(command: &str) -> String {
+    ui_err(
+        "risk.readonlyCommand",
+        &[("level", "L2".into()), ("command", command.to_string())],
+        format!("L2：只读命令 {command}"),
+    )
+}
+
 /// 静态分级一条 cmd。空字符串 / 全空白 → HIGH（默认）。
 pub fn classify(cmd: &str) -> RiskAssessment {
     let trimmed = cmd.trim();
 
     // 1. DESTRUCTIVE 优先匹配
-    for (re, label) in DESTRUCTIVE_PATTERNS.iter() {
+    for (re, code, label) in DESTRUCTIVE_PATTERNS.iter() {
         if re.is_match(trimmed) {
             return RiskAssessment {
                 risk: RiskClass::Destructive,
-                reason: format!("DESTRUCTIVE：{label}"),
+                reason: ui_err(
+                    code,
+                    &[("level", "L2".into())],
+                    format!("L2：DESTRUCTIVE：{label}"),
+                ),
             };
         }
     }
@@ -221,7 +253,7 @@ pub fn classify(cmd: &str) -> RiskAssessment {
             if LOW_DOUBLE_PREFIXES.iter().any(|p| *p == two) {
                 return RiskAssessment {
                     risk: RiskClass::Low,
-                    reason: format!("只读命令 {two}"),
+                    reason: readonly_reason(&two),
                 };
             }
         }
@@ -230,7 +262,7 @@ pub fn classify(cmd: &str) -> RiskAssessment {
         if LOW_SINGLE_PREFIXES.contains(&first) {
             return RiskAssessment {
                 risk: RiskClass::Low,
-                reason: format!("只读命令 {first}"),
+                reason: readonly_reason(first),
             };
         }
     }
@@ -238,13 +270,18 @@ pub fn classify(cmd: &str) -> RiskAssessment {
     // 3. 默认 HIGH
     RiskAssessment {
         risk: RiskClass::High,
-        reason: "默认（无明显风险信号 / 无明显安全信号）".to_string(),
+        reason: ui_err(
+            "risk.defaultHigh",
+            &[("level", "L2".into())],
+            "L2：默认（无明显风险信号 / 无明显安全信号）",
+        ),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ui_error::plain;
 
     fn classify_risk(cmd: &str) -> RiskClass {
         classify(cmd).risk
@@ -259,7 +296,7 @@ mod tests {
         let r = classify("sudo rm -rf /tmp/foo");
         assert_eq!(r.risk, RiskClass::Destructive);
         assert!(
-            r.reason.contains("sudo"),
+            plain(&r.reason).contains("sudo"),
             "reason 应说明 sudo: {}",
             r.reason
         );
@@ -488,7 +525,11 @@ mod tests {
         assert_eq!(classify_risk("ls /tmp"), RiskClass::Low);
         let r = classify("ls -la /home");
         assert_eq!(r.risk, RiskClass::Low);
-        assert!(r.reason.contains("ls"), "reason 应含 ls: {}", r.reason);
+        assert!(
+            plain(&r.reason).contains("ls"),
+            "reason 应含 ls: {}",
+            r.reason
+        );
     }
 
     #[test]
@@ -626,7 +667,7 @@ mod tests {
         let r = classify("some-random-tool --flag");
         assert_eq!(r.risk, RiskClass::High);
         assert!(
-            r.reason.contains("默认") || r.reason.contains("HIGH"),
+            plain(&r.reason).contains("默认") || plain(&r.reason).contains("HIGH"),
             "默认 reason: {}",
             r.reason
         );
@@ -670,28 +711,135 @@ mod tests {
     #[test]
     fn destructive_reason_含模式标签() {
         let r = classify("sudo rm -rf /tmp/foo");
-        assert!(r.reason.contains("sudo"), "{}", r.reason);
+        assert!(plain(&r.reason).contains("sudo"), "{}", r.reason);
 
         let r = classify("git push --force");
-        assert!(r.reason.contains("强推") || r.reason.contains("force"));
+        assert!(plain(&r.reason).contains("强推") || plain(&r.reason).contains("force"));
 
         let r = classify("kubectl delete pod x");
-        assert!(r.reason.contains("kubectl"));
+        assert!(plain(&r.reason).contains("kubectl"));
     }
 
     #[test]
     fn low_reason_含命令名() {
         let r = classify("git status");
-        assert!(r.reason.contains("git status"), "{}", r.reason);
+        assert!(plain(&r.reason).contains("git status"), "{}", r.reason);
 
         let r = classify("cat foo");
-        assert!(r.reason.contains("cat"), "{}", r.reason);
+        assert!(plain(&r.reason).contains("cat"), "{}", r.reason);
     }
 
     #[test]
     fn high_reason_含默认字眼() {
         let r = classify("some-tool foo");
-        assert!(r.reason.contains("默认"), "{}", r.reason);
+        assert!(plain(&r.reason).contains("默认"), "{}", r.reason);
+    }
+
+    // ===== 原因编码（界面多语言）=====
+
+    fn coded(reason: &str) -> serde_json::Value {
+        serde_json::from_str(reason).expect("reason 应为 ui_err 编码字符串")
+    }
+
+    #[test]
+    fn 应该_当命令含_sudo_时_原因编码为_risk_sudo_且中文兜底不变() {
+        let r = classify("sudo rm -rf /tmp/foo");
+        let v = coded(&r.reason);
+        assert_eq!(v["code"], "risk.sudo");
+        assert_eq!(v["params"]["level"], "L2");
+        assert_eq!(plain(&r.reason), "L2：DESTRUCTIVE：sudo 提权");
+    }
+
+    #[test]
+    fn 应该_当命令为只读命令时_原因编码带命令名参数() {
+        let r = classify("git status");
+        let v = coded(&r.reason);
+        assert_eq!(v["code"], "risk.readonlyCommand");
+        assert_eq!(v["params"]["level"], "L2");
+        assert_eq!(v["params"]["command"], "git status");
+        assert_eq!(plain(&r.reason), "L2：只读命令 git status");
+    }
+
+    #[test]
+    fn 应该_当命令无风险信号时_原因编码为_risk_default_high() {
+        let r = classify("some-tool foo");
+        assert_eq!(coded(&r.reason)["code"], "risk.defaultHigh");
+        assert_eq!(
+            plain(&r.reason),
+            "L2：默认（无明显风险信号 / 无明显安全信号）"
+        );
+    }
+
+    #[test]
+    fn 应该_当使用破坏性模式时_每个模式都有独立编码与不变的中文原因() {
+        let cases = [
+            ("sudo ls", "risk.sudo", "sudo 提权"),
+            ("doas ls", "risk.doas", "doas 提权"),
+            ("chmod 777 a", "risk.chmodOpen", "chmod 开放写权限"),
+            (
+                "chown -R a b",
+                "risk.chownRecursive",
+                "chown -R 递归改 owner",
+            ),
+            ("git push -f", "risk.gitForcePush", "git push --force 强推"),
+            (
+                "git reset --hard",
+                "risk.gitHardReset",
+                "git reset --hard / clean -f",
+            ),
+            ("drop table x", "risk.sqlDrop", "SQL drop 删表/库"),
+            (
+                "kubectl delete pod x",
+                "risk.kubectlDelete",
+                "kubectl delete",
+            ),
+            ("docker rm x", "risk.dockerRemove", "docker rm/rmi/prune"),
+            ("kill -9 1", "risk.killForce", "kill -9 强杀"),
+            ("npm publish", "risk.packagePublish", "包发布 publish"),
+            (
+                "echo a > /etc/x",
+                "risk.redirectSystemDir",
+                "重定向到系统目录",
+            ),
+            (
+                "find . -delete",
+                "risk.findDelete",
+                "find -delete / -exec rm",
+            ),
+        ];
+        assert_eq!(
+            cases.len(),
+            DESTRUCTIVE_PATTERNS.len(),
+            "用例应覆盖全部模式"
+        );
+        for (cmd, code, label) in cases {
+            let r = classify(cmd);
+            assert_eq!(coded(&r.reason)["code"], code, "{cmd}");
+            assert_eq!(
+                plain(&r.reason),
+                format!("L2：DESTRUCTIVE：{label}"),
+                "{cmd}"
+            );
+        }
+    }
+
+    /// 表驱动的编码在源码里不是调用处的字符串字面量，通用的语言包检查扫不到，这里补上。
+    #[test]
+    fn 应该_当风险原因编码存在时_三种语言包都有对应文案() {
+        let mut codes: Vec<&str> = DESTRUCTIVE_PATTERNS.iter().map(|(_, c, _)| *c).collect();
+        codes.extend(["risk.readonlyCommand", "risk.defaultHigh"]);
+        let locales = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../src/locales");
+        for lang in ["zh-CN", "en", "ja"] {
+            let raw = std::fs::read_to_string(locales.join(format!("{lang}.json"))).unwrap();
+            let v: serde_json::Value = serde_json::from_str(&raw).unwrap();
+            for code in &codes {
+                let key = code.strip_prefix("risk.").unwrap();
+                assert!(
+                    v["backendErrors"]["risk"][key].is_string(),
+                    "{lang} 缺 backendErrors.{code}"
+                );
+            }
+        }
     }
 
     // ===== 大小写敏感性 =====

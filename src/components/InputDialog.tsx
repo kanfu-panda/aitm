@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { requestTerminalFocus } from "../lib/terminalFocus";
 import { useBrowserModalGuard } from "../lib/useBrowserModalGuard";
+import { formatBackendError } from "../lib/backendError";
 
 interface Props {
   /** 受控开关。null = 关闭；非空对象 = 打开（含初始值 + 标题）。 */
@@ -87,7 +88,7 @@ export default function InputDialog({ open, onClose }: Props) {
       submittedRef.current = true;
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(formatBackendError(err));
       setSubmitting(false);
     }
   };

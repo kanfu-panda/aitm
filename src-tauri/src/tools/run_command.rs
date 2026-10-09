@@ -46,6 +46,7 @@ use serde_json::{Value, json};
 use super::ansi::strip_for_llm;
 use super::{RiskClass, Tool, ToolContext, ToolError, ToolResult};
 use crate::session::sentinel;
+use crate::ui_error::ui_err;
 
 /// 等命令结束的最长时间。超时不谎报失败，而是明确告诉 AI"仍在运行"。
 ///
@@ -90,7 +91,11 @@ fn resolve_session_id(arg: Option<&str>, ctx: &ToolContext) -> Result<String, To
     let needs_fallback = matches!(trimmed, "" | "current" | "default" | "active" | "main");
     if needs_fallback {
         return ctx.active_session_id.clone().ok_or_else(|| {
-            ToolError::SessionNotFound("无活跃 tab —— 用户需要先打开一个终端 tab".into())
+            ToolError::SessionNotFound(ui_err(
+                "tool.command.noActiveTab",
+                &[],
+                "无活跃 tab —— 用户需要先打开一个终端 tab",
+            ))
         });
     }
     Ok(trimmed.to_string())
@@ -142,38 +147,79 @@ fn decide_mode(hook_ready: bool, posix_shell: bool) -> ExecMode {
 /// - 超时 → "仍在运行中"，且**绝不**编造退出码
 /// - 不支持 → 明说"退出码未知"
 fn build_content(output: &str, outcome: CmdOutcome, truncated: bool) -> String {
-    let mut parts: Vec<String> = Vec::new();
+    use crate::ui_error::{plain, ui_err};
 
-    if output.trim().is_empty() {
-        parts.push("[命令无输出]".to_string());
+    // 各段说明都编码，界面按语言显示；message 拼出的中文与原来逐字一致，供模型使用
+    // 命令输出是外部数据，原样作参数；给模型的文字也直接用原文，不经 plain() 以免被误解析
+    let (output_part, output_text) = if output.trim().is_empty() {
+        (
+            ui_err("tool.command.noOutput", &[], "[命令无输出]"),
+            "[命令无输出]".to_string(),
+        )
     } else {
-        parts.push(output.trim_end().to_string());
-    }
+        let t = output.trim_end().to_string();
+        (t.clone(), t)
+    };
+
+    let outcome_part = match outcome {
+        CmdOutcome::Finished(code) => ui_err(
+            "tool.command.exitCode",
+            &[("code", code.to_string())],
+            format!("[退出码: {code}]"),
+        ),
+        CmdOutcome::Timeout => {
+            let secs = MAX_WAIT.as_secs();
+            ui_err(
+                "tool.command.stillRunning",
+                &[("secs", secs.to_string())],
+                format!(
+                    "[命令仍在运行中，已等待 {secs}s；输出可能不完整，可稍后再调 get_terminal_history 查看]"
+                ),
+            )
+        }
+        CmdOutcome::Unknown => {
+            let secs = LEGACY_BLIND_WAIT.as_secs();
+            ui_err(
+                "tool.command.noExitDetection",
+                &[("secs", secs.to_string())],
+                format!(
+                    "[当前 shell 不支持命令结束检测，已等待 {secs}s；退出码未知，输出可能不完整]"
+                ),
+            )
+        }
+        CmdOutcome::HookLost => {
+            let secs = HOOK_GRACE.as_secs();
+            ui_err(
+                "tool.command.hookLost",
+                &[("secs", secs.to_string())],
+                format!(
+                    "[终端 shell 钩子未生效，本次退出码未知（已等待 {secs}s，输出可能不完整）；\
+                     已自动降级为兼容模式，下一条命令起会重新带回退出码]"
+                ),
+            )
+        }
+    };
 
     if truncated {
-        parts.push(format!(
-            "[输出过长已截断到前 {MAX_OUTPUT_BYTES} 字节；输出可能未完整]"
-        ));
+        let note = format!("[输出过长已截断到前 {MAX_OUTPUT_BYTES} 字节；输出可能未完整]");
+        let message = [output_text, note, plain(&outcome_part)].join("\n\n");
+        ui_err(
+            "tool.command.resultTruncated",
+            &[
+                ("output", output_part),
+                ("maxBytes", MAX_OUTPUT_BYTES.to_string()),
+                ("outcome", outcome_part),
+            ],
+            message,
+        )
+    } else {
+        let message = [output_text, plain(&outcome_part)].join("\n\n");
+        ui_err(
+            "tool.command.result",
+            &[("output", output_part), ("outcome", outcome_part)],
+            message,
+        )
     }
-
-    match outcome {
-        CmdOutcome::Finished(code) => parts.push(format!("[退出码: {code}]")),
-        CmdOutcome::Timeout => parts.push(format!(
-            "[命令仍在运行中，已等待 {}s；输出可能不完整，可稍后再调 get_terminal_history 查看]",
-            MAX_WAIT.as_secs()
-        )),
-        CmdOutcome::Unknown => parts.push(format!(
-            "[当前 shell 不支持命令结束检测，已等待 {}s；退出码未知，输出可能不完整]",
-            LEGACY_BLIND_WAIT.as_secs()
-        )),
-        CmdOutcome::HookLost => parts.push(format!(
-            "[终端 shell 钩子未生效，本次退出码未知（已等待 {}s，输出可能不完整）；\
-             已自动降级为兼容模式，下一条命令起会重新带回退出码]",
-            HOOK_GRACE.as_secs()
-        )),
-    }
-
-    parts.join("\n\n")
 }
 
 /// 轮询 ring buffer 等 sentinel 出现，拿到退出码。
@@ -312,8 +358,13 @@ impl Tool for RunCommandTool {
     }
 
     async fn execute(&self, args: Value, ctx: &ToolContext) -> Result<ToolResult, ToolError> {
-        let parsed: Args = serde_json::from_value(args)
-            .map_err(|e| ToolError::InvalidArgs(format!("run_command 参数: {e}")))?;
+        let parsed: Args = serde_json::from_value(args).map_err(|e| {
+            ToolError::InvalidArgs(ui_err(
+                "tool.command.invalidArgs",
+                &[("error", e.to_string())],
+                format!("run_command 参数: {e}"),
+            ))
+        })?;
 
         // 命令不能含换行符（一行一条）
         if parsed.cmd.contains('\n') {
@@ -372,7 +423,13 @@ impl Tool for RunCommandTool {
         ctx.session_state
             .write_input(&session_id, payload.as_bytes())
             .await
-            .map_err(|e| ToolError::Exec(format!("写入 PTY 失败: {e}")))?;
+            .map_err(|e| {
+                ToolError::Exec(ui_err(
+                    "tool.command.writePtyFailed",
+                    &[("error", e.to_string())],
+                    format!("写入 PTY 失败: {e}"),
+                ))
+            })?;
 
         let outcome = match mode {
             ExecMode::Hook => {
@@ -579,7 +636,7 @@ mod tests {
     /// fallback 链的措辞：钩子没生效时**绝不编造退出码**，并说明已降级。
     #[test]
     fn 钩子失效的措辞_不编造退出码且说明已降级() {
-        let c = build_content("out", CmdOutcome::HookLost, false);
+        let c = crate::ui_error::plain(&build_content("out", CmdOutcome::HookLost, false));
         assert!(!c.contains("[退出码: "), "不能编造退出码：{c}");
         assert!(c.contains("退出码未知"), "实际：{c}");
         assert!(c.contains("降级"), "要告诉 AI 已自动降级：{c}");
@@ -631,20 +688,24 @@ mod tests {
 
     #[test]
     fn 退出码_0_明确写进给_llm_的内容() {
-        let c = build_content("file.txt", CmdOutcome::Finished(0), false);
+        let c = crate::ui_error::plain(&build_content("file.txt", CmdOutcome::Finished(0), false));
         assert!(c.contains("file.txt"));
         assert!(c.contains("[退出码: 0]"), "实际：{c}");
     }
 
     #[test]
     fn 非_0_退出码同样明确标出() {
-        let c = build_content("ls: no such file", CmdOutcome::Finished(2), false);
+        let c = crate::ui_error::plain(&build_content(
+            "ls: no such file",
+            CmdOutcome::Finished(2),
+            false,
+        ));
         assert!(c.contains("[退出码: 2]"), "实际：{c}");
     }
 
     #[test]
     fn 无输出但有退出码_不再谎报_5_秒无输出() {
-        let c = build_content("", CmdOutcome::Finished(0), false);
+        let c = crate::ui_error::plain(&build_content("", CmdOutcome::Finished(0), false));
         assert!(c.contains("[退出码: 0]"), "实际：{c}");
         assert!(c.contains("无输出"), "实际：{c}");
         assert!(!c.contains("5 秒"), "已不是盲等 5 秒的语义：{c}");
@@ -652,7 +713,11 @@ mod tests {
 
     #[test]
     fn 超时路径标注仍在运行而不是失败() {
-        let c = build_content("Collecting numpy", CmdOutcome::Timeout, false);
+        let c = crate::ui_error::plain(&build_content(
+            "Collecting numpy",
+            CmdOutcome::Timeout,
+            false,
+        ));
         assert!(c.contains("Collecting numpy"));
         assert!(c.contains("仍在运行"), "实际：{c}");
         assert!(
@@ -664,14 +729,57 @@ mod tests {
 
     #[test]
     fn 不支持的_shell_明确说明退出码未知() {
-        let c = build_content("out", CmdOutcome::Unknown, false);
+        let c = crate::ui_error::plain(&build_content("out", CmdOutcome::Unknown, false));
         assert!(c.contains("退出码未知"), "实际：{c}");
         assert!(!c.contains("[退出码: "), "不能编造退出码：{c}");
     }
 
+    // 命令结果里 aitm 附加的说明（无输出 / 退出码 / 超时 / 截断）跟随界面语言
+    #[test]
+    fn 应该_当命令有输出且正常结束时_输出原样作参数_退出码为嵌套编码() {
+        let c = build_content("file.txt\n", CmdOutcome::Finished(2), false);
+        let v: serde_json::Value = serde_json::from_str(&c).unwrap();
+        assert_eq!(v["code"], "tool.command.result");
+        assert_eq!(v["params"]["output"], "file.txt");
+        let o: serde_json::Value =
+            serde_json::from_str(v["params"]["outcome"].as_str().unwrap()).unwrap();
+        assert_eq!(o["code"], "tool.command.exitCode");
+        assert_eq!(o["params"]["code"], "2");
+        assert_eq!(crate::ui_error::plain(&c), "file.txt\n\n[退出码: 2]");
+    }
+
+    #[test]
+    fn 应该_当无输出且截断且超时时_各段都编码且中文与原来逐字一致() {
+        let c = build_content("  ", CmdOutcome::Timeout, true);
+        let v: serde_json::Value = serde_json::from_str(&c).unwrap();
+        assert_eq!(v["code"], "tool.command.resultTruncated");
+        assert_eq!(v["params"]["maxBytes"], MAX_OUTPUT_BYTES.to_string());
+        let out: serde_json::Value =
+            serde_json::from_str(v["params"]["output"].as_str().unwrap()).unwrap();
+        assert_eq!(out["code"], "tool.command.noOutput");
+        let o: serde_json::Value =
+            serde_json::from_str(v["params"]["outcome"].as_str().unwrap()).unwrap();
+        assert_eq!(o["code"], "tool.command.stillRunning");
+        assert_eq!(
+            crate::ui_error::plain(&c),
+            format!(
+                "[命令无输出]\n\n[输出过长已截断到前 {MAX_OUTPUT_BYTES} 字节；输出可能未完整]\n\n\
+                 [命令仍在运行中，已等待 {}s；输出可能不完整，可稍后再调 get_terminal_history 查看]",
+                MAX_WAIT.as_secs()
+            )
+        );
+    }
+
+    #[test]
+    fn 应该_当命令输出本身形似编码串时_模型收到的仍是原始输出() {
+        let raw = r#"{"code":"x","params":{},"message":"y"}"#;
+        let c = build_content(raw, CmdOutcome::Finished(0), false);
+        assert_eq!(crate::ui_error::plain(&c), format!("{raw}\n\n[退出码: 0]"));
+    }
+
     #[test]
     fn 截断标注与退出码可以并存() {
-        let c = build_content("xxx", CmdOutcome::Finished(1), true);
+        let c = crate::ui_error::plain(&build_content("xxx", CmdOutcome::Finished(1), true));
         assert!(c.contains("截断"), "实际：{c}");
         assert!(c.contains("[退出码: 1]"), "实际：{c}");
     }
@@ -710,6 +818,39 @@ mod tests {
 
         // 黑名单同理：拦的是原始命令文本
         assert!(crate::safety::blacklist::is_blacklisted("rm -rf /").is_some());
+    }
+
+    /// 解析编码字符串，返回 (code, params)。
+    fn parse_code(s: &str) -> (String, serde_json::Value) {
+        let v: serde_json::Value =
+            serde_json::from_str(s).unwrap_or_else(|_| panic!("不是编码串：{s}"));
+        (v["code"].as_str().unwrap().to_string(), v["params"].clone())
+    }
+
+    #[test]
+    fn 应该_当无活跃_tab时_返回编码化的会话错误() {
+        let ctx = make_ctx();
+        let Err(ToolError::SessionNotFound(s)) = resolve_session_id(None, &ctx) else {
+            panic!("应返回 SessionNotFound");
+        };
+        let (code, _) = parse_code(&s);
+        assert_eq!(code, "tool.command.noActiveTab");
+        assert_eq!(
+            crate::ui_error::plain(&s),
+            "无活跃 tab —— 用户需要先打开一个终端 tab"
+        );
+    }
+
+    #[tokio::test]
+    async fn 应该_当参数缺字段时_返回编码化的参数错误() {
+        let ctx = make_ctx();
+        let Err(ToolError::InvalidArgs(s)) = RunCommandTool.execute(json!({}), &ctx).await else {
+            panic!("应返回 InvalidArgs");
+        };
+        let (code, params) = parse_code(&s);
+        assert_eq!(code, "tool.command.invalidArgs");
+        assert!(params["error"].as_str().is_some_and(|e| e.contains("cmd")));
+        assert!(crate::ui_error::plain(&s).starts_with("run_command 参数: "));
     }
 }
 

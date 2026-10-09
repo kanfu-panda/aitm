@@ -11,6 +11,7 @@ use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
 use super::{RiskClass, Tool, ToolContext, ToolError, ToolPreview, ToolResult};
+use crate::ui_error::ui_err;
 
 pub struct EditFileTool;
 
@@ -63,28 +64,45 @@ impl Tool for EditFileTool {
     }
 
     async fn execute(&self, args: Value, ctx: &ToolContext) -> Result<ToolResult, ToolError> {
-        let parsed: Args = serde_json::from_value(args)
-            .map_err(|e| ToolError::InvalidArgs(format!("edit_file 参数: {e}")))?;
+        let parsed: Args = serde_json::from_value(args).map_err(|e| {
+            ToolError::InvalidArgs(ui_err(
+                "tool.file.argsParse",
+                &[("tool", "edit_file".into()), ("error", e.to_string())],
+                format!("edit_file 参数: {e}"),
+            ))
+        })?;
 
         let target = resolve_sandboxed_existing(&parsed.path, &ctx.cwd)?;
 
-        let original = tokio::fs::read_to_string(&target)
-            .await
-            .map_err(|e| ToolError::Exec(format!("读文件失败: {e}")))?;
+        let original = tokio::fs::read_to_string(&target).await.map_err(|e| {
+            ToolError::Exec(ui_err(
+                "tool.file.readFailed",
+                &[("error", e.to_string())],
+                format!("读文件失败: {e}"),
+            ))
+        })?;
 
         let replace_all = parsed.replace_all.unwrap_or(false);
         let count = original.matches(parsed.old_string.as_str()).count();
 
         if count == 0 {
             return Ok(ToolResult {
-                content: "未找到匹配：old_string 未在文件中出现".into(),
+                content: ui_err(
+                    "tool.file.noMatch",
+                    &[],
+                    "未找到匹配：old_string 未在文件中出现",
+                ),
                 is_error: true,
             });
         }
         if count > 1 && !replace_all {
             return Ok(ToolResult {
-                content: format!(
-                    "old_string 不唯一（出现 {count} 次），请扩大上下文或传 replace_all=true"
+                content: ui_err(
+                    "tool.file.notUnique",
+                    &[("count", count.to_string())],
+                    format!(
+                        "old_string 不唯一（出现 {count} 次），请扩大上下文或传 replace_all=true"
+                    ),
                 ),
                 is_error: true,
             });
@@ -96,12 +114,23 @@ impl Tool for EditFileTool {
             original.replacen(&parsed.old_string, &parsed.new_string, 1)
         };
 
-        tokio::fs::write(&target, &updated)
-            .await
-            .map_err(|e| ToolError::Exec(format!("写文件失败: {e}")))?;
+        tokio::fs::write(&target, &updated).await.map_err(|e| {
+            ToolError::Exec(ui_err(
+                "tool.file.writeFailed",
+                &[("error", e.to_string())],
+                format!("写文件失败: {e}"),
+            ))
+        })?;
 
         Ok(ToolResult {
-            content: format!("已在 {} 替换 {count} 处", target.display()),
+            content: ui_err(
+                "tool.file.replaced",
+                &[
+                    ("path", target.display().to_string()),
+                    ("count", count.to_string()),
+                ],
+                format!("已在 {} 替换 {count} 处", target.display()),
+            ),
             is_error: false,
         })
     }
@@ -131,16 +160,28 @@ impl Tool for EditFileTool {
 /// 同 read_file 的 canonicalize + starts_with 范式。只读，无副作用。
 fn resolve_sandboxed_existing(raw_path: &str, cwd: &Path) -> Result<PathBuf, ToolError> {
     let resolved = resolve_path(raw_path, cwd);
-    let canonical_cwd = cwd
-        .canonicalize()
-        .map_err(|e| ToolError::Exec(format!("cwd 不存在: {e}")))?;
-    let canonical_target = resolved
-        .canonicalize()
-        .map_err(|e| ToolError::Exec(format!("文件不存在: {e}")))?;
+    let canonical_cwd = cwd.canonicalize().map_err(|e| {
+        ToolError::Exec(ui_err(
+            "tool.file.cwdMissing",
+            &[("error", e.to_string())],
+            format!("cwd 不存在: {e}"),
+        ))
+    })?;
+    let canonical_target = resolved.canonicalize().map_err(|e| {
+        ToolError::Exec(ui_err(
+            "tool.file.notFound",
+            &[("error", e.to_string())],
+            format!("文件不存在: {e}"),
+        ))
+    })?;
 
     if !canonical_target.starts_with(&canonical_cwd) {
         return Err(ToolError::Blocked {
-            reason: format!("路径越界沙盒（不在 {} 内）", canonical_cwd.display()),
+            reason: ui_err(
+                "tool.file.outOfSandbox",
+                &[("cwd", canonical_cwd.display().to_string())],
+                format!("路径越界沙盒（不在 {} 内）", canonical_cwd.display()),
+            ),
         });
     }
     Ok(canonical_target)
@@ -303,5 +344,132 @@ mod tests {
             std::fs::read_to_string(dir.path().join("a.txt")).unwrap(),
             "hello world"
         );
+    }
+
+    #[tokio::test]
+    async fn 应该_当替换成功时_返回带编码的结果且还原为中文() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(dir.path().join("a.txt"), "hello world").unwrap();
+        let ctx = make_ctx(dir.path().to_path_buf());
+        let r = EditFileTool
+            .execute(
+                json!({ "path": "a.txt", "old_string": "world", "new_string": "rust" }),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        let (code, params) = crate::tools::decode_ui_err(&r.content);
+        assert_eq!(code, "tool.file.replaced");
+        assert_eq!(params["count"], "1");
+        assert!(params["path"].as_str().unwrap().ends_with("a.txt"));
+        let target = dir.path().join("a.txt").canonicalize().unwrap();
+        assert_eq!(
+            crate::ui_error::plain(&r.content),
+            format!("已在 {} 替换 1 处", target.display())
+        );
+    }
+
+    #[tokio::test]
+    async fn 应该_当找不到匹配时_返回带编码的错误且还原为中文() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(dir.path().join("a.txt"), "hello").unwrap();
+        let ctx = make_ctx(dir.path().to_path_buf());
+        let r = EditFileTool
+            .execute(
+                json!({ "path": "a.txt", "old_string": "nope", "new_string": "x" }),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        let (code, _) = crate::tools::decode_ui_err(&r.content);
+        assert_eq!(code, "tool.file.noMatch");
+        assert_eq!(
+            crate::ui_error::plain(&r.content),
+            "未找到匹配：old_string 未在文件中出现"
+        );
+    }
+
+    #[tokio::test]
+    async fn 应该_当匹配不唯一时_返回带次数的编码且还原为中文() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(dir.path().join("a.txt"), "foo foo foo").unwrap();
+        let ctx = make_ctx(dir.path().to_path_buf());
+        let r = EditFileTool
+            .execute(
+                json!({ "path": "a.txt", "old_string": "foo", "new_string": "bar" }),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        let (code, params) = crate::tools::decode_ui_err(&r.content);
+        assert_eq!(code, "tool.file.notUnique");
+        assert_eq!(params["count"], "3");
+        assert_eq!(
+            crate::ui_error::plain(&r.content),
+            "old_string 不唯一（出现 3 次），请扩大上下文或传 replace_all=true"
+        );
+    }
+
+    #[tokio::test]
+    async fn 应该_当文件不存在时_错误细节带编码() {
+        let dir = TempDir::new().unwrap();
+        let ctx = make_ctx(dir.path().to_path_buf());
+        let e = EditFileTool
+            .execute(
+                json!({ "path": "nope.txt", "old_string": "a", "new_string": "b" }),
+                &ctx,
+            )
+            .await
+            .unwrap_err();
+        let ToolError::Exec(d) = e else {
+            panic!("应是 Exec")
+        };
+        assert_eq!(crate::tools::decode_ui_err(&d).0, "tool.file.notFound");
+        assert!(crate::ui_error::plain(&d).starts_with("文件不存在: "));
+    }
+
+    #[tokio::test]
+    async fn 应该_当路径越界时_原因带编码且还原为中文() {
+        let dir = TempDir::new().unwrap();
+        let outside = TempDir::new().unwrap();
+        std::fs::write(outside.path().join("s.txt"), "x").unwrap();
+        let ctx = make_ctx(dir.path().to_path_buf());
+        let e = EditFileTool
+            .execute(
+                json!({
+                    "path": outside.path().join("s.txt").to_string_lossy(),
+                    "old_string": "x",
+                    "new_string": "y"
+                }),
+                &ctx,
+            )
+            .await
+            .unwrap_err();
+        let ToolError::Blocked { reason } = e else {
+            panic!("应是 Blocked")
+        };
+        assert_eq!(
+            crate::tools::decode_ui_err(&reason).0,
+            "tool.file.outOfSandbox"
+        );
+        let cwd = dir.path().canonicalize().unwrap();
+        assert_eq!(
+            crate::ui_error::plain(&reason),
+            format!("路径越界沙盒（不在 {} 内）", cwd.display())
+        );
+    }
+
+    #[tokio::test]
+    async fn 应该_当参数缺失时_细节带编码() {
+        let dir = TempDir::new().unwrap();
+        let ctx = make_ctx(dir.path().to_path_buf());
+        let e = EditFileTool.execute(json!({}), &ctx).await.unwrap_err();
+        let ToolError::InvalidArgs(d) = e else {
+            panic!("应是 InvalidArgs")
+        };
+        let (code, params) = crate::tools::decode_ui_err(&d);
+        assert_eq!(code, "tool.file.argsParse");
+        assert_eq!(params["tool"], "edit_file");
+        assert!(crate::ui_error::plain(&d).starts_with("edit_file 参数: "));
     }
 }

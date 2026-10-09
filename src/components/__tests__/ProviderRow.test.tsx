@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import i18n from "../../lib/i18n";
 import { ProviderRow } from "../ProviderList";
 import type { ProviderConfigDto } from "../../lib/tauri";
 
@@ -160,5 +161,47 @@ describe("ProviderRow", () => {
       target: { value: "sk-new" },
     });
     expect(screen.getByRole("button", { name: "测试连接" })).not.toBeDisabled();
+  });
+
+  it("应该_当测试连接返回带编码的消息且界面为英文时_按英文显示", async () => {
+    await i18n.changeLanguage("en");
+    try {
+      mockTest.mockResolvedValue({
+        ok: false,
+        elapsed_ms: 50,
+        message: JSON.stringify({
+          code: "provider.test.unauthorized",
+          params: {},
+          message: "API key 无效（401/403）",
+        }),
+      });
+      render(<ProviderRow dto={makeDto()} onSaved={() => {}} />);
+      fireEvent.click(screen.getByRole("button", { name: "Test connection" }));
+      await waitFor(() =>
+        expect(screen.getByRole("status")).toHaveTextContent("Invalid API key (401/403)"),
+      );
+    } finally {
+      await i18n.changeLanguage("zh-CN");
+    }
+  });
+
+  it("应该_当测试连接调用本身抛出带编码的错误且界面为英文时_按英文显示", async () => {
+    await i18n.changeLanguage("en");
+    try {
+      mockTest.mockRejectedValue(
+        JSON.stringify({
+          code: "provider.test.timeout",
+          params: {},
+          message: "超时（10s）",
+        }),
+      );
+      render(<ProviderRow dto={makeDto()} onSaved={() => {}} />);
+      fireEvent.click(screen.getByRole("button", { name: "Test connection" }));
+      await waitFor(() =>
+        expect(screen.getByRole("status")).toHaveTextContent("Timed out (10s)"),
+      );
+    } finally {
+      await i18n.changeLanguage("zh-CN");
+    }
   });
 });

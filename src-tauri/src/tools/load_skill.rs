@@ -26,6 +26,7 @@ use serde_json::{Value, json};
 use crate::skills::{self, SkillMeta};
 
 use super::{RiskClass, Tool, ToolContext, ToolError, ToolResult};
+use crate::ui_error::{plain, ui_err};
 
 /// 单次返回给 LLM 的最大字节数（skill 正文与辅助文件共用）。
 ///
@@ -76,24 +77,36 @@ impl Tool for LoadSkillTool {
     }
 
     async fn execute(&self, args: Value, ctx: &ToolContext) -> Result<ToolResult, ToolError> {
-        let parsed: Args = serde_json::from_value(args)
-            .map_err(|e| ToolError::InvalidArgs(format!("load_skill 参数: {e}")))?;
+        let parsed: Args = serde_json::from_value(args).map_err(|e| {
+            ToolError::InvalidArgs(ui_err(
+                "tool.skill.invalidArgs",
+                &[("error", e.to_string())],
+                format!("load_skill 参数: {e}"),
+            ))
+        })?;
 
         let cwd = ctx.cwd.clone();
         // 扫目录 + 读文件都是阻塞 IO，丢到 blocking 线程池
         let content = tokio::task::spawn_blocking(move || {
             let all = skills::load_skills_cached(&cwd);
             let Some(skill) = skills::find(&all, &parsed.name) else {
-                return Err(ToolError::Exec(format!(
-                    "找不到 skill「{}」。{}",
-                    parsed.name,
-                    hint_available(&all)
+                let hint = hint_available(&all);
+                return Err(ToolError::Exec(ui_err(
+                    "tool.skill.notFound",
+                    &[("name", parsed.name.clone()), ("hint", hint.clone())],
+                    format!("找不到 skill「{}」。{}", parsed.name, plain(&hint)),
                 )));
             };
             read_skill_content(skill, parsed.file.as_deref())
         })
         .await
-        .map_err(|e| ToolError::Exec(format!("skill 加载任务失败: {e}")))??;
+        .map_err(|e| {
+            ToolError::Exec(ui_err(
+                "tool.skill.loadTaskFailed",
+                &[("error", e.to_string())],
+                format!("skill 加载任务失败: {e}"),
+            ))
+        })??;
 
         Ok(ToolResult {
             content,
@@ -105,7 +118,7 @@ impl Tool for LoadSkillTool {
 /// 拼「可用 skill 名字」提示（找不到时给 LLM 纠错用）。
 fn hint_available(all: &[SkillMeta]) -> String {
     if all.is_empty() {
-        return "当前没有安装任何 skill。".to_string();
+        return ui_err("tool.skill.noneInstalled", &[], "当前没有安装任何 skill。");
     }
     let names: Vec<&str> = all
         .iter()
@@ -114,9 +127,17 @@ fn hint_available(all: &[SkillMeta]) -> String {
         .collect();
     let more = all.len().saturating_sub(names.len());
     if more > 0 {
-        format!("可用：{}（另有 {more} 个未列出）", names.join(", "))
+        ui_err(
+            "tool.skill.availableMore",
+            &[("names", names.join(", ")), ("more", more.to_string())],
+            format!("可用：{}（另有 {more} 个未列出）", names.join(", ")),
+        )
     } else {
-        format!("可用：{}", names.join(", "))
+        ui_err(
+            "tool.skill.available",
+            &[("names", names.join(", "))],
+            format!("可用：{}", names.join(", ")),
+        )
     }
 }
 
@@ -127,10 +148,13 @@ fn hint_available(all: &[SkillMeta]) -> String {
 ///   原样返回（辅助文件不做 frontmatter 处理）
 fn read_skill_content(skill: &SkillMeta, file: Option<&str>) -> Result<String, ToolError> {
     // 沙盒根 = 该 skill 自己的目录（**不是 cwd**）
-    let root = skill
-        .dir
-        .canonicalize()
-        .map_err(|e| ToolError::Exec(format!("skill 目录不可访问: {e}")))?;
+    let root = skill.dir.canonicalize().map_err(|e| {
+        ToolError::Exec(ui_err(
+            "tool.skill.dirInaccessible",
+            &[("error", e.to_string())],
+            format!("skill 目录不可访问: {e}"),
+        ))
+    })?;
 
     // LLM 常给 optional 参数填空串（项目 CLAUDE.md 记过这个坑）→ 视同未传
     let rel = file.map(str::trim).filter(|s| !s.is_empty());
@@ -144,8 +168,12 @@ fn read_skill_content(skill: &SkillMeta, file: Option<&str>) -> Result<String, T
             for c in Path::new(rel).components() {
                 if !matches!(c, Component::Normal(_) | Component::CurDir) {
                     return Err(ToolError::Blocked {
-                        reason: format!(
-                            "skill 辅助文件路径必须是 skill 目录下的相对路径，不允许绝对路径或 `..`：{rel}"
+                        reason: ui_err(
+                            "tool.skill.pathNotRelative",
+                            &[("path", rel.to_string())],
+                            format!(
+                                "skill 辅助文件路径必须是 skill 目录下的相对路径，不允许绝对路径或 `..`：{rel}"
+                            ),
                         ),
                     });
                 }
@@ -154,32 +182,48 @@ fn read_skill_content(skill: &SkillMeta, file: Option<&str>) -> Result<String, T
         }
     };
 
-    let canonical = target
-        .canonicalize()
-        .map_err(|e| ToolError::Exec(format!("skill 文件不存在: {e}")))?;
+    let canonical = target.canonicalize().map_err(|e| {
+        ToolError::Exec(ui_err(
+            "tool.skill.fileNotFound",
+            &[("error", e.to_string())],
+            format!("skill 文件不存在: {e}"),
+        ))
+    })?;
 
     // 第 2 道：canonicalize 后必须仍在该 skill 目录内（挡软链接逃逸）。
     // Path::starts_with 按**路径成分**比较，所以 `demo` 不会误配 `demo-evil`。
     if !canonical.starts_with(&root) {
         return Err(ToolError::Blocked {
-            reason: format!("路径越出 skill 目录（不在 {} 内）", root.display()),
+            reason: ui_err(
+                "tool.skill.pathEscape",
+                &[("root", root.display().to_string())],
+                format!("路径越出 skill 目录（不在 {} 内）", root.display()),
+            ),
         });
     }
 
     if !canonical.is_file() {
-        return Err(ToolError::Exec(format!(
-            "目标不是普通文件: {}",
-            canonical.display()
+        return Err(ToolError::Exec(ui_err(
+            "tool.skill.notFile",
+            &[("path", canonical.display().to_string())],
+            format!("目标不是普通文件: {}", canonical.display()),
         )));
     }
 
-    let bytes = std::fs::read(&canonical)
-        .map_err(|e| ToolError::Exec(format!("读 skill 文件失败: {e}")))?;
+    let bytes = std::fs::read(&canonical).map_err(|e| {
+        ToolError::Exec(ui_err(
+            "tool.skill.readFailed",
+            &[("error", e.to_string())],
+            format!("读 skill 文件失败: {e}"),
+        ))
+    })?;
     // 只给 LLM 文本：探测前 8KB 有无 NUL 字节判二进制
     if bytes.iter().take(8192).any(|b| *b == 0) {
-        return Err(ToolError::Exec(
-            "目标不是文本文件（含 NUL 字节），拒绝加载".into(),
-        ));
+        return Err(ToolError::Exec(ui_err(
+            "tool.skill.notText",
+            &[],
+            "目标不是文本文件（含 NUL 字节），拒绝加载",
+        )));
     }
 
     let lossy = String::from_utf8_lossy(&bytes);
@@ -489,5 +533,131 @@ mod tests {
         let ctx = make_ctx(cwd.path().to_path_buf());
         let r = LoadSkillTool.execute(json!({}), &ctx).await;
         assert!(matches!(r, Err(ToolError::InvalidArgs(_))));
+    }
+
+    /// 解析编码字符串，返回 (code, params)。
+    fn parse_code(s: &str) -> (String, serde_json::Value) {
+        let v: serde_json::Value =
+            serde_json::from_str(s).unwrap_or_else(|_| panic!("不是编码串：{s}"));
+        (v["code"].as_str().unwrap().to_string(), v["params"].clone())
+    }
+
+    fn exec_err(r: Result<String, ToolError>) -> String {
+        match r {
+            Err(ToolError::Exec(s) | ToolError::InvalidArgs(s)) => s,
+            Err(ToolError::Blocked { reason }) => reason,
+            other => panic!("应返回错误，实得 {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn 应该_当参数缺_name时_返回编码化的参数错误() {
+        let cwd = TempDir::new().unwrap();
+        let ctx = make_ctx(cwd.path().to_path_buf());
+        let Err(ToolError::InvalidArgs(s)) = LoadSkillTool.execute(json!({}), &ctx).await else {
+            panic!("应返回 InvalidArgs");
+        };
+        assert_eq!(parse_code(&s).0, "tool.skill.invalidArgs");
+        assert!(crate::ui_error::plain(&s).starts_with("load_skill 参数: "));
+    }
+
+    #[tokio::test]
+    async fn 应该_当_skill_不存在时_返回带名字的编码化错误() {
+        let cwd = TempDir::new().unwrap();
+        let ctx = make_ctx(cwd.path().to_path_buf());
+        let Err(ToolError::Exec(s)) = LoadSkillTool
+            .execute(json!({ "name": "绝对不存在的skill-zzz" }), &ctx)
+            .await
+        else {
+            panic!("应返回 Exec");
+        };
+        let (code, params) = parse_code(&s);
+        assert_eq!(code, "tool.skill.notFound");
+        assert_eq!(params["name"], "绝对不存在的skill-zzz");
+        assert!(crate::ui_error::plain(&s).starts_with("找不到 skill「绝对不存在的skill-zzz」。"));
+    }
+
+    #[test]
+    fn 应该_当没装任何_skill时_提示编码化() {
+        let got = hint_available(&[]);
+        assert_eq!(parse_code(&got).0, "tool.skill.noneInstalled");
+        assert_eq!(crate::ui_error::plain(&got), "当前没有安装任何 skill。");
+    }
+
+    #[test]
+    fn 应该_当可用名字超出上限时_提示带剩余数量() {
+        let metas: Vec<SkillMeta> = (0..MAX_HINT_NAMES + 3)
+            .map(|i| SkillMeta {
+                name: format!("s{i}"),
+                description: String::new(),
+                dir: PathBuf::from("/x"),
+            })
+            .collect();
+        let got = hint_available(&metas);
+        let (code, params) = parse_code(&got);
+        assert_eq!(code, "tool.skill.availableMore");
+        assert_eq!(params["more"], "3");
+        assert!(crate::ui_error::plain(&got).contains("（另有 3 个未列出）"));
+        let few = hint_available(&metas[..2]);
+        assert_eq!(parse_code(&few).0, "tool.skill.available");
+        assert_eq!(crate::ui_error::plain(&few), "可用：s0, s1");
+    }
+
+    #[test]
+    fn 应该_当路径为绝对路径时_拒绝原因编码化() {
+        let tmp = TempDir::new().unwrap();
+        let skill = make_skill(tmp.path(), "demo", "正文");
+        let s = exec_err(read_skill_content(&skill, Some("/etc/passwd")));
+        let (code, params) = parse_code(&s);
+        assert_eq!(code, "tool.skill.pathNotRelative");
+        assert_eq!(params["path"], "/etc/passwd");
+        assert!(crate::ui_error::plain(&s).starts_with("skill 辅助文件路径必须是"));
+    }
+
+    #[test]
+    fn 应该_当辅助文件不存在时_错误编码化() {
+        let tmp = TempDir::new().unwrap();
+        let skill = make_skill(tmp.path(), "demo", "正文");
+        let s = exec_err(read_skill_content(&skill, Some("nope.md")));
+        assert_eq!(parse_code(&s).0, "tool.skill.fileNotFound");
+        assert!(crate::ui_error::plain(&s).starts_with("skill 文件不存在: "));
+    }
+
+    #[test]
+    fn 应该_当目标是目录时_错误编码化() {
+        let tmp = TempDir::new().unwrap();
+        let skill = make_skill(tmp.path(), "demo", "正文");
+        fs::create_dir_all(skill.dir.join("references")).unwrap();
+        let s = exec_err(read_skill_content(&skill, Some("references")));
+        assert_eq!(parse_code(&s).0, "tool.skill.notFile");
+        assert!(crate::ui_error::plain(&s).starts_with("目标不是普通文件: "));
+    }
+
+    #[test]
+    fn 应该_当目标含_nul_字节时_错误编码化() {
+        let tmp = TempDir::new().unwrap();
+        let skill = make_skill(tmp.path(), "demo", "正文");
+        fs::write(skill.dir.join("bin.dat"), [0u8, 1, 2]).unwrap();
+        let s = exec_err(read_skill_content(&skill, Some("bin.dat")));
+        assert_eq!(parse_code(&s).0, "tool.skill.notText");
+        assert_eq!(
+            crate::ui_error::plain(&s),
+            "目标不是文本文件（含 NUL 字节），拒绝加载"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn 应该_当软链接逃出_skill_目录时_拒绝原因编码化() {
+        let tmp = TempDir::new().unwrap();
+        let skill = make_skill(tmp.path(), "demo", "正文");
+        let outside = tmp.path().join("outside.md");
+        fs::write(&outside, "机密").unwrap();
+        std::os::unix::fs::symlink(&outside, skill.dir.join("link.md")).unwrap();
+        let s = exec_err(read_skill_content(&skill, Some("link.md")));
+        let (code, params) = parse_code(&s);
+        assert_eq!(code, "tool.skill.pathEscape");
+        assert!(params["root"].as_str().is_some());
+        assert!(crate::ui_error::plain(&s).starts_with("路径越出 skill 目录（不在 "));
     }
 }

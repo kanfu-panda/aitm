@@ -33,6 +33,15 @@
     "cancel": "Cancel",
     "confirm": "Quit"
   },
+  "fileTabBar": {
+    "tablistAria": "File editor tabs",
+    "closeAria": "Close {{name}}",
+    "menuAria": "File tab context menu",
+    "close": "Close",
+    "closeOthers": "Close others",
+    "closeRight": "Close to the right",
+    "closeAll": "Close all"
+  },
   "fileTree": {
     "title": "File Tree",
     "noActiveCwd": "No active directory",
@@ -50,7 +59,11 @@
       "revealWindows": "Show in File Explorer",
       "revealGeneric": "Show in file manager"
     },
-    "dirtyDirAria": "Folder contains uncommitted changes"
+    "dirtyDirAria": "Folder contains uncommitted changes",
+    "iconDirOpen": "Expanded folder",
+    "iconDir": "Folder",
+    "iconFile": "File",
+    "gitStatusAria": "Git status: {{letter}}"
   },
   "inputDialog": {
     "newFileTitle": "New File",
@@ -116,6 +129,217 @@
     "unreadAria": "{{count}} unread",
     "notification": "Notification: {{level}}"
   },
+  "notify": {
+    "level": {
+      "running": "Running",
+      "waiting": "Waiting for approval",
+      "done": "Done",
+      "error": "Error"
+    },
+    "body": {
+      "running": "AI is working",
+      "waiting": "AI is waiting for your approval",
+      "done": "AI finished",
+      "error": "AI error"
+    },
+    "aiWaitingTool": "AI is waiting for approval: {{tool}}",
+    "aiError": "AI error: {{detail}}"
+  },
+  "backendErrors": {
+    "fs": {
+      "canonicalizeFailed": "Cannot resolve path: {{path}}: {{error}}",
+      "metadataFailed": "Cannot read file info: {{path}}: {{error}}",
+      "notDir": "Not a directory: {{path}}",
+      "notFile": "Not a file: {{path}}",
+      "readFailed": "Failed to read file: {{path}}: {{error}}",
+      "binaryReason": "Contains non-UTF-8 / NUL bytes",
+      "pathNotAbsolute": "Path must be absolute: {{path}}",
+      "createInSystemDir": "Creating items in a system directory is not allowed: {{path}}",
+      "deleteSystemDir": "Deleting a system directory is not allowed: {{path}}",
+      "fileExists": "File already exists: {{path}}",
+      "createFileFailed": "Failed to create file: {{path}}: {{error}}",
+      "pathExists": "Path already exists: {{path}}",
+      "createDirFailed": "Failed to create directory: {{path}}: {{error}}",
+      "renameNeedAbsolute": "Both from and to must be absolute paths",
+      "systemDirForbidden": "Reading or writing system directories is not allowed",
+      "targetExists": "Target path already exists: {{path}}",
+      "renameFailed": "Failed to rename: {{from}} → {{to}}: {{error}}",
+      "accessFailed": "Failed to access path: {{path}}: {{error}}",
+      "deleteDirFailed": "Failed to delete directory: {{path}}: {{error}}",
+      "deleteFileFailed": "Failed to delete file: {{path}}: {{error}}"
+    },
+    "shell": {
+      "unsupportedScheme": "Unsupported URL scheme: {{scheme}}",
+      "unsupportedPlatform": "Unsupported platform: {{os}}",
+      "openSpawnFailed": "Failed to launch the system open command",
+      "revealSpawnFailed": "Failed to launch the file manager",
+      "pathEmpty": "Path is empty",
+      "pathNotAbsolute": "Only absolute paths are accepted: {{path}}",
+      "pathNotFound": "Path does not exist: {{path}}"
+    },
+    "risk": {
+      "sudo": "{{level}}: DESTRUCTIVE: sudo privilege escalation",
+      "doas": "{{level}}: DESTRUCTIVE: doas privilege escalation",
+      "chmodOpen": "{{level}}: DESTRUCTIVE: chmod opens write permission",
+      "chownRecursive": "{{level}}: DESTRUCTIVE: chown -R recursively changes owner",
+      "gitForcePush": "{{level}}: DESTRUCTIVE: git push --force",
+      "gitHardReset": "{{level}}: DESTRUCTIVE: git reset --hard / clean -f",
+      "sqlDrop": "{{level}}: DESTRUCTIVE: SQL drop table/database",
+      "kubectlDelete": "{{level}}: DESTRUCTIVE: kubectl delete",
+      "dockerRemove": "{{level}}: DESTRUCTIVE: docker rm/rmi/prune",
+      "killForce": "{{level}}: DESTRUCTIVE: kill -9 force kill",
+      "packagePublish": "{{level}}: DESTRUCTIVE: package publish",
+      "redirectSystemDir": "{{level}}: DESTRUCTIVE: redirect into a system directory",
+      "findDelete": "{{level}}: DESTRUCTIVE: find -delete / -exec rm",
+      "readonlyCommand": "{{level}}: read-only command {{command}}",
+      "defaultHigh": "{{level}}: default (no obvious risk or safety signal)",
+      "whitelist": "Whitelist: {{pattern}}",
+      "sessionGranted": "Authorized for this session"
+    },
+    "tmux": {
+      "notInstalled": "tmux is not installed on this machine",
+      "spawnFailed": "Failed to run tmux: {{error}}",
+      "taskFailed": "The tmux task failed: {{error}}",
+      "probeFailed": "Failed to detect tmux: {{error}}",
+      "commandFailed": "The tmux command failed",
+      "sessionIdInvalid": "Invalid session id: {{id}}",
+      "sessionNameEmpty": "The session name cannot be empty",
+      "sessionNameSeparator": "The session name cannot contain . or :",
+      "sessionNameControl": "The session name cannot contain control characters",
+      "parseFailed": "tmux returned {{count}} lines, but none could be parsed. The delimiter may have been rewritten by the environment (check LANG / LC_CTYPE)",
+      "newSessionNoId": "tmux did not return an id for the new session: {{id}}"
+    },
+    "provider": {
+      "test": {
+        "notConfigured": "Provider is not configured or is disabled",
+        "noModels": "The provider has no available models",
+        "timeout": "Timed out (10s)",
+        "unauthorized": "Invalid API key (401/403)",
+        "rateLimited": "Rate limit reached (429)",
+        "network": "Network error: {{detail}}",
+        "networkTimeout": "Network error: timed out",
+        "protocol": "Protocol error: {{detail}}"
+      },
+      "error": {
+        "http": "HTTP request failed: {{detail}}",
+        "unauthorized": "Authentication failed (401/403): check your API key",
+        "rateLimited": "Rate limited (429): try again later",
+        "protocol": "Failed to parse the protocol response: {{detail}}",
+        "config": "Configuration error: {{detail}}",
+        "timeout": "Timed out",
+        "other": "Other error: {{detail}}"
+      }
+    },
+    "ai": {
+      "providerNotFound": "Provider does not exist: {{id}}",
+      "scopeSpawnFailed": "Failed to resolve the scope: {{error}}",
+      "summaryFailed": "Summary step failed: {{detail}}",
+      "summaryFailedUnauthorized": "Summary step failed: authentication failed (401/403), check your API key",
+      "summaryFailedRateLimited": "Summary step failed: rate limited (429), try again later",
+      "summaryFailedTimeout": "Summary step failed: timed out",
+      "scopeResolveFailed": "Failed to determine the project scope: {{error}}"
+    },
+    "tool": {
+      "invalidArgs": "Invalid arguments: {{detail}}",
+      "blocked": "Blocked: {{detail}}",
+      "exec": "Execution failed: {{detail}}",
+      "sessionNotFound": "Session not found: {{detail}}",
+      "notExecuted": "Tool was not executed",
+      "unknownTool": "Unknown tool: {{name}}",
+      "blacklisted": "Blocked by L1 blacklist: {{label}} (command = {{cmd}})",
+      "rejectedByUser": "You rejected this operation",
+      "file": {
+        "argsParse": "Invalid {{tool}} arguments: {{error}}",
+        "cwdMissing": "Working directory does not exist: {{error}}",
+        "notFound": "File not found: {{error}}",
+        "dirNotFound": "Directory not found: {{error}}",
+        "readFailed": "Failed to read file: {{error}}",
+        "writeFailed": "Failed to write file: {{error}}",
+        "mkdirFailed": "Failed to create directory: {{error}}",
+        "resolveFailed": "Failed to resolve path: {{error}}",
+        "invalidPath": "Invalid path",
+        "outOfSandbox": "Path escapes the sandbox (not inside {{cwd}})",
+        "noMatch": "No match found: old_string does not appear in the file",
+        "notUnique": "old_string is not unique ({{count}} occurrences). Provide more context or set replace_all=true",
+        "replaced": "Replaced {{count}} occurrence(s) in {{path}}",
+        "written": "Wrote {{lines}} line(s) to {{path}}"
+      },
+      "command": {
+        "noActiveTab": "No active tab - the user needs to open a terminal tab first",
+        "invalidArgs": "run_command arguments: {{error}}",
+        "writePtyFailed": "Failed to write to the PTY: {{error}}",
+        "result": "{{output}}\n\n{{outcome}}",
+        "resultTruncated": "{{output}}\n\n[Output too long, truncated to the first {{maxBytes}} bytes; output may be incomplete]\n\n{{outcome}}",
+        "noOutput": "[No output]",
+        "exitCode": "[Exit code: {{code}}]",
+        "stillRunning": "[Command still running after {{secs}}s; output may be incomplete. Call get_terminal_history later to check]",
+        "noExitDetection": "[This shell does not support command completion detection; waited {{secs}}s. Exit code unknown, output may be incomplete]",
+        "hookLost": "[Terminal shell hook not active; exit code unknown for this run (waited {{secs}}s, output may be incomplete). Switched to compatibility mode; exit codes will return from the next command]"
+      },
+      "history": {
+        "noActiveTab": "No active tab - the user needs to open a terminal tab first",
+        "invalidArgs": "get_terminal_history: {{error}}",
+        "searchInvalidArgs": "search_history: {{error}}",
+        "noMatch": "No output containing '{{query}}' was found"
+      },
+      "skill": {
+        "invalidArgs": "load_skill arguments: {{error}}",
+        "listInvalidArgs": "list_skills arguments: {{error}}",
+        "searchTaskFailed": "Skill search task failed: {{error}}",
+        "loadTaskFailed": "Skill loading task failed: {{error}}",
+        "notFound": "Skill \"{{name}}\" not found. {{hint}}",
+        "noneInstalled": "No skills are installed.",
+        "available": "Available: {{names}}",
+        "availableMore": "Available: {{names}} ({{more}} more not listed)",
+        "dirInaccessible": "Skill directory is not accessible: {{error}}",
+        "pathNotRelative": "A skill auxiliary file path must be relative to the skill directory; absolute paths and `..` are not allowed: {{path}}",
+        "fileNotFound": "Skill file does not exist: {{error}}",
+        "pathEscape": "Path escapes the skill directory (not inside {{root}})",
+        "notFile": "The target is not a regular file: {{path}}",
+        "readFailed": "Failed to read the skill file: {{error}}",
+        "notText": "The target is not a text file (contains NUL bytes); refusing to load it"
+      },
+      "browser": {
+        "invalidArgs": "Invalid arguments for {{tool}}: {{error}}",
+        "tabAmbiguous": "The backend has {{count}} browser webviews but cannot tell which one the user is currently looking at, so the operation was refused (acting on the wrong page is worse than failing). Call browser_open to re-establish the current tab and retry.",
+        "tabNotFound": "Tab {{id}} does not exist in the backend (most likely a stale tab_id from an earlier result; the webview was closed or rebuilt). Omit tab_id to act on the tab the user is currently looking at.",
+        "tabNotVisible": "Tab {{id}} is not the tab the user is currently looking at (the visible one is {{visible}}); the operation was refused. Do not reuse stale tab_ids; just omit tab_id.",
+        "noActiveTab": "The browser panel is not open or has no active tab. Call the browser_open tool to open the browser yourself; do not ask the user to click the globe icon.",
+        "tabSuspended": "Tab {{tab_id}} does not exist or has been suspended",
+        "injectFailed": "Failed to inject snapshot JS: {{error}}",
+        "snapshotChannel": "Snapshot oneshot channel error",
+        "snapshotTimeout": "Timed out waiting for snapshot (5s)",
+        "clickEvalFailed": "Click eval failed: {{error}}",
+        "fillEvalFailed": "Fill eval failed: {{error}}",
+        "evalFailed": "Eval failed: {{error}}",
+        "navigateFailed": "Navigation to {{url}} failed: {{reason}}",
+        "urlParseFailed": "Failed to parse URL: {{error}}",
+        "schemeNotAllowed": "URL scheme not allowed: {{scheme}} (only http/https)",
+        "autoOpenFailed": "The browser panel was not open and opening it automatically also failed: {{error}}",
+        "getWebviewFailed": "Failed to get webview: {{error}}",
+        "navigateCmdFailed": "Navigate failed: {{error}}",
+        "autoOpenedNavigated": "The browser panel was not open; it was opened automatically and navigated to {{url}}",
+        "pageLoaded": "Page loaded: {{url}}",
+        "loadTimeout": "Navigated to {{url}}, but the page did not finish loading within 10s (it may still be loading; take another snapshot later to check)",
+        "clicked": "Clicked ref={{ref}} (tab {{tab}})",
+        "filled": "Filled ref={{ref}} value=<{{count}} chars> (tab {{tab}})",
+        "evaluated": "Evaluated JS ({{count}} chars, tab {{tab}})",
+        "openFailed": "Failed to open the browser: {{reason}}",
+        "tabStateInconsistent": "The browser's current tab state is inconsistent, and asking the frontend to re-establish it failed: {{error}}",
+        "openBrowserFailed": "Failed to open the built-in browser: {{error}}",
+        "alreadyOpen": "The browser panel is already open; reusing the current tab. Call browser_navigate to change pages.",
+        "openedLoaded": "Opened the built-in browser and finished loading: {{url}}",
+        "openedLoadTimeout": "Opened the built-in browser and navigated to {{url}}, but the page did not finish loading within 10s (it may still be loading; take another snapshot later to check)",
+        "openedBlank": "Opened the built-in browser (blank page)"
+      }
+    },
+    "blacklist": {
+      "rmRoot": "rm -rf / (deletes the root directory)",
+      "ddDevice": "dd writing to a device file",
+      "mkfs": "mkfs (formats a disk)",
+      "forkBomb": "fork bomb"
+    }
+  },
   "settingsModal": {
     "title": "Settings",
     "tablistLabel": "Settings categories",
@@ -162,13 +386,11 @@
     "general": "General",
     "confirmQuitLabel": "Confirm before quitting",
     "confirmQuitHelp": "Show a confirmation dialog before closing the app; with this off, the red close button / Cmd+Q quits immediately",
-    "confirmQuitAria": "Confirm before quitting",
     "restoreSessionLabel": "Restore last session on startup",
     "restoreSessionHelp": "Reopen the tabs, split layout and files from your last session when aitm starts; with this off you always start with a single empty tab",
     "notifications": "Notifications",
     "notificationSoundLabel": "System notification sound",
-    "notificationSoundHelp": "Fires system notifications when an AI waits for approval / completes / errors; turning this off keeps notifications silent",
-    "notificationSoundAria": "System notification sound"
+    "notificationSoundHelp": "Fires system notifications when an AI waits for approval / completes / errors; turning this off keeps notifications silent"
   },
   "terminal": {
     "font": "Font",
@@ -193,7 +415,8 @@
     "shell": "Shell",
     "shellDefaultLabel": "Default shell path (leave empty to inherit $SHELL)",
     "shellPlaceholder": "e.g. /bin/zsh, /opt/homebrew/bin/fish",
-    "shellHelp": "Applies to newly opened tabs; existing tabs are unaffected"
+    "shellHelp": "Applies to newly opened tabs; existing tabs are unaffected",
+    "themeDefault": "Default"
   },
   "settings": {
     "editor": {
@@ -451,12 +674,29 @@
     "projectTooltip": "Project: {{name}}\nPath: {{path}}",
     "projectAria": "Current scope: project {{name}}"
   },
+  "initProject": {
+    "title": "✨ Start an AI project here?",
+    "desc": "You're using the AI assistant, but this folder isn't an aitm project yet. Should the AI remember it long-term?",
+    "nameLabel": "Project name",
+    "path": "Path:",
+    "initTitle": "Yes, initialize as a project (recommended)",
+    "initDesc": "Creates a marker in ./.aitm/ so the AI remembers conversations and command context. Good for long-term work folders and git repos.",
+    "tempTitle": "No, just this once",
+    "tempDesc": "Conversations go to the global bucket; you'll be asked again next time you're in this folder.",
+    "ignoreTitle": "Don't ask again for this folder",
+    "ignoreDesc": "Adds it to the ignore list permanently; terminal only.",
+    "closeSidebar": "Close AI sidebar",
+    "confirm": "OK",
+    "busy": "Working…"
+  },
   "splitDivider": {
     "defaultAria": "Resize",
     "fileTreeWidth": "Resize file tree",
     "aiSidebarWidth": "Resize AI sidebar",
     "terminalEditorHeight": "Resize terminal / editor split",
-    "terminalBrowserRatio": "Resize terminal / browser ratio"
+    "terminalBrowserRatio": "Resize terminal / browser ratio",
+    "paneHorizontal": "Drag to resize left / right panes",
+    "paneVertical": "Drag to resize top / bottom panes"
   },
   "about": {
     "version": "Version {{version}}",
@@ -534,7 +774,12 @@
     "reject": "Reject",
     "approve": "Approve",
     "alwaysAllow": "Allow for this session",
-    "alwaysAllowTitle": "Auto-approve {{name}} for this session (resets on restart)"
+    "alwaysAllowTitle": "Auto-approve {{name}} for this session (resets on restart)",
+    "titleDestructive": "⚠ AI wants to run a dangerous operation",
+    "title": "AI wants to run a tool",
+    "srDescription": "Approve or reject the tool call requested by the AI",
+    "toolLabel": "Tool:",
+    "riskReasonLabel": "Risk reason: "
   },
   "browserPanel": {
     "collapse": "Collapse browser",
@@ -545,7 +790,12 @@
     "newTab": "New tab",
     "newTabTitle": "New tab (⌘T)",
     "batchCloseRunning": "{{count}} tab(s) have commands still running: {{names}}. Closing them all will terminate these commands.",
-    "batchCloseConfirm": "Close all"
+    "batchCloseConfirm": "Close all",
+    "emptyHint": "Click to open a new tab · or press",
+    "dropTop": "Drop here to split above",
+    "dropBottom": "Drop here to split below",
+    "dropLeft": "Drop here to split left",
+    "dropRight": "Drop here to split right"
   },
   "tmux": {
     "title": "tmux sessions",

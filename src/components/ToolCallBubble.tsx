@@ -17,6 +17,7 @@ import {
   X,
 } from "./icons";
 import DiffView from "./DiffView";
+import { formatBackendError } from "../lib/backendError";
 import type { ToolCallEntry } from "../stores/chat";
 import type { ToolPreview } from "../lib/tauri";
 
@@ -283,12 +284,12 @@ export default function ToolCallBubble({ entry, preview, defaultExpanded }: Prop
             <div
               className="inline-flex items-center gap-1 rounded bg-[var(--c-success-bg)] px-2 py-0.5 text-[10px] text-[var(--c-success-fg)]"
               aria-label={t("toolCallBubble.autoApprovedAria")}
-              title={entry.auto_approved_reason}
+              title={formatBackendError(entry.auto_approved_reason)}
             >
               <span>{t("toolCallBubble.autoApproved")}</span>
               <span className="text-[var(--c-success)] opacity-80">·</span>
               <span className="max-w-[260px] truncate opacity-80">
-                {entry.auto_approved_reason}
+                {formatBackendError(entry.auto_approved_reason)}
               </span>
             </div>
           )}
@@ -324,7 +325,7 @@ export default function ToolCallBubble({ entry, preview, defaultExpanded }: Prop
                   : t("toolCallBubble.resultLabel")}
               </div>
               <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all rounded bg-[var(--c-bg-base)] p-2 font-mono text-[11px] text-[var(--c-text-muted)]">
-                {entry.result.content}
+                {formatBackendError(entry.result.content)}
               </pre>
             </div>
           )}

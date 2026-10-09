@@ -7,6 +7,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::{RiskClass, Tool, ToolContext, ToolError, ToolResult};
+use crate::ui_error::ui_err;
 
 const MAX_ENTRIES: usize = 500;
 const IGNORE_DIRS: &[&str] = &[
@@ -70,8 +71,13 @@ impl Tool for ListFilesTool {
     }
 
     async fn execute(&self, args: Value, ctx: &ToolContext) -> Result<ToolResult, ToolError> {
-        let parsed: Args = serde_json::from_value(args)
-            .map_err(|e| ToolError::InvalidArgs(format!("list_files 参数: {e}")))?;
+        let parsed: Args = serde_json::from_value(args).map_err(|e| {
+            ToolError::InvalidArgs(ui_err(
+                "tool.file.argsParse",
+                &[("tool", "list_files".into()), ("error", e.to_string())],
+                format!("list_files 参数: {e}"),
+            ))
+        })?;
 
         let target = if parsed.dir == "." || parsed.dir.is_empty() {
             ctx.cwd.clone()
@@ -84,17 +90,28 @@ impl Tool for ListFilesTool {
             }
         };
 
-        let canonical_cwd = ctx
-            .cwd
-            .canonicalize()
-            .map_err(|e| ToolError::Exec(format!("cwd 不存在: {e}")))?;
-        let canonical_target = target
-            .canonicalize()
-            .map_err(|e| ToolError::Exec(format!("目录不存在: {e}")))?;
+        let canonical_cwd = ctx.cwd.canonicalize().map_err(|e| {
+            ToolError::Exec(ui_err(
+                "tool.file.cwdMissing",
+                &[("error", e.to_string())],
+                format!("cwd 不存在: {e}"),
+            ))
+        })?;
+        let canonical_target = target.canonicalize().map_err(|e| {
+            ToolError::Exec(ui_err(
+                "tool.file.dirNotFound",
+                &[("error", e.to_string())],
+                format!("目录不存在: {e}"),
+            ))
+        })?;
 
         if !canonical_target.starts_with(&canonical_cwd) {
             return Err(ToolError::Blocked {
-                reason: format!("路径越界沙盒（不在 {} 内）", canonical_cwd.display()),
+                reason: ui_err(
+                    "tool.file.outOfSandbox",
+                    &[("cwd", canonical_cwd.display().to_string())],
+                    format!("路径越界沙盒（不在 {} 内）", canonical_cwd.display()),
+                ),
             });
         }
 
@@ -252,5 +269,54 @@ mod tests {
             .await
             .unwrap();
         assert!(r.content.contains("已截断"));
+    }
+
+    #[tokio::test]
+    async fn 应该_当目录不存在时_细节带编码且还原为中文() {
+        let dir = TempDir::new().unwrap();
+        let ctx = make_ctx(dir.path().to_path_buf());
+        let e = ListFilesTool
+            .execute(json!({ "dir": "nope" }), &ctx)
+            .await
+            .unwrap_err();
+        let ToolError::Exec(d) = e else {
+            panic!("应是 Exec")
+        };
+        assert_eq!(crate::tools::decode_ui_err(&d).0, "tool.file.dirNotFound");
+        assert!(crate::ui_error::plain(&d).starts_with("目录不存在: "));
+    }
+
+    #[tokio::test]
+    async fn 应该_当路径越界时_原因带编码() {
+        let dir = TempDir::new().unwrap();
+        let outside = TempDir::new().unwrap();
+        let ctx = make_ctx(dir.path().to_path_buf());
+        let e = ListFilesTool
+            .execute(json!({ "dir": outside.path().to_string_lossy() }), &ctx)
+            .await
+            .unwrap_err();
+        let ToolError::Blocked { reason } = e else {
+            panic!("应是 Blocked")
+        };
+        assert_eq!(
+            crate::tools::decode_ui_err(&reason).0,
+            "tool.file.outOfSandbox"
+        );
+    }
+
+    #[tokio::test]
+    async fn 应该_当参数类型错误时_细节带编码() {
+        let dir = TempDir::new().unwrap();
+        let ctx = make_ctx(dir.path().to_path_buf());
+        let e = ListFilesTool
+            .execute(json!({ "dir": 5 }), &ctx)
+            .await
+            .unwrap_err();
+        let ToolError::InvalidArgs(d) = e else {
+            panic!("应是 InvalidArgs")
+        };
+        let (code, params) = crate::tools::decode_ui_err(&d);
+        assert_eq!(code, "tool.file.argsParse");
+        assert_eq!(params["tool"], "list_files");
     }
 }

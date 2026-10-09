@@ -17,7 +17,7 @@
 //! [`TauriSink::emit_error`] 把 orchestrator 端的简单 error 翻成带 kind 的
 //! ipc 形态，默认填 `AiErrorKind::Protocol`。
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex as StdMutex};
 
@@ -63,6 +63,12 @@ pub struct AiState {
     /// 用户在 InitProjectDialog 决议后调 [`ai_chat_resume`] 取出 args + 用确定的
     /// scope 恢复执行。同 cid 的第二次 send 会覆盖前一条 pending（最后写赢）。
     pub pending_chats: Mutex<HashMap<String, ChatSendArgs>>,
+    /// 暂停中的 chat 当时所在的目录，按 conversation_id 暂存，供
+    /// [`ai_chat_resume`] 知道用户是对哪个目录做的决议。
+    pub pending_init_cwds: Mutex<HashMap<String, String>>,
+    /// 本次运行期间用户选过"临时用一下"的目录。再从这些目录发消息直接按全局处理，
+    /// 不再重复询问；只存在内存里，重启后再来此目录会再问一次。
+    pub temp_global_cwds: Mutex<HashSet<String>>,
 }
 
 impl AiState {
@@ -80,6 +86,8 @@ impl AiState {
             tool_loop_handle: Arc::new(ToolLoopHandle::new()),
             active: Mutex::new(None),
             pending_chats: Mutex::new(HashMap::new()),
+            pending_init_cwds: Mutex::new(HashMap::new()),
+            temp_global_cwds: Mutex::new(HashSet::new()),
         }
     }
 }
@@ -383,7 +391,7 @@ Skills 类（v1.3.0，兼容 Claude Code skills）：
 6. `session_id` 用户没指定时，可以省略或问用户
 7. 工具结果是真实数据，请基于结果回答；不要捏造文件名 / 命令输出
 8. 用户家目录下任何文件都可以读，无需额外授权（沙盒已生效）
-9. 用中文简洁回答，不要复述工具调用过程
+9. 用用户提问所用的语言简洁回答（用户用英文问就用英文答，用日文问就用日文答），不要复述工具调用过程
 "#.into()
 }
 
@@ -759,8 +767,9 @@ pub async fn ai_chat_send(
     let scope =
         tokio::task::spawn_blocking(move || crate::scope::resolve_scope(&cwd_for_scope, &db_arc))
             .await
-            .map_err(|e| format!("scope resolve spawn 失败: {e}"))?
-            .map_err(|e| e.to_string())?;
+            .map_err(scope_spawn_failed)?
+            .map_err(scope_resolve_failed)?;
+    let scope = effective_scope(scope, &*state.temp_global_cwds.lock().await);
 
     // 2. NeedsInit → 暂存 + emit + 返回（不起 stream task，等用户决议）
     if let Scope::NeedsInit { cwd } = &scope {
@@ -779,6 +788,11 @@ pub async fn ai_chat_send(
         }
 
         state.pending_chats.lock().await.insert(cid.clone(), args);
+        state
+            .pending_init_cwds
+            .lock()
+            .await
+            .insert(cid.clone(), cwd.clone());
 
         let _ = app.emit(
             "ai:init_required",
@@ -803,6 +817,22 @@ pub async fn ai_chat_send(
         app,
     )
     .await
+}
+
+/// 本次运行期间选过"临时用一下"的目录不再询问：把 `NeedsInit` 直接当全局桶。
+fn effective_scope(scope: Scope, temp_global_cwds: &HashSet<String>) -> Scope {
+    match scope {
+        Scope::NeedsInit { cwd } if temp_global_cwds.contains(&cwd) => Scope::Global,
+        other => other,
+    }
+}
+
+/// 用户对暂停时的目录决议为全局桶时记下来，后续同目录的发送不再询问。
+/// 选"别再问我"同样走全局，这时目录已写入忽略名单，记不记都不影响结果。
+fn remember_temp_global(cwd: Option<String>, scope: &ScopeDto, temp: &mut HashSet<String>) {
+    if let (Some(cwd), ScopeDto::Global) = (cwd, scope) {
+        temp.insert(cwd);
+    }
 }
 
 /// 1F：用户在 InitProjectDialog 决议后恢复一条暂停的 chat。
@@ -831,6 +861,8 @@ pub async fn ai_chat_resume(
         .await
         .remove(&cid)
         .ok_or_else(|| format!("无暂停的 chat: {cid}"))?;
+    let cwd = state.pending_init_cwds.lock().await.remove(&cid);
+    remember_temp_global(cwd, &scope, &mut *state.temp_global_cwds.lock().await);
 
     let scope_internal: Scope = scope.into();
     spawn_chat_with_scope(
@@ -869,7 +901,7 @@ async fn spawn_chat_with_scope(
     let provider = {
         let g = state.registry.read().await;
         g.get(&args.provider_id)
-            .ok_or_else(|| format!("provider 不存在: {}", args.provider_id))?
+            .ok_or_else(|| provider_not_found(&args.provider_id))?
     };
 
     let cid = args.conversation_id.clone();
@@ -1052,6 +1084,33 @@ pub async fn ai_tool_reject(call_id: String, state: State<'_, AiState>) -> Resul
     Ok(())
 }
 
+/// 会话开头解析 scope 的后台任务本身失败（线程 join 出错）时的界面错误。
+fn scope_spawn_failed(e: impl std::fmt::Display) -> String {
+    crate::ui_error::ui_err(
+        "ai.scopeSpawnFailed",
+        &[("error", e.to_string())],
+        format!("scope resolve spawn 失败: {e}"),
+    )
+}
+
+/// 解析作用域出错（读项目标记 / 数据库失败）的界面错误；兜底保持原来的错误文本。
+fn scope_resolve_failed(e: impl std::fmt::Display) -> String {
+    crate::ui_error::ui_err(
+        "ai.scopeResolveFailed",
+        &[("error", e.to_string())],
+        e.to_string(),
+    )
+}
+
+/// 发消息时选定的 provider 不在注册表里（被禁用 / 删除）的界面错误。
+fn provider_not_found(id: &str) -> String {
+    crate::ui_error::ui_err(
+        "ai.providerNotFound",
+        &[("id", id.to_string())],
+        format!("provider 不存在: {id}"),
+    )
+}
+
 /// 把 ProviderError 分类成前端横幅类型。
 ///
 /// 当前 ai_chat_send 已经把流式处理交给 run_tool_loop，provider 自身的
@@ -1071,6 +1130,36 @@ fn classify_error(e: &ProviderError) -> AiErrorKind {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn 应该_当_provider_不存在时_返回带_id_参数的编码错误() {
+        let s = provider_not_found("qwen");
+        let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+        assert_eq!(v["code"], "ai.providerNotFound");
+        assert_eq!(v["params"]["id"], "qwen");
+        assert_eq!(crate::ui_error::plain(&s), "provider 不存在: qwen");
+    }
+
+    #[test]
+    fn 应该_当解析作用域出错时_返回带错误参数的编码错误且兜底与原文一致() {
+        let s = scope_resolve_failed("读 marker 失败");
+        let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+        assert_eq!(v["code"], "ai.scopeResolveFailed");
+        assert_eq!(v["params"]["error"], "读 marker 失败");
+        assert_eq!(crate::ui_error::plain(&s), "读 marker 失败");
+    }
+
+    #[test]
+    fn 应该_当_scope_解析任务失败时_返回带错误参数的编码错误() {
+        let s = scope_spawn_failed("join error");
+        let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+        assert_eq!(v["code"], "ai.scopeSpawnFailed");
+        assert_eq!(v["params"]["error"], "join error");
+        assert_eq!(
+            crate::ui_error::plain(&s),
+            "scope resolve spawn 失败: join error"
+        );
+    }
 
     #[test]
     fn extract_last_user_text_text_变体() {
@@ -1129,6 +1218,17 @@ mod tests {
             }]),
         }];
         assert_eq!(extract_last_user_text(&msgs), None);
+    }
+
+    // system prompt 写死"用中文回答"，英文 / 日文用户也被推着收中文回复
+    #[test]
+    fn 应该_当用户用其他语言提问时_system_prompt_不强制中文回复() {
+        let prompt = default_system_prompt();
+        assert!(!prompt.contains("用中文"), "不应强制中文回答");
+        assert!(
+            prompt.contains("用户提问所用的语言"),
+            "应要求跟随用户提问的语言"
+        );
     }
 
     #[test]
@@ -1669,5 +1769,55 @@ mod tests {
         assert_eq!(v["preview"]["path"], "new.txt");
         assert_eq!(v["preview"]["new_text"], "hello");
         assert_eq!(v["preview"]["old_text"], "");
+    }
+
+    // 选"不用，这次临时用一下"后，同一目录每发一条消息都会再问一次
+    #[test]
+    fn effective_scope_当目录选过临时全局时_按全局桶处理不再询问() {
+        let mut temp = HashSet::new();
+        temp.insert("/w/proj".to_string());
+        let s = effective_scope(
+            Scope::NeedsInit {
+                cwd: "/w/proj".into(),
+            },
+            &temp,
+        );
+        assert!(matches!(s, Scope::Global));
+    }
+
+    #[test]
+    fn effective_scope_当目录没选过时_仍需询问_其他作用域原样返回() {
+        let temp = HashSet::new();
+        let s = effective_scope(
+            Scope::NeedsInit {
+                cwd: "/w/other".into(),
+            },
+            &temp,
+        );
+        assert!(matches!(s, Scope::NeedsInit { .. }));
+        assert!(matches!(
+            effective_scope(Scope::Global, &temp),
+            Scope::Global
+        ));
+    }
+
+    #[test]
+    fn remember_temp_global_只在恢复为全局桶时记下暂停时的目录() {
+        let mut temp = HashSet::new();
+        remember_temp_global(Some("/w/a".into()), &ScopeDto::Global, &mut temp);
+        assert!(temp.contains("/w/a"));
+
+        remember_temp_global(
+            Some("/w/b".into()),
+            &ScopeDto::Project {
+                uuid: "u".into(),
+                root_path: "/w/b".into(),
+            },
+            &mut temp,
+        );
+        assert!(!temp.contains("/w/b"));
+
+        remember_temp_global(None, &ScopeDto::Global, &mut temp);
+        assert_eq!(temp.len(), 1);
     }
 }

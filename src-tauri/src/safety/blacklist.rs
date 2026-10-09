@@ -37,9 +37,40 @@ pub fn is_blacklisted(cmd: &str) -> Option<&'static str> {
     None
 }
 
+/// 把 [`is_blacklisted`] 返回的中文标签转成界面文案（编码 + 中文兜底），
+/// 前端按界面语言显示。
+pub fn label_ui(label: &str) -> String {
+    use crate::ui_error::ui_err;
+    // 每个分支写字面量编码，便于 ui_error 的覆盖测试扫描到
+    match label {
+        "rm -rf / 删根" => ui_err("blacklist.rmRoot", &[], label),
+        "dd 写设备文件" => ui_err("blacklist.ddDevice", &[], label),
+        "mkfs 格式化" => ui_err("blacklist.mkfs", &[], label),
+        "fork bomb" => ui_err("blacklist.forkBomb", &[], label),
+        _ => label.to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // 拦截原因要跟随界面语言
+    #[test]
+    fn 应该_当命中黑名单时_标签能转成带编码的界面文案() {
+        for (cmd, code) in [
+            ("rm -rf /", "blacklist.rmRoot"),
+            ("dd if=/dev/zero of=/dev/disk1", "blacklist.ddDevice"),
+            ("mkfs.ext4 /dev/sda1", "blacklist.mkfs"),
+            (":(){ :|:& };:", "blacklist.forkBomb"),
+        ] {
+            let label = is_blacklisted(cmd).unwrap();
+            let s = label_ui(label);
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+            assert_eq!(v["code"], code, "{cmd}");
+            assert_eq!(crate::ui_error::plain(&s), label);
+        }
+    }
 
     // ===== 应该拦的（4 条 hit）=====
 

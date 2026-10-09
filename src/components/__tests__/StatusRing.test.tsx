@@ -1,6 +1,7 @@
 import { render } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
+import i18n from "../../lib/i18n";
 import StatusRing from "../StatusRing";
 
 describe("StatusRing", () => {
@@ -35,5 +36,17 @@ describe("StatusRing", () => {
     const { getByLabelText } = render(<StatusRing level="waiting" />);
     const el = getByLabelText("通知：等待审批");
     expect(el.getAttribute("role")).toBe("status");
+  });
+
+  it("应该_当界面为英文时_读屏名称与提示是英文", async () => {
+    await i18n.changeLanguage("en");
+    try {
+      const { getByTestId } = render(<StatusRing level="waiting" />);
+      const el = getByTestId("tab-status-waiting");
+      expect(el.getAttribute("aria-label")).toBe("Notification: Waiting for approval");
+      expect(el.getAttribute("title")).toBe("Waiting for approval");
+    } finally {
+      await i18n.changeLanguage("zh-CN");
+    }
   });
 });

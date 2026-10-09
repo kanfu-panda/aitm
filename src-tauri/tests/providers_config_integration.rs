@@ -265,7 +265,7 @@ async fn test_connection_对_401_返回_unauthorized() {
                 result.err()
             );
             // classify_for_user 把 Unauthorized 翻成中文，含 "无效"
-            let msg = classify_for_user(&ProviderError::Unauthorized);
+            let msg = aitm_lib::ui_error::plain(&classify_for_user(&ProviderError::Unauthorized));
             assert!(msg.contains("无效"), "提示语应含 \"无效\"，实际：{msg}");
         },
     )

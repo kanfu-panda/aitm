@@ -4,11 +4,10 @@ import {
   sendNotification,
 } from "@tauri-apps/plugin-notification";
 
-import type {
-  NotificationEvent,
-  NotificationLevel,
-} from "../stores/notifications";
+import type { NotificationEvent } from "../stores/notifications";
 import { useSettingsStore } from "../stores/settings";
+import { formatBackendError } from "./backendError";
+import i18n from "./i18n";
 
 /**
  * v0.5.0-A 系统通知 wrapper。
@@ -50,27 +49,32 @@ export function _resetPermissionStateForTest(): void {
   permissionRequested = false;
 }
 
-const LEVEL_TO_TITLE: Record<NotificationLevel, string> = {
-  running: "运行中",
-  waiting: "等待审批",
-  done: "完成",
-  error: "出错",
-};
-
-const LEVEL_TO_DEFAULT_BODY: Record<NotificationLevel, string> = {
-  running: "AI 正在处理",
-  waiting: "AI 等待你的审批",
-  done: "AI 完成",
-  error: "AI 出错",
-};
+/**
+ * 按当前界面语言组装通知正文。
+ *
+ * AI 工具循环发来的 message 只是细节（等待审批时是工具名、出错时是带编码的错误详情、
+ * 完成时为空），句子由这里按语言拼；终端程序（OSC）发来的 message 是程序自己的文字，原样用。
+ */
+function notificationBody(event: NotificationEvent): string {
+  const detail = event.message ?? "";
+  if (event.source === "ai_tool_loop") {
+    if (event.level === "waiting" && detail) {
+      return i18n.t("notify.aiWaitingTool", { tool: detail });
+    }
+    if (event.level === "error" && detail) {
+      return i18n.t("notify.aiError", { detail: formatBackendError(detail) });
+    }
+    return i18n.t(`notify.body.${event.level}`);
+  }
+  return detail || i18n.t(`notify.body.${event.level}`);
+}
 
 /**
  * 把 NotificationEvent 转成系统通知。
  *
  * - 权限未授予 → noop
  * - 声音读 settings.notifications.sound（plan §7 决策 #1：默认开）
- * - title 固定 "aitm — {level title}"，body 优先 event.message（OSC 通知带消息），
- *   fallback 到 level default body（AI 工具循环触发时可能 message="" 用 fallback）
+ * - title 固定 "aitm — {level title}"，跟随界面语言；body 见 notificationBody
  */
 export async function sendSystemNotification(
   event: NotificationEvent,
@@ -78,11 +82,8 @@ export async function sendSystemNotification(
   if (!permissionGranted) return;
 
   const { sound } = useSettingsStore.getState().settings.notifications;
-  const title = `aitm — ${LEVEL_TO_TITLE[event.level]}`;
-  const body =
-    event.message && event.message.length > 0
-      ? event.message
-      : LEVEL_TO_DEFAULT_BODY[event.level];
+  const title = `aitm — ${i18n.t(`notify.level.${event.level}`)}`;
+  const body = notificationBody(event);
 
   try {
     await sendNotification({

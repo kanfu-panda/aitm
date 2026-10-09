@@ -33,6 +33,15 @@
     "cancel": "取消",
     "confirm": "退出"
   },
+  "fileTabBar": {
+    "tablistAria": "文件编辑器 tab",
+    "closeAria": "关闭 {{name}}",
+    "menuAria": "文件 tab 上下文菜单",
+    "close": "关闭",
+    "closeOthers": "关闭其他",
+    "closeRight": "关闭右侧",
+    "closeAll": "全部关闭"
+  },
   "fileTree": {
     "title": "文件树",
     "noActiveCwd": "未检测到当前目录",
@@ -50,7 +59,11 @@
       "revealWindows": "在资源管理器中显示",
       "revealGeneric": "在文件管理器中显示"
     },
-    "dirtyDirAria": "目录内含未提交变更"
+    "dirtyDirAria": "目录内含未提交变更",
+    "iconDirOpen": "已展开文件夹",
+    "iconDir": "文件夹",
+    "iconFile": "文件",
+    "gitStatusAria": "git 状态：{{letter}}"
   },
   "inputDialog": {
     "newFileTitle": "新建文件",
@@ -115,6 +128,217 @@
     "resetAutoTitle": "重置为自动跟随目录",
     "unreadAria": "{{count}} 条未读",
     "notification": "通知：{{level}}"
+  },
+  "notify": {
+    "level": {
+      "running": "运行中",
+      "waiting": "等待审批",
+      "done": "完成",
+      "error": "出错"
+    },
+    "body": {
+      "running": "AI 正在处理",
+      "waiting": "AI 等待你的审批",
+      "done": "AI 完成",
+      "error": "AI 出错"
+    },
+    "aiWaitingTool": "AI 等待审批：{{tool}}",
+    "aiError": "AI 出错：{{detail}}"
+  },
+  "backendErrors": {
+    "fs": {
+      "canonicalizeFailed": "路径无法解析：{{path}}：{{error}}",
+      "metadataFailed": "读不到文件信息：{{path}}：{{error}}",
+      "notDir": "不是目录：{{path}}",
+      "notFile": "不是文件：{{path}}",
+      "readFailed": "读文件失败：{{path}}：{{error}}",
+      "binaryReason": "包含非 UTF-8 / NUL 字节",
+      "pathNotAbsolute": "路径必须是绝对路径：{{path}}",
+      "createInSystemDir": "禁止在系统目录新建：{{path}}",
+      "deleteSystemDir": "禁止删除系统目录：{{path}}",
+      "fileExists": "文件已存在：{{path}}",
+      "createFileFailed": "新建文件失败：{{path}}：{{error}}",
+      "pathExists": "路径已存在：{{path}}",
+      "createDirFailed": "新建目录失败：{{path}}：{{error}}",
+      "renameNeedAbsolute": "from / to 都必须是绝对路径",
+      "systemDirForbidden": "禁止读写系统目录",
+      "targetExists": "目标路径已存在：{{path}}",
+      "renameFailed": "重命名失败：{{from}} → {{to}}：{{error}}",
+      "accessFailed": "访问路径失败：{{path}}：{{error}}",
+      "deleteDirFailed": "删除目录失败：{{path}}：{{error}}",
+      "deleteFileFailed": "删除文件失败：{{path}}：{{error}}"
+    },
+    "shell": {
+      "unsupportedScheme": "不支持的 URL scheme: {{scheme}}",
+      "unsupportedPlatform": "不支持的平台：{{os}}",
+      "openSpawnFailed": "系统打开命令 spawn 失败",
+      "revealSpawnFailed": "文件管理器 spawn 失败",
+      "pathEmpty": "路径为空",
+      "pathNotAbsolute": "只接受绝对路径：{{path}}",
+      "pathNotFound": "路径不存在：{{path}}"
+    },
+    "risk": {
+      "sudo": "{{level}}：DESTRUCTIVE：sudo 提权",
+      "doas": "{{level}}：DESTRUCTIVE：doas 提权",
+      "chmodOpen": "{{level}}：DESTRUCTIVE：chmod 开放写权限",
+      "chownRecursive": "{{level}}：DESTRUCTIVE：chown -R 递归改 owner",
+      "gitForcePush": "{{level}}：DESTRUCTIVE：git push --force 强推",
+      "gitHardReset": "{{level}}：DESTRUCTIVE：git reset --hard / clean -f",
+      "sqlDrop": "{{level}}：DESTRUCTIVE：SQL drop 删表/库",
+      "kubectlDelete": "{{level}}：DESTRUCTIVE：kubectl delete",
+      "dockerRemove": "{{level}}：DESTRUCTIVE：docker rm/rmi/prune",
+      "killForce": "{{level}}：DESTRUCTIVE：kill -9 强杀",
+      "packagePublish": "{{level}}：DESTRUCTIVE：包发布 publish",
+      "redirectSystemDir": "{{level}}：DESTRUCTIVE：重定向到系统目录",
+      "findDelete": "{{level}}：DESTRUCTIVE：find -delete / -exec rm",
+      "readonlyCommand": "{{level}}：只读命令 {{command}}",
+      "defaultHigh": "{{level}}：默认（无明显风险信号 / 无明显安全信号）",
+      "whitelist": "白名单：{{pattern}}",
+      "sessionGranted": "本会话已授权"
+    },
+    "tmux": {
+      "notInstalled": "本机未安装 tmux",
+      "spawnFailed": "执行 tmux 失败：{{error}}",
+      "taskFailed": "执行 tmux 任务失败：{{error}}",
+      "probeFailed": "探测 tmux 失败：{{error}}",
+      "commandFailed": "tmux 命令执行失败",
+      "sessionIdInvalid": "无效的会话 id：{{id}}",
+      "sessionNameEmpty": "会话名不能为空",
+      "sessionNameSeparator": "会话名不能包含 . 或 :",
+      "sessionNameControl": "会话名不能包含控制字符",
+      "parseFailed": "tmux 返回了 {{count}} 行，但一条都解析不出来——分隔符可能被环境改写（检查 LANG / LC_CTYPE）",
+      "newSessionNoId": "tmux 没有返回新会话的 id：{{id}}"
+    },
+    "provider": {
+      "test": {
+        "notConfigured": "provider 未配置或已禁用",
+        "noModels": "provider 无可用模型",
+        "timeout": "超时（10s）",
+        "unauthorized": "API key 无效（401/403）",
+        "rateLimited": "触发限流（429）",
+        "network": "网络错误：{{detail}}",
+        "networkTimeout": "网络错误：超时",
+        "protocol": "协议错误：{{detail}}"
+      },
+      "error": {
+        "http": "HTTP 失败: {{detail}}",
+        "unauthorized": "鉴权失败（401/403）：检查 API key",
+        "rateLimited": "限流（429）：稍后重试",
+        "protocol": "协议解析失败: {{detail}}",
+        "config": "配置错误: {{detail}}",
+        "timeout": "超时",
+        "other": "其他: {{detail}}"
+      }
+    },
+    "ai": {
+      "providerNotFound": "provider 不存在: {{id}}",
+      "scopeSpawnFailed": "scope resolve spawn 失败: {{error}}",
+      "summaryFailed": "总结阶段失败: {{detail}}",
+      "summaryFailedUnauthorized": "总结阶段失败: 鉴权失败（401/403）：检查 API key",
+      "summaryFailedRateLimited": "总结阶段失败: 限流（429）：稍后重试",
+      "summaryFailedTimeout": "总结阶段失败: 超时",
+      "scopeResolveFailed": "解析作用域失败：{{error}}"
+    },
+    "tool": {
+      "invalidArgs": "参数无效: {{detail}}",
+      "blocked": "拒绝执行：{{detail}}",
+      "exec": "执行失败: {{detail}}",
+      "sessionNotFound": "会话不存在: {{detail}}",
+      "notExecuted": "工具未执行",
+      "unknownTool": "未知工具: {{name}}",
+      "blacklisted": "L1 黑名单拦截：{{label}}（命令 = {{cmd}}）",
+      "rejectedByUser": "用户拒绝执行此操作",
+      "file": {
+        "argsParse": "{{tool}} 参数: {{error}}",
+        "cwdMissing": "cwd 不存在: {{error}}",
+        "notFound": "文件不存在: {{error}}",
+        "dirNotFound": "目录不存在: {{error}}",
+        "readFailed": "读文件失败: {{error}}",
+        "writeFailed": "写文件失败: {{error}}",
+        "mkdirFailed": "创建目录失败: {{error}}",
+        "resolveFailed": "路径解析失败: {{error}}",
+        "invalidPath": "路径无效",
+        "outOfSandbox": "路径越界沙盒（不在 {{cwd}} 内）",
+        "noMatch": "未找到匹配：old_string 未在文件中出现",
+        "notUnique": "old_string 不唯一（出现 {{count}} 次），请扩大上下文或传 replace_all=true",
+        "replaced": "已在 {{path}} 替换 {{count}} 处",
+        "written": "已写入 {{lines}} 行到 {{path}}"
+      },
+      "command": {
+        "noActiveTab": "无活跃 tab —— 用户需要先打开一个终端 tab",
+        "invalidArgs": "run_command 参数: {{error}}",
+        "writePtyFailed": "写入 PTY 失败: {{error}}",
+        "result": "{{output}}\n\n{{outcome}}",
+        "resultTruncated": "{{output}}\n\n[输出过长已截断到前 {{maxBytes}} 字节；输出可能未完整]\n\n{{outcome}}",
+        "noOutput": "[命令无输出]",
+        "exitCode": "[退出码: {{code}}]",
+        "stillRunning": "[命令仍在运行中，已等待 {{secs}}s；输出可能不完整，可稍后再调 get_terminal_history 查看]",
+        "noExitDetection": "[当前 shell 不支持命令结束检测，已等待 {{secs}}s；退出码未知，输出可能不完整]",
+        "hookLost": "[终端 shell 钩子未生效，本次退出码未知（已等待 {{secs}}s，输出可能不完整）；已自动降级为兼容模式，下一条命令起会重新带回退出码]"
+      },
+      "history": {
+        "noActiveTab": "无活跃 tab —— 用户需要先打开一个终端 tab",
+        "invalidArgs": "get_terminal_history: {{error}}",
+        "searchInvalidArgs": "search_history: {{error}}",
+        "noMatch": "未找到包含 '{{query}}' 的输出"
+      },
+      "skill": {
+        "invalidArgs": "load_skill 参数: {{error}}",
+        "listInvalidArgs": "list_skills 参数: {{error}}",
+        "searchTaskFailed": "skill 搜索任务失败: {{error}}",
+        "loadTaskFailed": "skill 加载任务失败: {{error}}",
+        "notFound": "找不到 skill「{{name}}」。{{hint}}",
+        "noneInstalled": "当前没有安装任何 skill。",
+        "available": "可用：{{names}}",
+        "availableMore": "可用：{{names}}（另有 {{more}} 个未列出）",
+        "dirInaccessible": "skill 目录不可访问: {{error}}",
+        "pathNotRelative": "skill 辅助文件路径必须是 skill 目录下的相对路径，不允许绝对路径或 `..`：{{path}}",
+        "fileNotFound": "skill 文件不存在: {{error}}",
+        "pathEscape": "路径越出 skill 目录（不在 {{root}} 内）",
+        "notFile": "目标不是普通文件: {{path}}",
+        "readFailed": "读 skill 文件失败: {{error}}",
+        "notText": "目标不是文本文件（含 NUL 字节），拒绝加载"
+      },
+      "browser": {
+        "invalidArgs": "{{tool}} 参数: {{error}}",
+        "tabAmbiguous": "后端有 {{count}} 个浏览器 webview，但无法确定哪个是用户当前看得见的那个，已拒绝操作（操作错页面比失败更糟）。请调用 browser_open 重新确立当前 tab 后重试。",
+        "tabNotFound": "tab {{id}} 在后端不存在（多半是上一轮结果里的历史 tab_id，webview 已被关闭或重建）。省略 tab_id 参数即可操作用户当前看得见的 tab。",
+        "tabNotVisible": "tab {{id}} 不是用户当前看得见的 tab（当前可见的是 {{visible}}），已拒绝操作。不要复用历史 tab_id，省略 tab_id 参数即可。",
+        "noActiveTab": "浏览器面板未打开或无 active tab；请先调用 browser_open 工具自己打开浏览器，不要让用户手动去点地球图标",
+        "tabSuspended": "tab {{tab_id}} 不存在或已 suspend",
+        "injectFailed": "注入 snapshot JS 失败: {{error}}",
+        "snapshotChannel": "snapshot oneshot 通道异常",
+        "snapshotTimeout": "snapshot 等待超时（5s）",
+        "clickEvalFailed": "click eval 失败: {{error}}",
+        "fillEvalFailed": "fill eval 失败: {{error}}",
+        "evalFailed": "eval 失败: {{error}}",
+        "navigateFailed": "导航到 {{url}} 失败：{{reason}}",
+        "urlParseFailed": "URL 解析失败: {{error}}",
+        "schemeNotAllowed": "不允许的 URL scheme: {{scheme}}（仅 http/https）",
+        "autoOpenFailed": "浏览器面板未打开，自动打开也失败: {{error}}",
+        "getWebviewFailed": "获取 webview 失败: {{error}}",
+        "navigateCmdFailed": "navigate 失败: {{error}}",
+        "autoOpenedNavigated": "浏览器面板原本未打开，已自动打开并直接导航到 {{url}}",
+        "pageLoaded": "页面已加载完成：{{url}}",
+        "loadTimeout": "已导航到 {{url}}，但 10s 内页面未完成加载（可能仍在加载中，可稍后重新 snapshot 确认）",
+        "clicked": "已点击 ref={{ref}} (tab {{tab}})",
+        "filled": "已填 ref={{ref}} value=<{{count}}字符> (tab {{tab}})",
+        "evaluated": "已 eval JS（{{count}} 字符，tab {{tab}}）",
+        "openFailed": "打开浏览器失败：{{reason}}",
+        "tabStateInconsistent": "浏览器当前 tab 状态不一致，尝试让前端重新确立失败: {{error}}",
+        "openBrowserFailed": "打开内嵌浏览器失败: {{error}}",
+        "alreadyOpen": "浏览器面板已经打开，复用当前 tab；要换页调 browser_navigate",
+        "openedLoaded": "已打开内嵌浏览器并加载完成: {{url}}",
+        "openedLoadTimeout": "已打开内嵌浏览器并导航到 {{url}}，但 10s 内页面未完成加载（可能仍在加载中，可稍后重新 snapshot 确认）",
+        "openedBlank": "已打开内嵌浏览器（空白页）"
+      }
+    },
+    "blacklist": {
+      "rmRoot": "rm -rf / 删根",
+      "ddDevice": "dd 写设备文件",
+      "mkfs": "mkfs 格式化",
+      "forkBomb": "fork bomb"
+    }
   },
   "settingsModal": {
     "title": "设置",
@@ -191,7 +415,8 @@
     "shell": "Shell",
     "shellDefaultLabel": "默认 shell 路径（留空 = 跟随系统 $SHELL）",
     "shellPlaceholder": "例如：/bin/zsh、/opt/homebrew/bin/fish",
-    "shellHelp": "修改后下次新开的标签生效；已有标签不受影响"
+    "shellHelp": "修改后下次新开的标签生效；已有标签不受影响",
+    "themeDefault": "默认"
   },
   "settings": {
     "editor": {
@@ -449,12 +674,29 @@
     "projectTooltip": "项目：{{name}}\n路径：{{path}}",
     "projectAria": "当前作用域：项目 {{name}}"
   },
+  "initProject": {
+    "title": "✨ 在这里开始一个 AI 项目？",
+    "desc": "你正在使用 AI 助手，但当前目录还不是 aitm 项目。要不要让 AI 长期记住这里？",
+    "nameLabel": "项目名",
+    "path": "路径：",
+    "initTitle": "是，初始化为项目（推荐）",
+    "initDesc": "在 ./.aitm/ 创建标记，AI 记住对话和命令上下文。适合：长期工作目录、git 仓库。",
+    "tempTitle": "不用，这次临时用一下",
+    "tempDesc": "对话存到全局桶；下次再来此目录会再问一次。",
+    "ignoreTitle": "别再问我这个目录",
+    "ignoreDesc": "永久加入忽略名单，纯终端模式。",
+    "closeSidebar": "关闭 AI 侧边栏",
+    "confirm": "确定",
+    "busy": "处理中…"
+  },
   "splitDivider": {
     "defaultAria": "调整宽度",
     "fileTreeWidth": "调整文件树宽度",
     "aiSidebarWidth": "调整 AI 侧栏宽度",
     "terminalEditorHeight": "拖拽调整终端 / 编辑器分屏高度",
-    "terminalBrowserRatio": "拖拽调整终端 / 浏览器分屏比例"
+    "terminalBrowserRatio": "拖拽调整终端 / 浏览器分屏比例",
+    "paneHorizontal": "拖拽调整左右分屏比例",
+    "paneVertical": "拖拽调整上下分屏比例"
   },
   "about": {
     "version": "版本 {{version}}",
@@ -532,7 +774,12 @@
     "reject": "拒绝",
     "approve": "批准",
     "alwaysAllow": "本会话都允许",
-    "alwaysAllowTitle": "本会话内自动批准 {{name}}，无需再确认（重启应用即失效）"
+    "alwaysAllowTitle": "本会话内自动批准 {{name}}，无需再确认（重启应用即失效）",
+    "titleDestructive": "⚠ AI 请求执行危险操作",
+    "title": "AI 请求执行工具",
+    "srDescription": "审批或拒绝 AI 发起的工具调用",
+    "toolLabel": "工具:",
+    "riskReasonLabel": "评分原因："
   },
   "browserPanel": {
     "collapse": "收起浏览器",
@@ -543,7 +790,12 @@
     "newTab": "新建标签",
     "newTabTitle": "新建标签 (⌘T)",
     "batchCloseRunning": "{{count}} 个标签里有正在运行的命令：{{names}}。全部关闭会终止这些命令。",
-    "batchCloseConfirm": "全部关闭"
+    "batchCloseConfirm": "全部关闭",
+    "emptyHint": "点击新建标签 · 或按",
+    "dropTop": "拖到此处在上侧拆分",
+    "dropBottom": "拖到此处在下侧拆分",
+    "dropLeft": "拖到此处在左侧拆分",
+    "dropRight": "拖到此处在右侧拆分"
   },
   "tmux": {
     "title": "tmux 会话",

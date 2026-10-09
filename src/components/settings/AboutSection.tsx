@@ -12,6 +12,7 @@ import {
 } from "../../lib/tauri";
 import { buildDiagnosticsText, buildIssueUrl } from "../../lib/diagnostics";
 import { checkForUpdate, type PendingUpdate } from "../../lib/updater";
+import { formatBackendError } from "../../lib/backendError";
 
 /** 项目主页（开源仓）。 */
 const REPO_URL = "https://github.com/kanfu-panda/aitm";
@@ -280,7 +281,7 @@ function TroubleshootingSection() {
       // shell_open 不等退出码，失败会被整个吞掉（点了没反应也没报错）。
       await shellReveal(target);
     } catch (e) {
-      setOpenFailure(String(e));
+      setOpenFailure(formatBackendError(e));
     }
   }, [info]);
 
