@@ -107,12 +107,18 @@ pub struct AiToolStartedEvent {
     pub conversation_id: String,
     pub call_id: String,
     pub name: String,
+    /// 已 pretty-print 的入参 JSON。自动批准的工具没有审批事件，界面靠这里显示参数。
+    pub args_preview: String,
 }
 
 #[derive(Serialize, Clone)]
 pub struct AiToolFinishedEvent {
     pub conversation_id: String,
     pub call_id: String,
+    /// 工具名与入参。黑名单拦截、未知工具这类既不审批也不执行的调用只有结束事件，
+    /// 界面要靠它们补出工具气泡。
+    pub name: String,
+    pub args_preview: String,
     pub content: String,
     pub is_error: bool,
     /// T-A3：工具执行耗时（毫秒）。仅真正执行工具（`execute_tool`）时为真实耗时；
@@ -794,6 +800,8 @@ async fn handle_one_tool_call(
             sink.emit_tool_finished(&AiToolFinishedEvent {
                 conversation_id: cid.to_string(),
                 call_id: tc.id.clone(),
+                name: tc.name.clone(),
+                args_preview: args_preview_of(tc),
                 content: r.content.clone(),
                 is_error: true,
                 elapsed_ms: 0,
@@ -907,6 +915,8 @@ async fn handle_run_command(
         sink.emit_tool_finished(&AiToolFinishedEvent {
             conversation_id: cid.to_string(),
             call_id: tc.id.clone(),
+            name: tc.name.clone(),
+            args_preview: args_preview_of(tc),
             content: r.content.clone(),
             is_error: true,
             elapsed_ms: 0,
@@ -990,6 +1000,11 @@ async fn handle_run_command(
     }
 }
 
+/// 工具入参的展示文本（pretty JSON），审批 / 开始 / 结束事件共用。
+fn args_preview_of(tc: &ToolCall) -> String {
+    serde_json::to_string_pretty(&tc.input).unwrap_or_default()
+}
+
 /// 用户拒绝时的统一返回 + emit。
 fn reject_tool(
     tc: &ToolCall,
@@ -1004,6 +1019,8 @@ fn reject_tool(
     sink.emit_tool_finished(&AiToolFinishedEvent {
         conversation_id: cid.to_string(),
         call_id: tc.id.clone(),
+        name: tc.name.clone(),
+        args_preview: args_preview_of(tc),
         content: r.content.clone(),
         is_error: true,
         elapsed_ms: 0,
@@ -1029,6 +1046,7 @@ async fn execute_tool(
         conversation_id: cid.to_string(),
         call_id: tc.id.clone(),
         name: tc.name.clone(),
+        args_preview: args_preview_of(tc),
     });
 
     // T-A3：包住真正的 execute 计时；耗时随 finished 事件带给前端展示。
@@ -1042,6 +1060,8 @@ async fn execute_tool(
     sink.emit_tool_finished(&AiToolFinishedEvent {
         conversation_id: cid.to_string(),
         call_id: tc.id.clone(),
+        name: tc.name.clone(),
+        args_preview: args_preview_of(tc),
         content: r.content.clone(),
         is_error: r.is_error,
         elapsed_ms,
@@ -1112,7 +1132,7 @@ async fn ask_user(
         tc.name.clone(),
     );
 
-    let args_preview = serde_json::to_string_pretty(&tc.input).unwrap_or_default();
+    let args_preview = args_preview_of(tc);
     sink.emit_tool_request(&AiToolRequestEvent {
         conversation_id: cid.to_string(),
         call_id: tc.id.clone(),
@@ -1791,6 +1811,54 @@ mod tests {
             reason.contains("L2") && reason.contains("ls"),
             "auto_approved_reason 应说明 L2 + ls: {reason}"
         );
+    }
+
+    // 自动批准的工具不经审批弹窗，界面与落盘只能从开始事件拿到参数
+    #[tokio::test]
+    async fn 应该_当工具被自动批准时_开始事件带上参数() {
+        let provider = provider_for_run_cmd("ls -la");
+        let sink = Arc::new(MockSink::default());
+        run_tool_loop(
+            base_request(),
+            provider,
+            Arc::new(ToolRegistry::with_defaults()),
+            make_ctx(),
+            sink.clone(),
+            "c1".into(),
+            Arc::new(ToolLoopHandle::new()),
+            None,
+        )
+        .await;
+
+        let started = sink.tool_started.lock().unwrap();
+        assert_eq!(started.len(), 1);
+        let args: serde_json::Value = serde_json::from_str(&started[0].args_preview).unwrap();
+        assert_eq!(args["cmd"], "ls -la");
+    }
+
+    // 黑名单拦截不经审批也不执行，只有结束事件；它必须自带工具名与参数，界面才画得出气泡
+    #[tokio::test]
+    async fn 应该_当命令被黑名单拦截时_结束事件带上工具名与参数() {
+        let provider = provider_for_run_cmd("mkfs /dev/sda");
+        let sink = Arc::new(MockSink::default());
+        run_tool_loop(
+            base_request(),
+            provider,
+            Arc::new(ToolRegistry::with_defaults()),
+            make_ctx(),
+            sink.clone(),
+            "c1".into(),
+            Arc::new(ToolLoopHandle::new()),
+            None,
+        )
+        .await;
+
+        assert!(sink.tool_started.lock().unwrap().is_empty());
+        let fin = sink.tool_finished.lock().unwrap();
+        assert_eq!(fin.len(), 1);
+        assert_eq!(fin[0].name, "run_command");
+        let args: serde_json::Value = serde_json::from_str(&fin[0].args_preview).unwrap();
+        assert_eq!(args["cmd"], "mkfs /dev/sda");
     }
 
     /// L3 白名单命中：HIGH 命令（mv）配 mv * 白名单 → 自动批，原因 = "白名单：mv *"。
@@ -3105,6 +3173,8 @@ mod tests {
         .await;
 
         let finished = sink.tool_finished.lock().unwrap();
+        // 未知工具同样只有结束事件，要自带工具名，界面才画得出气泡
+        assert_eq!(finished[0].name, "no_such_tool");
         let v: serde_json::Value =
             serde_json::from_str(&finished[0].content).expect("界面收到的应是带编码的结果");
         assert_eq!(v["code"], "tool.unknownTool");

@@ -334,6 +334,17 @@ export async function installTauriMock(
       fsReadPreviewResult = r;
     };
 
+    // fs_read_pdf 钩子。spec 传 PDF 的 base64（返回 ArrayBuffer），
+    // 或传 { error } 让命令以该字符串失败（模拟超限等后端错误）。
+    let fsReadPdfMock: { base64?: string; error?: string } = {};
+    (
+      window as unknown as {
+        __setFsReadPdf: (r: { base64?: string; error?: string }) => void;
+      }
+    ).__setFsReadPdf = (r) => {
+      fsReadPdfMock = r;
+    };
+
     // v0.7.1-A T5：file-preview spec 需要 FileTree 渲染出可点击文件。
     // FileTree 用 sessionCurrentCwd 拿 cwd + fsTree 拉目录；默认 mock 返
     // cwd=null（FileTree 显示"无 cwd"），无文件可点。
@@ -841,6 +852,15 @@ export async function installTauriMock(
         // === Phase 3A T3：文件读取 stub（给 MarkdownPreviewDialog 测） ===
         if (cmd === "fs_read_text") {
           return "# Mock\n";
+        }
+
+        // === PDF 预览按原始字节读取 ===
+        if (cmd === "fs_read_pdf") {
+          if (fsReadPdfMock.error !== undefined) throw fsReadPdfMock.error;
+          const bin = atob(fsReadPdfMock.base64 ?? "");
+          const bytes = new Uint8Array(bin.length);
+          for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+          return bytes.buffer;
         }
 
         // === v0.5.0-C T1：FilePreviewDialog fs_read_preview（v0.7.1-A T5 加 mock）===

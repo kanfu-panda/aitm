@@ -35,10 +35,13 @@ test("LOW 风险：tool_started → tool_finished 直接显示完成气泡", asy
       conversation_id: cid,
       call_id: "low-1",
       name: "read_file",
+      args_preview: '{\n  "path": "a.txt"\n}',
     });
     emit("ai:tool_finished", {
       conversation_id: cid,
       call_id: "low-1",
+      name: "read_file",
+      args_preview: '{\n  "path": "a.txt"\n}',
       content: "hello world",
       is_error: false,
     });

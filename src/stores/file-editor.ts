@@ -31,6 +31,7 @@
 
 import { create } from "zustand";
 import { fileWrite, fsReadText, fsStat, settingsUpdate } from "../lib/tauri";
+import { isPdfPath } from "../lib/pdf";
 import { useSettingsStore } from "./settings";
 import { extFromPath } from "../lib/cm-lang";
 
@@ -54,6 +55,8 @@ export interface OpenFile {
   cursorCol: number;
   /** T5e：md 文件的展示模式（preview / raw）；非 md 为 undefined。 */
   mdMode?: "preview" | "raw";
+  /** 标签页类型。缺省为文本；"pdf" 为只读的 PDF 预览（content 恒为空）。 */
+  kind?: "text" | "pdf";
   /** v0.10.3 #10：上次 read/save 时磁盘的 mtime（ms）；用于外部改动检测对比 */
   lastMtimeMs?: number;
   /** v0.10.3 #10：磁盘上文件被外部修改了但本地 buffer dirty 没办法静默 reload，
@@ -225,6 +228,31 @@ export const useFileEditorStore = create<FileEditorState>((set, get) => ({
     }
     inflightOpen.add(path);
     try {
+      // PDF 不读文本，由 PdfViewer 自己按字节加载；这里只取 mtime 作外部修改基线
+      if (isPdfPath(path)) {
+        const meta = await fsStat(path).catch(() => null);
+        if (get().openFiles.find((f) => f.id === path)) {
+          set({ activeId: path });
+          return;
+        }
+        const file: OpenFile = {
+          id: path,
+          path,
+          content: "",
+          original: "",
+          dirty: false,
+          kind: "pdf",
+          cursorLine: 1,
+          cursorCol: 1,
+          lastMtimeMs: meta?.exists ? meta.mtime_ms : undefined,
+        };
+        set((s) => ({ openFiles: [...s.openFiles, file], activeId: path }));
+        schedulePersist(
+          get().openFiles.map((f) => f.path),
+          path,
+        );
+        return;
+      }
       // 读盘 + 同时拿 mtime（v0.10.3 #10 外部改动检测基线）
       const content = await fsReadText(path, MAX_READ_BYTES);
       const meta = await fsStat(path).catch(() => null);
@@ -311,8 +339,9 @@ export const useFileEditorStore = create<FileEditorState>((set, get) => ({
 
   saveFile: async (id) => {
     const target = get().openFiles.find((f) => f.id === id);
-    if (!target) {
+    if (!target || target.kind === "pdf") {
       // 找不到 tab 静默返；调用方一般是已经知道 id 的（Cmd+S 拿当前 active）。
+      // PDF 标签页只读，没有可保存的内容。
       return;
     }
     // 抓个快照避免 race（保存中用户继续打字时，落盘的内容是当时按 Cmd+S 那刻的

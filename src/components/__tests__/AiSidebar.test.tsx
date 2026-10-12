@@ -509,6 +509,45 @@ describe("AiSidebar", () => {
     expect(screen.getByText(/错误/)).toBeInTheDocument();
   });
 
+  it("应该_当自动批准的工具开始执行时_气泡显示开始事件带来的参数", async () => {
+    render(<AiSidebar />);
+    await waitReady();
+
+    act(() =>
+      toolStartListener.fire("conv-1", {
+        conversation_id: "conv-1",
+        call_id: "call-auto-1",
+        name: "run_command",
+        args_preview: '{\n  "cmd": "ls -la"\n}',
+      }),
+    );
+
+    const bubble = await screen.findByTestId("tool-call-bubble");
+    expect(bubble).toHaveTextContent("cmd=ls -la");
+  });
+
+  it("应该_当只收到结束事件时_补出带工具名与参数的气泡", async () => {
+    render(<AiSidebar />);
+    await waitReady();
+
+    act(() =>
+      toolFinListener.fire("conv-1", {
+        conversation_id: "conv-1",
+        call_id: "call-blocked-1",
+        name: "run_command",
+        args_preview: '{\n  "cmd": "mkfs /dev/sda"\n}',
+        content: "L1 黑名单拦截：mkfs 格式化（命令 = mkfs /dev/sda）",
+        is_error: true,
+        elapsed_ms: 0,
+      }),
+    );
+
+    const bubble = await screen.findByTestId("tool-call-bubble");
+    expect(bubble).toHaveAttribute("data-status", "error");
+    expect(bubble).toHaveTextContent("run_command");
+    expect(bubble).toHaveTextContent("cmd=mkfs /dev/sda");
+  });
+
   it("低风险工具调用：ai:tool_started 展示运行中气泡，ai:tool_finished 展示完成结果", async () => {
     render(<AiSidebar />);
     await waitReady();
@@ -518,6 +557,7 @@ describe("AiSidebar", () => {
         conversation_id: "conv-1",
         call_id: "call-low-1",
         name: "read_file",
+        args_preview: '{\n  "path": "a.txt"\n}',
       }),
     );
 
@@ -529,6 +569,8 @@ describe("AiSidebar", () => {
       toolFinListener.fire("conv-1", {
         conversation_id: "conv-1",
         call_id: "call-low-1",
+        name: "read_file",
+        args_preview: '{\n  "path": "a.txt"\n}',
         content: "文件内容...",
         is_error: false,
         elapsed_ms: 120,
