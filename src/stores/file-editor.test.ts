@@ -188,7 +188,7 @@ describe("useFileEditorStore", () => {
     });
   });
 
-  describe("PDF 标签页", () => {
+  describe("只读预览标签页", () => {
     it("应该_当打开_pdf_时_不读文本_以只读_pdf_标签页打开", async () => {
       await useFileEditorStore.getState().openFile("/w/Report.PDF");
       expect(fsReadTextMock).not.toHaveBeenCalled();
@@ -199,16 +199,45 @@ describe("useFileEditorStore", () => {
       expect(useFileEditorStore.getState().activeId).toBe("/w/Report.PDF");
     });
 
-    it("应该_当保存_pdf_标签页时_不写盘", async () => {
+    it.each([
+      ["/w/shot.PNG", "image"],
+      ["/w/icon.svg", "image"],
+      ["/w/sales.xlsx", "sheet"],
+      ["/w/old.xls", "sheet"],
+      ["/w/spec.docx", "docx"],
+      ["/w/deck.pptx", "pptx"],
+      ["/w/legacy.doc", "unsupported"],
+    ])("应该_当打开_%s_时_不读文本_kind_为_%s", async (path, kind) => {
+      await useFileEditorStore.getState().openFile(path);
+      expect(fsReadTextMock).not.toHaveBeenCalled();
+      const f = useFileEditorStore.getState().openFiles[0];
+      expect(f.kind).toBe(kind);
+      expect(f.content).toBe("");
+      expect(f.dirty).toBe(false);
+    });
+
+    it("应该_当保存预览标签页时_不写盘", async () => {
       await useFileEditorStore.getState().openFile("/w/a.pdf");
+      await useFileEditorStore.getState().openFile("/w/b.xlsx");
       await useFileEditorStore.getState().saveFile("/w/a.pdf");
+      await useFileEditorStore.getState().saveFile("/w/b.xlsx");
       expect(fileWriteMock).not.toHaveBeenCalled();
     });
 
-    it("应该_当打开普通文本时_kind_不是_pdf", async () => {
+    it("应该_当打开普通文本时_kind_不是预览类型", async () => {
       fsReadTextMock.mockResolvedValueOnce("hi");
       await useFileEditorStore.getState().openFile("/w/a.txt");
-      expect(useFileEditorStore.getState().openFiles[0].kind).not.toBe("pdf");
+      expect(useFileEditorStore.getState().openFiles[0].kind ?? "text").toBe("text");
+    });
+
+    it("应该_当打开_csv_tsv_时_按文本读取且默认表格模式", async () => {
+      fsReadTextMock.mockResolvedValueOnce("a,b\n1,2").mockResolvedValueOnce("a\tb");
+      await useFileEditorStore.getState().openFile("/w/data.csv");
+      await useFileEditorStore.getState().openFile("/w/data.TSV");
+      const [csv, tsv] = useFileEditorStore.getState().openFiles;
+      expect(csv.content).toBe("a,b\n1,2");
+      expect(csv.mdMode).toBe("preview");
+      expect(tsv.mdMode).toBe("preview");
     });
   });
 

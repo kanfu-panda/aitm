@@ -167,8 +167,8 @@
       "accessFailed": "パスへのアクセスに失敗しました：{{path}}：{{error}}",
       "deleteDirFailed": "ディレクトリの削除に失敗しました：{{path}}：{{error}}",
       "deleteFileFailed": "ファイルの削除に失敗しました：{{path}}：{{error}}",
-      "notPdf": "PDF ファイルではありません：{{path}}",
-      "pdfTooLarge": "PDF ファイルが大きすぎます（{{size}} バイト、上限 {{max}} バイト）"
+      "unsupportedPreview": "このファイルはプレビューに対応していません：{{path}}",
+      "fileTooLarge": "ファイルが大きすぎます（{{size}} バイト、上限 {{max}} バイト）"
     },
     "shell": {
       "unsupportedScheme": "サポートされていない URL スキームです：{{scheme}}",
@@ -849,8 +849,28 @@
     "matchCount": "{{current}} / {{total}}",
     "noMatch": "一致なし",
     "tooLarge": "PDF ファイルが大きすぎるため、ここではプレビューできません（{{size}}、上限 {{max}}）",
-    "encrypted": "この PDF は暗号化されているため、まだプレビューできません",
     "invalid": "この PDF を読み込めません。破損している可能性があります",
-    "openWithDefault": "既定のアプリで開く"
+    "openWithDefault": "既定のアプリで開く",
+    "passwordPrompt": "この PDF は暗号化されています。パスワードを入力してください",
+    "passwordPlaceholder": "パスワード",
+    "passwordSubmit": "開く",
+    "passwordIncorrect": "パスワードが違います。もう一度入力してください"
+  },
+  "preview": {
+    "loading": "読み込み中…",
+    "tooLarge": "ファイルが大きすぎるため、ここではプレビューできません（{{size}}、上限 {{max}}）",
+    "invalid": "このファイルを読み込めません。破損しているか、形式が正しくない可能性があります",
+    "unsupported": "この形式のプレビューにはまだ対応していません",
+    "openWithDefault": "既定のアプリで開く",
+    "zoomIn": "拡大",
+    "zoomOut": "縮小",
+    "fitWindow": "ウィンドウに合わせる",
+    "actualSize": "実際のサイズ",
+    "emptySheet": "空のシート",
+    "truncated": "先頭の {{rows}} 行・{{cols}} 列のみ表示しています（全 {{totalRows}} 行・{{totalCols}} 列）",
+    "sheets": "シート",
+    "tableView": "表",
+    "textView": "テキスト",
+    "slideLabel": "{{index}} / {{total}} 枚目"
   }
 }

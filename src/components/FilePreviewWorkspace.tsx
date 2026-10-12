@@ -25,15 +25,22 @@
  * 对称，消除"切完还得再点一下才能输入"的手感断裂。
  * ========================================================================== */
 
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useFileEditorStore } from "../stores/file-editor";
+import { isPreviewFile, useFileEditorStore, type OpenFile } from "../stores/file-editor";
 import { useFocusSurfaceStore } from "../stores/focus-surface";
 import { fsReadText, fsStat } from "../lib/tauri";
 import FileTabBar from "./FileTabBar";
 import FileEditorPane, { type FileEditorPaneHandle } from "./FileEditorPane";
 import CloseFileConfirmDialog from "./CloseFileConfirmDialog";
-import PdfViewer from "./pdf/PdfViewer";
+import PreviewFallback, { PreviewLoading } from "./preview/PreviewFallback";
+
+// 各预览查看器按需加载——pdf.js、SheetJS、docx-preview、jszip 不进首屏包
+const PdfViewer = lazy(() => import("./pdf/PdfViewer"));
+const ImageViewer = lazy(() => import("./preview/ImageViewer"));
+const SpreadsheetViewer = lazy(() => import("./preview/SpreadsheetViewer"));
+const DocxViewer = lazy(() => import("./preview/DocxViewer"));
+const PptxViewer = lazy(() => import("./preview/PptxViewer"));
 
 /** v0.10.3 #10：外部改动轮询间隔（ms）。3s 平衡及时性 + IPC 频率。 */
 const EXTERNAL_CHANGE_POLL_MS = 3_000;
@@ -179,8 +186,8 @@ export default function FilePreviewWorkspace() {
       const store = useFileEditorStore.getState();
       const fresh = store.openFiles.find((f) => f.path === activePath);
       if (!fresh) return; // tab 已关
-      if (fresh.kind === "pdf") {
-        // PDF 不读文本：只更新基线，PdfViewer 以 lastMtimeMs 为 reloadKey 重新加载
+      if (isPreviewFile(fresh)) {
+        // 二进制预览不读文本：只更新基线，查看器以 lastMtimeMs 为 reloadKey 重新加载
         store.reloadFromDisk(fresh.id, "", meta.mtime_ms);
       } else if (fresh.dirty) {
         store.markStale(fresh.id, meta.mtime_ms);
@@ -298,8 +305,8 @@ export default function FilePreviewWorkspace() {
         </div>
       )}
       <div className="flex-1 min-h-0 min-w-0 overflow-hidden">
-        {activeFile?.kind === "pdf" ? (
-          <PdfViewer path={activeFile.path} reloadKey={activeFile.lastMtimeMs} />
+        {activeFile && isPreviewFile(activeFile) ? (
+          <PreviewPane file={activeFile} />
         ) : (
           activeFile && <FileEditorPane ref={editorPaneRef} file={activeFile} />
         )}
@@ -310,6 +317,43 @@ export default function FilePreviewWorkspace() {
         onDiscard={onDiscard}
         onCancel={onCancel}
       />
+    </div>
+  );
+}
+
+/** 二进制预览标签页：按类型挑选查看器；切到另一个文件时以 path 为 key 重建。 */
+function PreviewPane({ file }: { file: OpenFile }) {
+  const { t } = useTranslation();
+  const props = { path: file.path, reloadKey: file.lastMtimeMs };
+  let viewer;
+  switch (file.kind) {
+    case "pdf":
+      viewer = <PdfViewer {...props} />;
+      break;
+    case "image":
+      viewer = <ImageViewer {...props} />;
+      break;
+    case "sheet":
+      viewer = <SpreadsheetViewer {...props} />;
+      break;
+    case "docx":
+      viewer = <DocxViewer {...props} />;
+      break;
+    case "pptx":
+      viewer = <PptxViewer {...props} />;
+      break;
+    default:
+      viewer = (
+        <PreviewFallback
+          testId="preview-unsupported"
+          message={t("preview.unsupported")}
+          path={file.path}
+        />
+      );
+  }
+  return (
+    <div className="relative h-full" key={file.path}>
+      <Suspense fallback={<PreviewLoading />}>{viewer}</Suspense>
     </div>
   );
 }

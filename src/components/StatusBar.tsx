@@ -8,7 +8,7 @@ import {
   type SystemMetricsEvent,
 } from "../lib/tauri";
 import { useSettingsStore } from "../stores/settings";
-import { useFileEditorStore } from "../stores/file-editor";
+import { isPreviewFile, useFileEditorStore } from "../stores/file-editor";
 import { useTabsStore } from "../stores/tabs";
 import { useActiveSurface } from "../lib/useActiveSurface";
 import { languageLabel } from "../lib/cm-lang";
@@ -48,8 +48,8 @@ export default function StatusBar() {
     s.openFiles.find((f) => f.id === s.activeId) ?? null,
   );
   const surface = useActiveSurface();
-  // PDF 标签页是只读预览，没有光标 / 编码 / 换行符可言
-  const showEditorInfo = surface === "editor" && activeFile !== null && activeFile.kind !== "pdf";
+  // 预览标签页（PDF / 图片 / Office）是只读的，没有光标 / 编码 / 换行符可言
+  const showEditorInfo = surface === "editor" && activeFile !== null && !isPreviewFile(activeFile);
 
   // HR3-3：左段 / 中段 / 磁盘段需要的"当前焦点资源 path / cwd"
   const activeTabCwd = useTabsStore((s) => {

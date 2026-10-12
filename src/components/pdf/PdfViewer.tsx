@@ -10,9 +10,9 @@
 
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { useTranslation } from "react-i18next";
-import { fsReadPdf, shellOpen } from "../../lib/tauri";
+import { fsReadBinary, shellOpen } from "../../lib/tauri";
 import { openPdfViewer, type PdfController, type PdfFindResult } from "../../lib/pdfjs";
-import { nextZoom } from "../../lib/pdf";
+import { nextZoom } from "../../lib/zoom";
 import { backendErrorCode, formatBackendError } from "../../lib/backendError";
 
 interface Props {
@@ -25,8 +25,10 @@ type ViewState =
   | { status: "loading" }
   | { status: "ready" }
   | { status: "tooLarge"; size: number; max: number }
-  // encrypted / invalid 在渲染时翻译（切换界面语言后跟着变）；read 为后端错误原文
-  | { status: "error"; kind: "encrypted" | "invalid" }
+  // 需要密码；wrong 为上一次密码错误，checking 为正在校验（表单不卸载，输入框焦点不丢）
+  | { status: "password"; wrong: boolean; checking?: boolean }
+  // invalid 在渲染时翻译（切换界面语言后跟着变）；read 为后端错误原文
+  | { status: "error"; kind: "invalid" }
   | { status: "error"; kind: "read"; error: unknown };
 
 const MB = 1024 * 1024;
@@ -48,6 +50,10 @@ export default function PdfViewer({ path, reloadKey }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const ctlRef = useRef<PdfController | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
+  const passwordRef = useRef<HTMLInputElement | null>(null);
+  // 读到的字节：输入密码重试时复用，不必重新读盘
+  const bytesRef = useRef<ArrayBuffer | null>(null);
+  const cancelledRef = useRef(false);
 
   const [view, setView] = useState<ViewState>({ status: "loading" });
   const [pageCount, setPageCount] = useState(0);
@@ -57,9 +63,54 @@ export default function PdfViewer({ path, reloadKey }: Props) {
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [findResult, setFindResult] = useState<PdfFindResult | null>(null);
+  const [password, setPassword] = useState("");
+
+  // 用字节（和密码）打开文档；返回是否已被取消。密码只存在于组件 state，不落盘
+  const openWith = useCallback(async (data: ArrayBuffer, pwd: string | undefined) => {
+    if (!containerRef.current) return;
+    let ctl: PdfController;
+    try {
+      ctl = await openPdfViewer(
+        containerRef.current,
+        data,
+        {
+          onPageChange: (n) => {
+            setPage(n);
+            setPageText(String(n));
+          },
+          onScaleChange: setScale,
+          onFindResult: setFindResult,
+        },
+        pwd,
+      );
+    } catch (e) {
+      if (cancelledRef.current) return;
+      const err = e as { name?: string; code?: number };
+      if (err.name === "PasswordException") {
+        setPassword("");
+        setView({ status: "password", wrong: err.code === 2 });
+      } else {
+        setView({ status: "error", kind: "invalid" });
+      }
+      return;
+    }
+    if (cancelledRef.current) {
+      ctl.destroy();
+      return;
+    }
+    ctlRef.current?.destroy();
+    ctlRef.current = ctl;
+    setPageCount(ctl.pageCount);
+    setPage(1);
+    setPageText("1");
+    setView({ status: "ready" });
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
+    cancelledRef.current = false;
+    bytesRef.current = null;
+    setPassword("");
     setView({ status: "loading" });
     setSearchOpen(false);
     setFindResult(null);
@@ -68,11 +119,11 @@ export default function PdfViewer({ path, reloadKey }: Props) {
     void (async () => {
       let data: ArrayBuffer;
       try {
-        data = await fsReadPdf(path);
+        data = await fsReadBinary(path);
       } catch (e) {
         if (cancelled) return;
         const coded = backendErrorCode(e);
-        if (coded?.code === "fs.pdfTooLarge") {
+        if (coded?.code === "fs.fileTooLarge") {
           setView({
             status: "tooLarge",
             size: Number(coded.params.size),
@@ -83,45 +134,34 @@ export default function PdfViewer({ path, reloadKey }: Props) {
         }
         return;
       }
-      if (cancelled || !containerRef.current) return;
-
-      let ctl: PdfController;
-      try {
-        ctl = await openPdfViewer(containerRef.current, data, {
-          onPageChange: (n) => {
-            setPage(n);
-            setPageText(String(n));
-          },
-          onScaleChange: setScale,
-          onFindResult: setFindResult,
-        });
-      } catch (e) {
-        if (cancelled) return;
-        const name = (e as { name?: string }).name;
-        setView({ status: "error", kind: name === "PasswordException" ? "encrypted" : "invalid" });
-        return;
-      }
-      if (cancelled) {
-        ctl.destroy();
-        return;
-      }
-      ctlRef.current = ctl;
-      setPageCount(ctl.pageCount);
-      setPage(1);
-      setPageText("1");
-      setView({ status: "ready" });
+      if (cancelled) return;
+      bytesRef.current = data;
+      await openWith(data, undefined);
     })();
 
     return () => {
       cancelled = true;
+      cancelledRef.current = true;
+      bytesRef.current = null;
       ctlRef.current?.destroy();
       ctlRef.current = null;
     };
-  }, [path, reloadKey]);
+  }, [path, reloadKey, openWith]);
 
   useEffect(() => {
     if (searchOpen) searchRef.current?.focus();
   }, [searchOpen]);
+
+  useEffect(() => {
+    if (view.status === "password") passwordRef.current?.focus();
+  }, [view]);
+
+  const submitPassword = () => {
+    if (!password || !bytesRef.current) return;
+    if (view.status !== "password" || view.checking) return;
+    setView({ status: "password", wrong: false, checking: true });
+    void openWith(bytesRef.current, password);
+  };
 
   const commitPage = () => {
     const n = Number(pageText);
@@ -332,6 +372,46 @@ export default function PdfViewer({ path, reloadKey }: Props) {
             "pdf-too-large",
             t("pdfViewer.tooLarge", { size: formatMb(view.size), max: formatMb(view.max) }),
           )}
+        {view.status === "password" && (
+          <div
+            className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-6 text-center"
+            data-testid="pdf-password"
+          >
+            <p className="text-sm text-[var(--c-text-muted)]">{t("pdfViewer.passwordPrompt")}</p>
+            <div className="flex items-center gap-2">
+              <input
+                ref={passwordRef}
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    submitPassword();
+                  }
+                }}
+                placeholder={t("pdfViewer.passwordPlaceholder")}
+                aria-label={t("pdfViewer.passwordPlaceholder")}
+                {...PLAIN_INPUT}
+                className="w-48 rounded border border-[var(--c-border)] bg-transparent px-2 py-1 text-sm text-[var(--c-text-base)] outline-none"
+                data-testid="pdf-password-input"
+              />
+              <button
+                onClick={submitPassword}
+                disabled={!password || view.checking}
+                className="rounded border border-[var(--c-success)] bg-[var(--c-success-bg)] px-3 py-1 text-sm text-[var(--c-success-fg)] hover:opacity-90 disabled:opacity-40"
+                data-testid="pdf-password-submit"
+              >
+                {t("pdfViewer.passwordSubmit")}
+              </button>
+            </div>
+            {view.wrong && (
+              <p className="text-xs text-[var(--c-error)]" data-testid="pdf-password-error">
+                {t("pdfViewer.passwordIncorrect")}
+              </p>
+            )}
+          </div>
+        )}
         {view.status === "error" &&
           fallback(
             "pdf-error",

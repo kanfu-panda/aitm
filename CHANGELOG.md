@@ -2,6 +2,18 @@
 
 All notable changes to aitm will be documented in this file. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.0] — 2026-10-12
+
+### 新增
+
+- 文件工作区新增图片与 Office 文档预览（只读标签页）：
+  - 图片（png / jpg / gif / webp / svg / bmp / ico）：适应窗口、缩放、实际大小，显示原始尺寸
+  - Excel（xlsx / xls）：表格显示行号列号与合并单元格，底部切换工作表；大表只显示前 1000 行、100 列并提示
+  - CSV / TSV：默认以表格显示，可切回文本编辑
+  - Word（docx）按版式显示；PowerPoint（pptx）逐页显示文字、图片与纯色背景（图表、SmartArt、渐变等暂不显示）
+  - 老格式 .doc、超过大小上限（图片 50MB、Office 20MB）或无法解析的文件给出提示，并可用默认应用打开
+- 打开带密码的 PDF 时可在预览区输入密码，输错可重试，密码不保存。此前加密 PDF 只提示"已加密"、无法输入密码
+
 ## [1.7.0] — 2026-10-12
 
 ### 新增

@@ -167,8 +167,8 @@
       "accessFailed": "访问路径失败：{{path}}：{{error}}",
       "deleteDirFailed": "删除目录失败：{{path}}：{{error}}",
       "deleteFileFailed": "删除文件失败：{{path}}：{{error}}",
-      "notPdf": "不是 PDF 文件：{{path}}",
-      "pdfTooLarge": "PDF 文件过大（{{size}} 字节，上限 {{max}} 字节）"
+      "unsupportedPreview": "不支持预览此类文件：{{path}}",
+      "fileTooLarge": "文件过大（{{size}} 字节，上限 {{max}} 字节）"
     },
     "shell": {
       "unsupportedScheme": "不支持的 URL scheme: {{scheme}}",
@@ -849,8 +849,28 @@
     "matchCount": "{{current}} / {{total}}",
     "noMatch": "无匹配",
     "tooLarge": "PDF 文件过大（{{size}}，上限 {{max}}），无法在此预览",
-    "encrypted": "该 PDF 已加密，暂不支持预览",
     "invalid": "无法解析该 PDF 文件，可能已损坏",
-    "openWithDefault": "用默认应用打开"
+    "openWithDefault": "用默认应用打开",
+    "passwordPrompt": "此 PDF 已加密，请输入密码",
+    "passwordPlaceholder": "密码",
+    "passwordSubmit": "打开",
+    "passwordIncorrect": "密码错误，请重试"
+  },
+  "preview": {
+    "loading": "正在加载…",
+    "tooLarge": "文件过大，无法在此预览（{{size}}，上限 {{max}}）",
+    "invalid": "无法解析此文件，它可能已损坏或格式不符",
+    "unsupported": "暂不支持预览此格式",
+    "openWithDefault": "用默认应用打开",
+    "zoomIn": "放大",
+    "zoomOut": "缩小",
+    "fitWindow": "适应窗口",
+    "actualSize": "实际大小",
+    "emptySheet": "空工作表",
+    "truncated": "仅显示前 {{rows}} 行、{{cols}} 列（共 {{totalRows}} 行、{{totalCols}} 列）",
+    "sheets": "工作表",
+    "tableView": "表格",
+    "textView": "文本",
+    "slideLabel": "第 {{index}} 张 / 共 {{total}} 张"
   }
 }

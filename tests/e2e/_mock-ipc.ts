@@ -334,15 +334,24 @@ export async function installTauriMock(
       fsReadPreviewResult = r;
     };
 
-    // fs_read_pdf 钩子。spec 传 PDF 的 base64（返回 ArrayBuffer），
-    // 或传 { error } 让命令以该字符串失败（模拟超限等后端错误）。
-    let fsReadPdfMock: { base64?: string; error?: string } = {};
+    // fs_read_binary 钩子。按路径给出文件的 base64
+    //（命令返回 ArrayBuffer），或 { error } 让命令以该字符串失败（模拟超限等后端错误）；
+    // 路径 "*" 为兜底。
+    type BinaryMock = { base64?: string; error?: string };
+    const fsReadBinaryMocks: Record<string, BinaryMock> = {};
     (
       window as unknown as {
-        __setFsReadPdf: (r: { base64?: string; error?: string }) => void;
+        __setFsReadBinary: (r: BinaryMock, path?: string) => void;
       }
-    ).__setFsReadPdf = (r) => {
-      fsReadPdfMock = r;
+    ).__setFsReadBinary = (r, path = "*") => {
+      fsReadBinaryMocks[path] = r;
+    };
+    // 按路径覆盖 fs_read_text 的返回（默认仍是 "# Mock\n"）
+    const fsReadTextMocks: Record<string, string> = {};
+    (
+      window as unknown as { __setFsReadText: (path: string, content: string) => void }
+    ).__setFsReadText = (path, content) => {
+      fsReadTextMocks[path] = content;
     };
 
     // v0.7.1-A T5：file-preview spec 需要 FileTree 渲染出可点击文件。
@@ -851,13 +860,16 @@ export async function installTauriMock(
 
         // === Phase 3A T3：文件读取 stub（给 MarkdownPreviewDialog 测） ===
         if (cmd === "fs_read_text") {
-          return "# Mock\n";
+          const p = (args as { path?: string } | undefined)?.path ?? "";
+          return fsReadTextMocks[p] ?? "# Mock\n";
         }
 
-        // === PDF 预览按原始字节读取 ===
-        if (cmd === "fs_read_pdf") {
-          if (fsReadPdfMock.error !== undefined) throw fsReadPdfMock.error;
-          const bin = atob(fsReadPdfMock.base64 ?? "");
+        // === 预览按原始字节读取 ===
+        if (cmd === "fs_read_binary") {
+          const p = (args as { path?: string } | undefined)?.path ?? "";
+          const m = fsReadBinaryMocks[p] ?? fsReadBinaryMocks["*"] ?? {};
+          if (m.error !== undefined) throw m.error;
+          const bin = atob(m.base64 ?? "");
           const bytes = new Uint8Array(bin.length);
           for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
           return bytes.buffer;

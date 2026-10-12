@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { ZOOM_STEPS, isPdfPath, nextZoom } from "../pdf";
+import { ZOOM_STEPS, nextZoom } from "../zoom";
 
-describe("nextZoom（PDF 缩放档位）", () => {
+describe("nextZoom（PDF / 图片共用的缩放档位）", () => {
   it("应该_当放大时_取比当前大的最近档位", () => {
     expect(nextZoom(1, "in")).toBe(1.25);
     expect(nextZoom(1.1, "in")).toBe(1.25);
@@ -23,11 +23,3 @@ describe("nextZoom（PDF 缩放档位）", () => {
   });
 });
 
-describe("isPdfPath", () => {
-  it("应该_按扩展名判断且不区分大小写", () => {
-    expect(isPdfPath("/a/b.pdf")).toBe(true);
-    expect(isPdfPath("/a/B.PDF")).toBe(true);
-    expect(isPdfPath("/a/b.pdf.txt")).toBe(false);
-    expect(isPdfPath("/a/pdf")).toBe(false);
-  });
-});

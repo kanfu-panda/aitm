@@ -29,6 +29,7 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useMemo,
   useRef,
 } from "react";
 import type { ComponentProps, ReactNode } from "react";
@@ -42,6 +43,10 @@ import CodeMirrorViewer, {
 import { useFileEditorStore, type OpenFile } from "../stores/file-editor";
 import { remarkStripComments } from "../lib/remark-strip-comments";
 import { MarkdownLink } from "./MarkdownLink";
+import SpreadsheetGrid from "./preview/SpreadsheetGrid";
+import { parseDelimited } from "../lib/csv";
+import { truncateRows } from "../lib/sheet";
+import { isTablePath } from "../lib/preview";
 
 interface Props {
   file: OpenFile;
@@ -93,6 +98,15 @@ function MdPre({ children, className, ...rest }: ComponentProps<"pre">) {
       {children}
     </pre>
   );
+}
+
+/** csv / tsv 表格视图：按扩展名选分隔符，截断后交给 SpreadsheetGrid。 */
+function CsvTable({ path, content }: { path: string; content: string }) {
+  const data = useMemo(() => {
+    const delimiter = path.toLowerCase().endsWith(".tsv") ? "\t" : ",";
+    return truncateRows(parseDelimited(content, delimiter));
+  }, [path, content]);
+  return <SpreadsheetGrid rows={data.rows} totalRows={data.totalRows} totalCols={data.totalCols} />;
 }
 
 const FileEditorPane = forwardRef<FileEditorPaneHandle, Props>(
@@ -158,7 +172,9 @@ const FileEditorPane = forwardRef<FileEditorPaneHandle, Props>(
     file.language === "md" ||
     file.language === "markdown" ||
     file.language === "mdx";
+  const isTable = isTablePath(file.path);
   const showPreview = isMd && file.mdMode === "preview";
+  const showTable = isTable && file.mdMode === "preview";
 
   // v1.1.0 F3：preview 模式聚焦滚动容器，raw/代码模式转发到 CodeMirror。
   useImperativeHandle(
@@ -181,7 +197,7 @@ const FileEditorPane = forwardRef<FileEditorPaneHandle, Props>(
       className="flex h-full w-full min-h-0 min-w-0 flex-col"
       data-testid={`file-editor-pane-${file.id}`}
     >
-      {isMd && (
+      {(isMd || isTable) && (
         <div
           className="flex items-center gap-1 px-2 py-1 border-b border-[var(--c-border)] bg-[var(--c-bg-elev-1)]"
           data-testid={`md-mode-toolbar-${file.id}`}
@@ -197,7 +213,7 @@ const FileEditorPane = forwardRef<FileEditorPaneHandle, Props>(
             data-testid={`md-mode-preview-${file.id}`}
             aria-pressed={file.mdMode === "preview"}
           >
-            {t("fileEditor.mdPreview")}
+            {isTable ? t("preview.tableView") : t("fileEditor.mdPreview")}
           </button>
           <button
             type="button"
@@ -210,12 +226,14 @@ const FileEditorPane = forwardRef<FileEditorPaneHandle, Props>(
             data-testid={`md-mode-raw-${file.id}`}
             aria-pressed={file.mdMode === "raw"}
           >
-            {t("fileEditor.mdRaw")}
+            {isTable ? t("preview.textView") : t("fileEditor.mdRaw")}
           </button>
         </div>
       )}
       <div className="flex-1 min-h-0 min-w-0 overflow-hidden">
-        {showPreview ? (
+        {showTable ? (
+          <CsvTable path={file.path} content={file.content} />
+        ) : showPreview ? (
           <article
             ref={previewRef}
             tabIndex={-1}

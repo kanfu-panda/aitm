@@ -969,9 +969,12 @@ export async function fsReadPreview(path: string): Promise<PreviewResult> {
   return await invoke<PreviewResult>("fs_read_preview", { path });
 }
 
-/** 读取 PDF 原始字节（二进制 IPC，上限 50MB；超限抛 `fs.pdfTooLarge` 编码）。 */
-export async function fsReadPdf(path: string): Promise<ArrayBuffer> {
-  return await invoke<ArrayBuffer>("fs_read_pdf", { path });
+/**
+ * 读取预览文件的原始字节（二进制 IPC）。后端按扩展名白名单放行，
+ * PDF / 图片上限 50MB、Office 上限 20MB；超限抛 `fs.fileTooLarge` 编码，不在白名单抛 `fs.unsupportedPreview`。
+ */
+export async function fsReadBinary(path: string): Promise<ArrayBuffer> {
+  return await invoke<ArrayBuffer>("fs_read_binary", { path });
 }
 
 // === v0.9.1 HR3-3：StatusBar 重排（磁盘 / git 分支）===

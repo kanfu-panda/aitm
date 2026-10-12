@@ -243,7 +243,7 @@ pub fn run_gui() {
             ipc::fs::fs_tree,
             ipc::fs::fs_read_text,
             ipc::fs::fs_read_preview,
-            ipc::fs::fs_read_pdf,
+            ipc::fs::fs_read_binary,
             ipc::fs::file_write,
             // v0.10.2 #6：文件树右键菜单 CRUD
             ipc::fs::fs_create_file,

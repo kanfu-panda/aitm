@@ -167,8 +167,8 @@
       "accessFailed": "Failed to access path: {{path}}: {{error}}",
       "deleteDirFailed": "Failed to delete directory: {{path}}: {{error}}",
       "deleteFileFailed": "Failed to delete file: {{path}}: {{error}}",
-      "notPdf": "Not a PDF file: {{path}}",
-      "pdfTooLarge": "PDF file is too large ({{size}} bytes, limit {{max}} bytes)"
+      "unsupportedPreview": "Preview isn't supported for this file: {{path}}",
+      "fileTooLarge": "File is too large ({{size}} bytes, limit {{max}} bytes)"
     },
     "shell": {
       "unsupportedScheme": "Unsupported URL scheme: {{scheme}}",
@@ -849,8 +849,28 @@
     "matchCount": "{{current}} / {{total}}",
     "noMatch": "No matches",
     "tooLarge": "This PDF is too large to preview here ({{size}}, limit {{max}})",
-    "encrypted": "This PDF is encrypted and can't be previewed yet",
     "invalid": "This PDF can't be read. It may be damaged",
-    "openWithDefault": "Open with default app"
+    "openWithDefault": "Open with default app",
+    "passwordPrompt": "This PDF is encrypted. Enter the password",
+    "passwordPlaceholder": "Password",
+    "passwordSubmit": "Open",
+    "passwordIncorrect": "Incorrect password. Try again"
+  },
+  "preview": {
+    "loading": "Loading…",
+    "tooLarge": "This file is too large to preview here ({{size}}, limit {{max}})",
+    "invalid": "This file can't be read. It may be damaged or in an unexpected format",
+    "unsupported": "Preview isn't available for this format yet",
+    "openWithDefault": "Open with default app",
+    "zoomIn": "Zoom in",
+    "zoomOut": "Zoom out",
+    "fitWindow": "Fit window",
+    "actualSize": "Actual size",
+    "emptySheet": "Empty sheet",
+    "truncated": "Showing the first {{rows}} rows and {{cols}} columns ({{totalRows}} rows, {{totalCols}} columns in total)",
+    "sheets": "Sheets",
+    "tableView": "Table",
+    "textView": "Text",
+    "slideLabel": "Slide {{index}} of {{total}}"
   }
 }

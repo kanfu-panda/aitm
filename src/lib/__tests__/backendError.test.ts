@@ -51,9 +51,9 @@ describe("formatBackendError", () => {
 
 describe("backendErrorCode", () => {
   it("应该_当是编码错误时_返回_code_与_params_否则返回_null", () => {
-    const raw = JSON.stringify({ code: "fs.pdfTooLarge", params: { size: "1" }, message: "x" });
-    expect(backendErrorCode(raw)).toEqual({ code: "fs.pdfTooLarge", params: { size: "1" } });
-    expect(backendErrorCode(new Error(raw))?.code).toBe("fs.pdfTooLarge");
+    const raw = JSON.stringify({ code: "fs.fileTooLarge", params: { size: "1" }, message: "x" });
+    expect(backendErrorCode(raw)).toEqual({ code: "fs.fileTooLarge", params: { size: "1" } });
+    expect(backendErrorCode(new Error(raw))?.code).toBe("fs.fileTooLarge");
     expect(backendErrorCode("普通错误")).toBeNull();
   });
 });

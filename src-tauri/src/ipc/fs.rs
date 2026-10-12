@@ -411,47 +411,57 @@ pub fn fs_read_preview(path: String) -> Result<PreviewResult, String> {
     Ok(PreviewResult::Text { content, truncated })
 }
 
-// ====== PDF 预览 ======
+// ====== 二进制预览（PDF / 图片 / Office）======
 
-/// PDF 预览上限：50 MB。超过时不读入内存，前端提示用系统应用打开。
-const PDF_MAX_BYTES: u64 = 50 * 1024 * 1024;
+/// PDF 与图片的预览上限：50 MB。
+const MEDIA_MAX_BYTES: u64 = 50 * 1024 * 1024;
+/// Office 文档（xlsx / xls / docx / pptx）的预览上限：20 MB——要在界面线程整份解析，太大会卡。
+const OFFICE_MAX_BYTES: u64 = 20 * 1024 * 1024;
 
-/// 读取 PDF 原始字节：先校验扩展名与大小，再读盘（超限文件不会被整读进内存）。
-fn read_pdf_bytes(path: String) -> Result<Vec<u8>, String> {
+/// 扩展名白名单 → 该类别的大小上限；不在白名单返回 None（不允许按字节读取）。
+fn preview_max_bytes(ext: &str) -> Option<u64> {
+    match ext.to_ascii_lowercase().as_str() {
+        "pdf" | "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "bmp" | "ico" => {
+            Some(MEDIA_MAX_BYTES)
+        }
+        "xlsx" | "xls" | "docx" | "pptx" => Some(OFFICE_MAX_BYTES),
+        _ => None,
+    }
+}
+
+/// 读取预览文件的原始字节：先校验扩展名与大小，再读盘（超限文件不会被整读进内存）。
+fn read_binary_bytes(path: String) -> Result<Vec<u8>, String> {
     let canonical = std::fs::canonicalize(&path).map_err(|e| err_canonicalize(&path, &e))?;
-    let is_pdf = canonical
+    let max = canonical
         .extension()
         .and_then(|s| s.to_str())
-        .is_some_and(|e| e.eq_ignore_ascii_case("pdf"));
-    if !is_pdf {
-        return Err(ui_err(
-            "fs.notPdf",
-            &[("path", canonical.display().to_string())],
-            format!("不是 PDF 文件：{}", canonical.display()),
-        ));
-    }
+        .and_then(preview_max_bytes)
+        .ok_or_else(|| {
+            ui_err(
+                "fs.unsupportedPreview",
+                &[("path", canonical.display().to_string())],
+                format!("不支持预览此类文件：{}", canonical.display()),
+            )
+        })?;
     let meta = std::fs::metadata(&canonical).map_err(|e| err_metadata(&canonical, &e))?;
     if !meta.is_file() {
         return Err(err_not_file(&canonical));
     }
     let size = meta.len();
-    if size > PDF_MAX_BYTES {
+    if size > max {
         return Err(ui_err(
-            "fs.pdfTooLarge",
-            &[
-                ("size", size.to_string()),
-                ("max", PDF_MAX_BYTES.to_string()),
-            ],
-            format!("PDF 文件过大（{size} 字节，上限 {PDF_MAX_BYTES} 字节）"),
+            "fs.fileTooLarge",
+            &[("size", size.to_string()), ("max", max.to_string())],
+            format!("文件过大（{size} 字节，上限 {max} 字节）"),
         ));
     }
     std::fs::read(&canonical).map_err(|e| err_read_failed(&canonical, &e))
 }
 
-/// 把 PDF 原始字节以二进制交给前端 pdf.js（前端拿到 `ArrayBuffer`，不经 base64 / JSON）。
+/// 把预览文件的原始字节以二进制交给前端（前端拿到 `ArrayBuffer`，不经 base64 / JSON）。
 #[tauri::command]
-pub fn fs_read_pdf(path: String) -> Result<tauri::ipc::Response, String> {
-    read_pdf_bytes(path).map(tauri::ipc::Response::new)
+pub fn fs_read_binary(path: String) -> Result<tauri::ipc::Response, String> {
+    read_binary_bytes(path).map(tauri::ipc::Response::new)
 }
 
 // ====== v0.9.0 T5c：文件写入（编辑器保存）======
@@ -1843,72 +1853,105 @@ mod tests {
         assert_eq!(msg, format!("不是文件：{}", canonical.display()));
     }
 
-    // PDF 预览按原始字节读取
+    // 预览按原始字节读取（PDF / 图片 / Office，按类别上限）
     #[test]
-    fn 应该_当读取pdf时_原样返回字节_扩展名不区分大小写() {
+    fn 应该_当读取白名单扩展名时_原样返回字节_扩展名不区分大小写() {
         let tmp = TempDir::new().unwrap();
-        let f = tmp.path().join("Report.PDF");
-        let data = b"%PDF-1.4\n\x00\xff\n%%EOF".to_vec();
-        fs::write(&f, &data).unwrap();
-        let bytes = read_pdf_bytes(f.to_string_lossy().into_owned()).unwrap();
-        assert_eq!(bytes, data);
+        let data = b"\x00\xff\x01binary".to_vec();
+        for name in [
+            "Report.PDF",
+            "a.png",
+            "b.JPG",
+            "c.jpeg",
+            "d.gif",
+            "e.webp",
+            "f.svg",
+            "g.bmp",
+            "h.ico",
+            "i.xlsx",
+            "j.XLS",
+            "k.docx",
+            "l.pptx",
+        ] {
+            let f = tmp.path().join(name);
+            fs::write(&f, &data).unwrap();
+            let bytes = read_binary_bytes(f.to_string_lossy().into_owned()).unwrap();
+            assert_eq!(bytes, data, "{name}");
+        }
     }
 
     #[test]
-    fn 应该_当扩展名不是pdf时_返回fs_notpdf编码且不读取() {
+    fn 应该_当扩展名不在白名单时_返回fs_unsupportedpreview编码且不读取() {
         let tmp = TempDir::new().unwrap();
-        let f = tmp.path().join("a.txt");
-        fs::write(&f, "x").unwrap();
-        let canonical = fs::canonicalize(&f).unwrap();
-        let err = read_pdf_bytes(f.to_string_lossy().into_owned()).unwrap_err();
-        let (code, params, msg) = parse_ui_err(&err);
-        assert_eq!(code, "fs.notPdf");
-        assert_eq!(params["path"], canonical.display().to_string());
-        assert_eq!(msg, format!("不是 PDF 文件：{}", canonical.display()));
+        for name in ["a.txt", "b.doc", "c.exe", "noext"] {
+            let f = tmp.path().join(name);
+            fs::write(&f, "x").unwrap();
+            let canonical = fs::canonicalize(&f).unwrap();
+            let err = read_binary_bytes(f.to_string_lossy().into_owned()).unwrap_err();
+            let (code, params, msg) = parse_ui_err(&err);
+            assert_eq!(code, "fs.unsupportedPreview", "{name}");
+            assert_eq!(params["path"], canonical.display().to_string());
+            assert_eq!(msg, format!("不支持预览此类文件：{}", canonical.display()));
+        }
     }
 
     #[test]
-    fn 应该_当pdf超过50mb时_返回fs_pdftoolarge编码() {
+    fn 应该_按类别使用不同上限_图片与pdf为50mb_office为20mb() {
+        assert_eq!(preview_max_bytes("pdf"), Some(50 * 1024 * 1024));
+        assert_eq!(preview_max_bytes("PNG"), Some(50 * 1024 * 1024));
+        assert_eq!(preview_max_bytes("svg"), Some(50 * 1024 * 1024));
+        assert_eq!(preview_max_bytes("xlsx"), Some(20 * 1024 * 1024));
+        assert_eq!(preview_max_bytes("docx"), Some(20 * 1024 * 1024));
+        assert_eq!(preview_max_bytes("pptx"), Some(20 * 1024 * 1024));
+        assert_eq!(preview_max_bytes("doc"), None);
+    }
+
+    #[test]
+    fn 应该_当office文件超过20mb时_返回fs_filetoolarge编码() {
         let tmp = TempDir::new().unwrap();
-        let f = tmp.path().join("big.pdf");
-        // 稀疏文件：只设长度，不真的写 50MB
+        let f = tmp.path().join("big.xlsx");
+        // 稀疏文件：只设长度，不真的写 20MB
         let file = fs::File::create(&f).unwrap();
-        file.set_len(PDF_MAX_BYTES + 1).unwrap();
-        let err = read_pdf_bytes(f.to_string_lossy().into_owned()).unwrap_err();
+        file.set_len(OFFICE_MAX_BYTES + 1).unwrap();
+        let err = read_binary_bytes(f.to_string_lossy().into_owned()).unwrap_err();
         let (code, params, msg) = parse_ui_err(&err);
-        assert_eq!(code, "fs.pdfTooLarge");
-        assert_eq!(params["size"], (PDF_MAX_BYTES + 1).to_string());
-        assert_eq!(params["max"], PDF_MAX_BYTES.to_string());
+        assert_eq!(code, "fs.fileTooLarge");
+        assert_eq!(params["size"], (OFFICE_MAX_BYTES + 1).to_string());
+        assert_eq!(params["max"], OFFICE_MAX_BYTES.to_string());
         assert_eq!(
             msg,
             format!(
-                "PDF 文件过大（{} 字节，上限 {} 字节）",
-                PDF_MAX_BYTES + 1,
-                PDF_MAX_BYTES
+                "文件过大（{} 字节，上限 {} 字节）",
+                OFFICE_MAX_BYTES + 1,
+                OFFICE_MAX_BYTES
             )
         );
     }
 
     #[test]
-    fn 应该_当pdf恰好50mb时_正常读取() {
+    fn 应该_当图片恰好50mb时正常读取_超过时返回fs_filetoolarge() {
         let tmp = TempDir::new().unwrap();
-        let f = tmp.path().join("edge.pdf");
+        let f = tmp.path().join("edge.png");
         let file = fs::File::create(&f).unwrap();
-        file.set_len(PDF_MAX_BYTES).unwrap();
-        let bytes = read_pdf_bytes(f.to_string_lossy().into_owned()).unwrap();
-        assert_eq!(bytes.len() as u64, PDF_MAX_BYTES);
+        file.set_len(MEDIA_MAX_BYTES).unwrap();
+        let bytes = read_binary_bytes(f.to_string_lossy().into_owned()).unwrap();
+        assert_eq!(bytes.len() as u64, MEDIA_MAX_BYTES);
+
+        file.set_len(MEDIA_MAX_BYTES + 1).unwrap();
+        let err = read_binary_bytes(f.to_string_lossy().into_owned()).unwrap_err();
+        assert_eq!(parse_ui_err(&err).0, "fs.fileTooLarge");
     }
 
     #[test]
-    fn 应该_当pdf路径是目录或不存在时_返回对应编码() {
+    fn 应该_当预览路径是目录或不存在时_返回对应编码() {
         let tmp = TempDir::new().unwrap();
         let d = tmp.path().join("dir.pdf");
         fs::create_dir(&d).unwrap();
-        let err = read_pdf_bytes(d.to_string_lossy().into_owned()).unwrap_err();
+        let err = read_binary_bytes(d.to_string_lossy().into_owned()).unwrap_err();
         assert_eq!(parse_ui_err(&err).0, "fs.notFile");
 
-        let missing = tmp.path().join("missing.pdf");
-        let err = read_pdf_bytes(missing.to_string_lossy().into_owned()).unwrap_err();
+        let missing = tmp.path().join("missing.docx");
+        let err = read_binary_bytes(missing.to_string_lossy().into_owned()).unwrap_err();
         assert_eq!(parse_ui_err(&err).0, "fs.canonicalizeFailed");
     }
 

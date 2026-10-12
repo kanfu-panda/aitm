@@ -31,7 +31,7 @@
 
 import { create } from "zustand";
 import { fileWrite, fsReadText, fsStat, settingsUpdate } from "../lib/tauri";
-import { isPdfPath } from "../lib/pdf";
+import { isTablePath, previewKindOf, type PreviewKind } from "../lib/preview";
 import { useSettingsStore } from "./settings";
 import { extFromPath } from "../lib/cm-lang";
 
@@ -55,8 +55,11 @@ export interface OpenFile {
   cursorCol: number;
   /** T5e：md 文件的展示模式（preview / raw）；非 md 为 undefined。 */
   mdMode?: "preview" | "raw";
-  /** 标签页类型。缺省为文本；"pdf" 为只读的 PDF 预览（content 恒为空）。 */
-  kind?: "text" | "pdf";
+  /**
+   * 标签页类型。缺省为文本；其余为只读的二进制预览
+   * （PDF / 图片 / 表格 / Word / PPT / 不支持的老格式），content 恒为空，由各查看器按字节加载。
+   */
+  kind?: "text" | PreviewKind;
   /** v0.10.3 #10：上次 read/save 时磁盘的 mtime（ms）；用于外部改动检测对比 */
   lastMtimeMs?: number;
   /** v0.10.3 #10：磁盘上文件被外部修改了但本地 buffer dirty 没办法静默 reload，
@@ -195,10 +198,16 @@ function schedulePersist(paths: string[], active: string | null): void {
 
 function inferMdMode(path: string): "preview" | "raw" | undefined {
   const ext = extFromPath(path);
-  if (ext === "md" || ext === "markdown" || ext === "mdx") {
-    return "preview"; // T5e：md 默认 preview，工具栏一键切 raw
+  // T5e：md 默认 preview，工具栏一键切 raw；csv / tsv 同理，preview 即表格视图
+  if (ext === "md" || ext === "markdown" || ext === "mdx" || isTablePath(path)) {
+    return "preview";
   }
   return undefined;
+}
+
+/** 只读的二进制预览标签页（PDF / 图片 / Office 等），不读写文本、不保存。 */
+export function isPreviewFile(file: Pick<OpenFile, "kind">): boolean {
+  return file.kind !== undefined && file.kind !== "text";
 }
 
 export const useFileEditorStore = create<FileEditorState>((set, get) => ({
@@ -228,8 +237,9 @@ export const useFileEditorStore = create<FileEditorState>((set, get) => ({
     }
     inflightOpen.add(path);
     try {
-      // PDF 不读文本，由 PdfViewer 自己按字节加载；这里只取 mtime 作外部修改基线
-      if (isPdfPath(path)) {
+      // 二进制预览不读文本，由各查看器自己按字节加载；这里只取 mtime 作外部修改基线
+      const previewKind = previewKindOf(path);
+      if (previewKind) {
         const meta = await fsStat(path).catch(() => null);
         if (get().openFiles.find((f) => f.id === path)) {
           set({ activeId: path });
@@ -241,7 +251,7 @@ export const useFileEditorStore = create<FileEditorState>((set, get) => ({
           content: "",
           original: "",
           dirty: false,
-          kind: "pdf",
+          kind: previewKind,
           cursorLine: 1,
           cursorCol: 1,
           lastMtimeMs: meta?.exists ? meta.mtime_ms : undefined,
@@ -339,7 +349,7 @@ export const useFileEditorStore = create<FileEditorState>((set, get) => ({
 
   saveFile: async (id) => {
     const target = get().openFiles.find((f) => f.id === id);
-    if (!target || target.kind === "pdf") {
+    if (!target || isPreviewFile(target)) {
       // 找不到 tab 静默返；调用方一般是已经知道 id 的（Cmd+S 拿当前 active）。
       // PDF 标签页只读，没有可保存的内容。
       return;
