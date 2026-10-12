@@ -71,12 +71,23 @@ vi.mock("../../lib/tauri", async (orig) => {
     browserShowAllActive: vi.fn().mockResolvedValue(undefined),
   };
 });
-// PDF 标签页渲染 PdfViewer；pdf.js 在 jsdom 跑不起来，用桩确认分派与 reloadKey
+// 预览标签页渲染各自的查看器（按需加载）；解析库在 jsdom 跑不起来，用桩确认分派与 reloadKey
 vi.mock("../pdf/PdfViewer", () => ({
-  default: ({ path, reloadKey }: { path: string; reloadKey: number | undefined }) => (
+  default: ({ path, reloadKey }: { path: string; reloadKey?: number }) => (
     <div data-testid="pdf-viewer-stub" data-path={path} data-reload={String(reloadKey)} />
   ),
 }));
+function viewerStub(name: string) {
+  return {
+    default: ({ path, reloadKey }: { path: string; reloadKey?: number }) => (
+      <div data-testid={`${name}-stub`} data-path={path} data-reload={String(reloadKey)} />
+    ),
+  };
+}
+vi.mock("../preview/ImageViewer", () => viewerStub("image-viewer"));
+vi.mock("../preview/SpreadsheetViewer", () => viewerStub("sheet-viewer"));
+vi.mock("../preview/DocxViewer", () => viewerStub("docx-viewer"));
+vi.mock("../preview/PptxViewer", () => viewerStub("pptx-viewer"));
 vi.mock("../../lib/analytics", () => ({
   trackEvent: vi.fn(),
 }));
@@ -142,10 +153,10 @@ function pushFiles(
 
 describe("FilePreviewWorkspace", () => {
   // PDF 标签页
-  it("应该_当活动标签页是_pdf_时_渲染_PdfViewer_而不是编辑器", () => {
+  it("应该_当活动标签页是_pdf_时_渲染_PdfViewer_而不是编辑器", async () => {
     pushFiles([{ path: "/w/a.pdf", kind: "pdf", lastMtimeMs: 1 }], "/w/a.pdf");
     render(<FilePreviewWorkspace />);
-    const stub = screen.getByTestId("pdf-viewer-stub");
+    const stub = await screen.findByTestId("pdf-viewer-stub");
     expect(stub).toHaveAttribute("data-path", "/w/a.pdf");
     expect(screen.queryByTestId("cm-stub-/w/a.pdf")).toBeNull();
   });
@@ -156,6 +167,39 @@ describe("FilePreviewWorkspace", () => {
     render(<FilePreviewWorkspace />);
     await waitFor(() =>
       expect(screen.getByTestId("pdf-viewer-stub")).toHaveAttribute("data-reload", "2"),
+    );
+    expect(fsReadTextMock).not.toHaveBeenCalled();
+  });
+
+  // 图片 / Office 标签页按类型分派
+  it.each([
+    ["/w/a.png", "image", "image-viewer-stub"],
+    ["/w/a.xlsx", "sheet", "sheet-viewer-stub"],
+    ["/w/a.docx", "docx", "docx-viewer-stub"],
+    ["/w/a.pptx", "pptx", "pptx-viewer-stub"],
+  ] as const)("应该_当活动标签页是_%s_时_渲染对应查看器", async (path, kind, testId) => {
+    // 与 fsStat 默认 mock 的 mtime 一致，避免轮询把基线改掉
+    pushFiles([{ path, kind, lastMtimeMs: 1 }], path);
+    render(<FilePreviewWorkspace />);
+    const stub = await screen.findByTestId(testId);
+    expect(stub).toHaveAttribute("data-path", path);
+    expect(stub).toHaveAttribute("data-reload", "1");
+    expect(screen.queryByTestId(`cm-stub-${path}`)).toBeNull();
+  });
+
+  it("应该_当活动标签页是不支持的老格式时_显示提示与用默认应用打开", async () => {
+    pushFiles([{ path: "/w/old.doc", kind: "unsupported" }], "/w/old.doc");
+    render(<FilePreviewWorkspace />);
+    expect(await screen.findByTestId("preview-unsupported")).toBeInTheDocument();
+    expect(screen.getByTestId("preview-open-default")).toBeInTheDocument();
+  });
+
+  it("应该_当图片在磁盘上被修改时_不读文本_更新基线让预览重新加载", async () => {
+    fsStatMock.mockResolvedValue({ exists: true, mtime_ms: 5, size: 10, is_dir: false });
+    pushFiles([{ path: "/w/a.png", kind: "image", lastMtimeMs: 1 }], "/w/a.png");
+    render(<FilePreviewWorkspace />);
+    await waitFor(() =>
+      expect(screen.getByTestId("image-viewer-stub")).toHaveAttribute("data-reload", "5"),
     );
     expect(fsReadTextMock).not.toHaveBeenCalled();
   });

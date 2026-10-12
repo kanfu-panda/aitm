@@ -1,4 +1,4 @@
-/** PDF 预览的辅助函数：缩放档位与扩展名判断。 */
+/** 预览缩放档位：PDF 与图片共用。 */
 
 /** 缩放档位：25%–400%。 */
 export const ZOOM_STEPS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4] as const;
@@ -16,7 +16,3 @@ export function nextZoom(current: number, dir: "in" | "out"): number | null {
   return null;
 }
 
-/** 按扩展名判断是否为 PDF（不区分大小写）。 */
-export function isPdfPath(path: string): boolean {
-  return /\.pdf$/i.test(path);
-}

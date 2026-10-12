@@ -433,3 +433,74 @@ describe("FileEditorPane T5c Cmd+S 保存", () => {
     expect(fileWriteMock).not.toHaveBeenCalled();
   });
 });
+
+/* CSV / TSV 表格预览。
+ * 切换条沿用 Markdown 的 testid：md-mode-toolbar-<id>、md-mode-preview-<id>（"表格"）、
+ * md-mode-raw-<id>（"文本"）；表格视图渲染 SpreadsheetGrid（testid sheet-grid）。 */
+describe("FileEditorPane CSV / TSV 表格预览", () => {
+  it("应该_当_csv_文件为预览模式时_显示表格文本切换条与按逗号拆分的表格", () => {
+    const file = makeFile({
+      path: "/x/data.csv",
+      content: "姓名,年龄\n张三,30\n",
+      mdMode: "preview",
+    });
+    pushFile(file);
+    const { container } = render(<FileEditorPane file={file} />);
+    expect(screen.getByTestId(`md-mode-toolbar-${file.id}`)).toBeTruthy();
+    expect(screen.getByTestId(`md-mode-preview-${file.id}`)).toHaveTextContent("表格");
+    expect(screen.getByTestId(`md-mode-raw-${file.id}`)).toHaveTextContent("文本");
+    expect(screen.getByTestId("sheet-grid")).toBeTruthy();
+    expect(container.querySelector('td[data-cell="A1"]')?.textContent).toBe("姓名");
+    expect(container.querySelector('td[data-cell="B2"]')?.textContent).toBe("30");
+    expect(screen.queryByTestId(`cm-stub-${file.path}`)).toBeNull();
+  });
+
+  it("应该_当_tsv_文件为预览模式时_按制表符拆分", () => {
+    const file = makeFile({
+      path: "/x/data.tsv",
+      content: "a,1\tb\nc\td",
+      mdMode: "preview",
+    });
+    pushFile(file);
+    const { container } = render(<FileEditorPane file={file} />);
+    expect(container.querySelector('td[data-cell="A1"]')?.textContent).toBe("a,1");
+    expect(container.querySelector('td[data-cell="B1"]')?.textContent).toBe("b");
+    expect(container.querySelector('td[data-cell="B2"]')?.textContent).toBe("d");
+  });
+
+  it("应该_当点击文本按钮时_调用_setMdMode_切到_raw_并渲染编辑器", () => {
+    const file = makeFile({ path: "/x/data.csv", content: "a,b", mdMode: "preview" });
+    pushFile(file);
+    const { rerender } = render(<FileEditorPane file={file} />);
+
+    fireEvent.click(screen.getByTestId(`md-mode-raw-${file.id}`));
+    const updated = useFileEditorStore.getState().openFiles[0];
+    expect(updated.mdMode).toBe("raw");
+
+    rerender(<FileEditorPane file={updated} />);
+    expect(screen.queryByTestId("sheet-grid")).toBeNull();
+    expect(screen.getByTestId(`cm-stub-${file.path}`).textContent).toBe("a,b");
+  });
+
+  it("应该_当_raw_状态点表格按钮时_回到表格视图", () => {
+    const file = makeFile({ path: "/x/data.csv", content: "a,b", mdMode: "raw" });
+    pushFile(file);
+    const { rerender } = render(<FileEditorPane file={file} />);
+    expect(screen.getByTestId(`cm-stub-${file.path}`)).toBeTruthy();
+
+    fireEvent.click(screen.getByTestId(`md-mode-preview-${file.id}`));
+    const updated = useFileEditorStore.getState().openFiles[0];
+    expect(updated.mdMode).toBe("preview");
+    rerender(<FileEditorPane file={updated} />);
+    expect(screen.getByTestId("sheet-grid")).toBeTruthy();
+  });
+
+  it("应该_当是普通_ts_文件时_不出现切换条也没有表格", () => {
+    const file = makeFile({ path: "/x/a.ts", content: "a,b", language: "ts" });
+    pushFile(file);
+    render(<FileEditorPane file={file} />);
+    expect(screen.queryByTestId(`md-mode-toolbar-${file.id}`)).toBeNull();
+    expect(screen.queryByTestId("sheet-grid")).toBeNull();
+    expect(screen.getByTestId(`cm-stub-${file.path}`)).toBeTruthy();
+  });
+});

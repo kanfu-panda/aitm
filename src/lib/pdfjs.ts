@@ -6,6 +6,8 @@
  *
  * - 用 legacy 构建：自带对较旧 WebView 的兼容处理（最低支持 macOS 12）
  * - CMap / 标准字体 / 图像解码器由 vite.config.ts 的插件以同源静态资源提供（/pdfjs/）
+ * - 每次加载都传字节副本：pdf.js 会把缓冲区转移给 worker，转移后原缓冲区即失效，
+ *   而加密 PDF 输错密码后需要用同一份字节重试
  * - 关闭注释层：PDF 里的外链在应用 WebView 内被点开会把整个界面导航走
  * ========================================================================== */
 
@@ -59,9 +61,11 @@ export async function openPdfViewer(
   container: HTMLDivElement,
   data: ArrayBuffer,
   events: PdfEvents,
+  password?: string,
 ): Promise<PdfController> {
   const loadingTask = getDocument({
-    data: new Uint8Array(data),
+    data: new Uint8Array(data.slice(0)),
+    ...(password === undefined ? {} : { password }),
     cMapUrl: `${ASSET_BASE}cmaps/`,
     cMapPacked: true,
     standardFontDataUrl: `${ASSET_BASE}standard_fonts/`,

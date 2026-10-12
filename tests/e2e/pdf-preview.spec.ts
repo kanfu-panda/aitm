@@ -12,10 +12,10 @@ async function openPdf(page: Page, mock: { base64?: string; error?: string }) {
     ([cwd, pdf, m]) => {
       const w = window as unknown as {
         __setMockCwd: (c: string, f: Array<{ name: string; path: string }>) => void;
-        __setFsReadPdf: (r: { base64?: string; error?: string }) => void;
+        __setFsReadBinary: (r: { base64?: string; error?: string }) => void;
       };
       w.__setMockCwd(cwd as string, [{ name: "doc.pdf", path: pdf as string }]);
-      w.__setFsReadPdf(m as { base64?: string; error?: string });
+      w.__setFsReadBinary(m as { base64?: string; error?: string });
     },
     [CWD, PDF, mock] as const,
   );
@@ -68,7 +68,7 @@ test("页内搜索：计数与无匹配", async ({ page }) => {
 test("超过大小上限：显示提示与用默认应用打开", async ({ page }) => {
   await openPdf(page, {
     error: JSON.stringify({
-      code: "fs.pdfTooLarge",
+      code: "fs.fileTooLarge",
       params: { size: String(60 * 1024 * 1024), max: String(50 * 1024 * 1024) },
       message: "PDF 文件过大",
     }),

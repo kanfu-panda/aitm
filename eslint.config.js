@@ -20,6 +20,7 @@ export default [
         Element: "readonly",
         HTMLElement: "readonly",
         HTMLButtonElement: "readonly",
+        HTMLImageElement: "readonly",
         HTMLInputElement: "readonly",
         HTMLTextAreaElement: "readonly",
         ResizeObserver: "readonly",

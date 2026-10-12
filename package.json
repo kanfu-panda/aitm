@@ -1,7 +1,7 @@
 {
   "name": "aitm",
   "private": true,
-  "version": "1.7.0",
+  "version": "1.8.0",
   "description": "AI Terminal — Tauri 2 + React 19 + Rust 的 AI-native 一站式开发工作平台",
   "author": "kanfu-panda",
   "license": "Apache-2.0",
@@ -50,9 +50,11 @@
     "@xterm/addon-webgl": "~0.18.0",
     "@xterm/xterm": "~5.5.0",
     "codemirror": "^6.0.2",
+    "docx-preview": "0.4.1",
     "framer-motion": "^12.38.0",
     "highlight.js": "^11.11.1",
     "i18next": "^26.2.0",
+    "jszip": "3.10.1",
     "lucide-react": "^1.14.0",
     "pdfjs-dist": "6.4.299",
     "react": "~19.0.0",
@@ -62,6 +64,7 @@
     "react-resizable-panels": "^2.1.9",
     "rehype-highlight": "^7.0.2",
     "remark-gfm": "~4.0.0",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
     "zustand": "~5.0.0"
   },
   "pnpm": {

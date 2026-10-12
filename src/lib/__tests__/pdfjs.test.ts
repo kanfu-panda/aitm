@@ -91,6 +91,44 @@ describe("openPdfViewer", () => {
     expect(ctl.pageCount).toBe(3);
   });
 
+  it("应该_当传入密码时_getDocument_参数带上该密码", async () => {
+    await openPdfViewer(document.createElement("div"), new ArrayBuffer(4), events(), "s3cret");
+    const args = h.state.getDocumentArgs as Record<string, unknown>;
+    expect(args.password).toBe("s3cret");
+  });
+
+  it("应该_当不传密码时_getDocument_参数不带密码", async () => {
+    await openPdfViewer(document.createElement("div"), new ArrayBuffer(4), events());
+    const args = h.state.getDocumentArgs as Record<string, unknown>;
+    expect(args.password).toBeUndefined();
+  });
+
+  it("应该_每次加载都传字节副本_不让原缓冲区被转移", async () => {
+    const original = new ArrayBuffer(4);
+    new Uint8Array(original).set([1, 2, 3, 4]);
+    await openPdfViewer(document.createElement("div"), original, events());
+    const args = h.state.getDocumentArgs as { data: Uint8Array };
+    expect(args.data.buffer).not.toBe(original);
+    expect(Array.from(args.data)).toEqual([1, 2, 3, 4]);
+    // 模拟 pdf.js 转移副本缓冲区后，原缓冲区仍可再次使用
+    expect(original.byteLength).toBe(4);
+    await openPdfViewer(document.createElement("div"), original, events(), "pw");
+    const args2 = h.state.getDocumentArgs as { data: Uint8Array };
+    expect(args2.data.buffer).not.toBe(original);
+    expect(args2.data.buffer).not.toBe(args.data.buffer);
+  });
+
+  it("应该_当需要密码或密码错误时_原样抛出_PasswordException_并保持_code", async () => {
+    for (const code of [1, 2]) {
+      const err = Object.assign(new Error("pw"), { name: "PasswordException", code });
+      h.state.loadingTask = { promise: Promise.reject(err), destroy: vi.fn() };
+      const p = openPdfViewer(document.createElement("div"), new ArrayBuffer(4), events());
+      await expect(p).rejects.toBe(err);
+      await expect(p).rejects.toMatchObject({ name: "PasswordException", code });
+      expect(h.state.loadingTask.destroy).toHaveBeenCalled();
+    }
+  });
+
   it("应该_当文档解析失败时_销毁加载任务并抛出原错误", async () => {
     const err = Object.assign(new Error("bad"), { name: "InvalidPDFException" });
     h.state.loadingTask = { promise: Promise.reject(err), destroy: vi.fn() };

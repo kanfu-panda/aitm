@@ -150,10 +150,14 @@ describe("StatusBar", () => {
       root.remove();
     });
 
-    it("应该_当活动文件是 PDF 时_不显示行列号 / 编码 / 语言 / 换行符", () => {
+    it.each([
+      ["/proj/a.pdf", "pdf"],
+      ["/proj/a.png", "image"],
+      ["/proj/a.xlsx", "sheet"],
+    ] as const)("应该_当活动文件是预览类型_%s_时_不显示行列号 / 编码 / 语言 / 换行符", (path, kind) => {
       useFileEditorStore.setState({
-        openFiles: [makeOpenFile({ id: "/proj/a.pdf", path: "/proj/a.pdf", kind: "pdf" })],
-        activeId: "/proj/a.pdf",
+        openFiles: [makeOpenFile({ id: path, path, kind })],
+        activeId: path,
       });
       const root = document.createElement("div");
       root.setAttribute("data-testid", "file-preview-workspace");
