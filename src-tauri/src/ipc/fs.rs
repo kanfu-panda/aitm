@@ -411,6 +411,49 @@ pub fn fs_read_preview(path: String) -> Result<PreviewResult, String> {
     Ok(PreviewResult::Text { content, truncated })
 }
 
+// ====== PDF 预览 ======
+
+/// PDF 预览上限：50 MB。超过时不读入内存，前端提示用系统应用打开。
+const PDF_MAX_BYTES: u64 = 50 * 1024 * 1024;
+
+/// 读取 PDF 原始字节：先校验扩展名与大小，再读盘（超限文件不会被整读进内存）。
+fn read_pdf_bytes(path: String) -> Result<Vec<u8>, String> {
+    let canonical = std::fs::canonicalize(&path).map_err(|e| err_canonicalize(&path, &e))?;
+    let is_pdf = canonical
+        .extension()
+        .and_then(|s| s.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("pdf"));
+    if !is_pdf {
+        return Err(ui_err(
+            "fs.notPdf",
+            &[("path", canonical.display().to_string())],
+            format!("不是 PDF 文件：{}", canonical.display()),
+        ));
+    }
+    let meta = std::fs::metadata(&canonical).map_err(|e| err_metadata(&canonical, &e))?;
+    if !meta.is_file() {
+        return Err(err_not_file(&canonical));
+    }
+    let size = meta.len();
+    if size > PDF_MAX_BYTES {
+        return Err(ui_err(
+            "fs.pdfTooLarge",
+            &[
+                ("size", size.to_string()),
+                ("max", PDF_MAX_BYTES.to_string()),
+            ],
+            format!("PDF 文件过大（{size} 字节，上限 {PDF_MAX_BYTES} 字节）"),
+        ));
+    }
+    std::fs::read(&canonical).map_err(|e| err_read_failed(&canonical, &e))
+}
+
+/// 把 PDF 原始字节以二进制交给前端 pdf.js（前端拿到 `ArrayBuffer`，不经 base64 / JSON）。
+#[tauri::command]
+pub fn fs_read_pdf(path: String) -> Result<tauri::ipc::Response, String> {
+    read_pdf_bytes(path).map(tauri::ipc::Response::new)
+}
+
 // ====== v0.9.0 T5c：文件写入（编辑器保存）======
 
 /// 写入文件内容到磁盘（v0.9.0 T5c 编辑器 Cmd+S 保存）。
@@ -1798,6 +1841,75 @@ mod tests {
         assert_eq!(code, "fs.notFile");
         assert_eq!(params["path"], canonical.display().to_string());
         assert_eq!(msg, format!("不是文件：{}", canonical.display()));
+    }
+
+    // PDF 预览按原始字节读取
+    #[test]
+    fn 应该_当读取pdf时_原样返回字节_扩展名不区分大小写() {
+        let tmp = TempDir::new().unwrap();
+        let f = tmp.path().join("Report.PDF");
+        let data = b"%PDF-1.4\n\x00\xff\n%%EOF".to_vec();
+        fs::write(&f, &data).unwrap();
+        let bytes = read_pdf_bytes(f.to_string_lossy().into_owned()).unwrap();
+        assert_eq!(bytes, data);
+    }
+
+    #[test]
+    fn 应该_当扩展名不是pdf时_返回fs_notpdf编码且不读取() {
+        let tmp = TempDir::new().unwrap();
+        let f = tmp.path().join("a.txt");
+        fs::write(&f, "x").unwrap();
+        let canonical = fs::canonicalize(&f).unwrap();
+        let err = read_pdf_bytes(f.to_string_lossy().into_owned()).unwrap_err();
+        let (code, params, msg) = parse_ui_err(&err);
+        assert_eq!(code, "fs.notPdf");
+        assert_eq!(params["path"], canonical.display().to_string());
+        assert_eq!(msg, format!("不是 PDF 文件：{}", canonical.display()));
+    }
+
+    #[test]
+    fn 应该_当pdf超过50mb时_返回fs_pdftoolarge编码() {
+        let tmp = TempDir::new().unwrap();
+        let f = tmp.path().join("big.pdf");
+        // 稀疏文件：只设长度，不真的写 50MB
+        let file = fs::File::create(&f).unwrap();
+        file.set_len(PDF_MAX_BYTES + 1).unwrap();
+        let err = read_pdf_bytes(f.to_string_lossy().into_owned()).unwrap_err();
+        let (code, params, msg) = parse_ui_err(&err);
+        assert_eq!(code, "fs.pdfTooLarge");
+        assert_eq!(params["size"], (PDF_MAX_BYTES + 1).to_string());
+        assert_eq!(params["max"], PDF_MAX_BYTES.to_string());
+        assert_eq!(
+            msg,
+            format!(
+                "PDF 文件过大（{} 字节，上限 {} 字节）",
+                PDF_MAX_BYTES + 1,
+                PDF_MAX_BYTES
+            )
+        );
+    }
+
+    #[test]
+    fn 应该_当pdf恰好50mb时_正常读取() {
+        let tmp = TempDir::new().unwrap();
+        let f = tmp.path().join("edge.pdf");
+        let file = fs::File::create(&f).unwrap();
+        file.set_len(PDF_MAX_BYTES).unwrap();
+        let bytes = read_pdf_bytes(f.to_string_lossy().into_owned()).unwrap();
+        assert_eq!(bytes.len() as u64, PDF_MAX_BYTES);
+    }
+
+    #[test]
+    fn 应该_当pdf路径是目录或不存在时_返回对应编码() {
+        let tmp = TempDir::new().unwrap();
+        let d = tmp.path().join("dir.pdf");
+        fs::create_dir(&d).unwrap();
+        let err = read_pdf_bytes(d.to_string_lossy().into_owned()).unwrap_err();
+        assert_eq!(parse_ui_err(&err).0, "fs.notFile");
+
+        let missing = tmp.path().join("missing.pdf");
+        let err = read_pdf_bytes(missing.to_string_lossy().into_owned()).unwrap_err();
+        assert_eq!(parse_ui_err(&err).0, "fs.canonicalizeFailed");
     }
 
     #[test]

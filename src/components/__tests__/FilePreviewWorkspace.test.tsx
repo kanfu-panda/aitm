@@ -71,6 +71,12 @@ vi.mock("../../lib/tauri", async (orig) => {
     browserShowAllActive: vi.fn().mockResolvedValue(undefined),
   };
 });
+// PDF 标签页渲染 PdfViewer；pdf.js 在 jsdom 跑不起来，用桩确认分派与 reloadKey
+vi.mock("../pdf/PdfViewer", () => ({
+  default: ({ path, reloadKey }: { path: string; reloadKey: number | undefined }) => (
+    <div data-testid="pdf-viewer-stub" data-path={path} data-reload={String(reloadKey)} />
+  ),
+}));
 vi.mock("../../lib/analytics", () => ({
   trackEvent: vi.fn(),
 }));
@@ -129,11 +135,31 @@ function pushFiles(
     mdMode: f.mdMode,
     lastMtimeMs: f.lastMtimeMs,
     stale: f.stale ?? false,
+    kind: f.kind,
   }));
   useFileEditorStore.setState({ openFiles: made, activeId });
 }
 
 describe("FilePreviewWorkspace", () => {
+  // PDF 标签页
+  it("应该_当活动标签页是_pdf_时_渲染_PdfViewer_而不是编辑器", () => {
+    pushFiles([{ path: "/w/a.pdf", kind: "pdf", lastMtimeMs: 1 }], "/w/a.pdf");
+    render(<FilePreviewWorkspace />);
+    const stub = screen.getByTestId("pdf-viewer-stub");
+    expect(stub).toHaveAttribute("data-path", "/w/a.pdf");
+    expect(screen.queryByTestId("cm-stub-/w/a.pdf")).toBeNull();
+  });
+
+  it("应该_当_pdf_在磁盘上被修改时_不读文本_更新基线让预览重新加载", async () => {
+    fsStatMock.mockResolvedValue({ exists: true, mtime_ms: 2, size: 10, is_dir: false });
+    pushFiles([{ path: "/w/a.pdf", kind: "pdf", lastMtimeMs: 1 }], "/w/a.pdf");
+    render(<FilePreviewWorkspace />);
+    await waitFor(() =>
+      expect(screen.getByTestId("pdf-viewer-stub")).toHaveAttribute("data-reload", "2"),
+    );
+    expect(fsReadTextMock).not.toHaveBeenCalled();
+  });
+
   it("无 open file → 不渲染", () => {
     render(<FilePreviewWorkspace />);
     expect(

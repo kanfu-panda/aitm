@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 
 import i18n from "../i18n";
-import { formatBackendError } from "../backendError";
+import { backendErrorCode, formatBackendError } from "../backendError";
 
 // 后端错误原样显示为中文，英文 / 日文界面下读不懂
 describe("formatBackendError", () => {
@@ -46,5 +46,14 @@ describe("formatBackendError", () => {
     i18n.addResource("en", "translation", "backendErrors.test.path", "Path: {{path}}");
     await i18n.changeLanguage("en");
     expect(formatBackendError(coded("test.path", { path: "<a&b>" }, "x"))).toBe("Path: <a&b>");
+  });
+});
+
+describe("backendErrorCode", () => {
+  it("应该_当是编码错误时_返回_code_与_params_否则返回_null", () => {
+    const raw = JSON.stringify({ code: "fs.pdfTooLarge", params: { size: "1" }, message: "x" });
+    expect(backendErrorCode(raw)).toEqual({ code: "fs.pdfTooLarge", params: { size: "1" } });
+    expect(backendErrorCode(new Error(raw))?.code).toBe("fs.pdfTooLarge");
+    expect(backendErrorCode("普通错误")).toBeNull();
   });
 });

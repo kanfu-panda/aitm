@@ -450,7 +450,7 @@ function ChatBody({ providerId, modelId }: { providerId: string; modelId: string
               kind: "tool_call",
               call_id: e.call_id,
               name: e.name,
-              args_preview: "",
+              args_preview: e.args_preview,
               risk: "low",
               status: "running",
             });
@@ -462,6 +462,22 @@ function ChatBody({ providerId, modelId }: { providerId: string; modelId: string
       keep(
         await onAiToolFinished(conversationId, (e) => {
           if (!alive) return;
+          const store = useChatStore.getState();
+          // 黑名单拦截、未知工具既不审批也不执行，只有结束事件：先补出气泡再写结果
+          if (
+            !store.messages.some(
+              (m) => m.kind === "tool_call" && m.call_id === e.call_id,
+            )
+          ) {
+            store.addToolCall({
+              kind: "tool_call",
+              call_id: e.call_id,
+              name: e.name,
+              args_preview: e.args_preview,
+              risk: "low",
+              status: "running",
+            });
+          }
           useChatStore.getState().updateToolCall(e.call_id, {
             status: e.is_error ? "error" : "done",
             result: { content: e.content, is_error: e.is_error },

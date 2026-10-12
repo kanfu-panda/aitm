@@ -150,6 +150,26 @@ describe("StatusBar", () => {
       root.remove();
     });
 
+    it("应该_当活动文件是 PDF 时_不显示行列号 / 编码 / 语言 / 换行符", () => {
+      useFileEditorStore.setState({
+        openFiles: [makeOpenFile({ id: "/proj/a.pdf", path: "/proj/a.pdf", kind: "pdf" })],
+        activeId: "/proj/a.pdf",
+      });
+      const root = document.createElement("div");
+      root.setAttribute("data-testid", "file-preview-workspace");
+      root.tabIndex = -1;
+      document.body.appendChild(root);
+      root.focus();
+
+      render(<StatusBar />);
+      act(() => {
+        root.dispatchEvent(new Event("focusin", { bubbles: true }));
+      });
+
+      expect(screen.queryByTestId("status-bar-editor-info")).toBeNull();
+      root.remove();
+    });
+
     it("languageLabel 按 language 字段映射（rs → Rust）", () => {
       useFileEditorStore.setState({
         openFiles: [

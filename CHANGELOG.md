@@ -2,6 +2,17 @@
 
 All notable changes to aitm will be documented in this file. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.0] — 2026-10-12
+
+### 新增
+
+- 文件树里点开 PDF，直接在文件工作区以只读标签页预览：连续滚动并显示页码、可输入页码跳转；放大 / 缩小 / 适应宽度；选中复制文字；⌘F / Ctrl+F 页内搜索并高亮跳转。超过 50MB、已加密或无法解析的文件给出提示，并可用默认应用打开。此前点开 PDF 没有任何反应
+
+### 修复
+
+- 修复自动批准的工具调用（如只读命令）在气泡里不显示参数，标题没有命令摘要、展开后显示"无参数"；历史记录里同样缺参数
+- 修复被黑名单拦截的命令、调用了不存在的工具时，对话里不出现工具气泡，看不到被拦下了什么
+
 ## [1.6.4] — 2026-10-09
 
 ### 修复

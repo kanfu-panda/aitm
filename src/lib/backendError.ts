@@ -22,6 +22,14 @@ export function formatBackendError(e: unknown): string {
   });
 }
 
+/** 取后端编码错误的 code 与 params（需要按错误类型分支显示时用）；不是编码错误返回 null。 */
+export function backendErrorCode(
+  e: unknown,
+): { code: string; params: Record<string, string> } | null {
+  const coded = parseCoded(e instanceof Error ? e.message : String(e));
+  return coded && { code: coded.code, params: coded.params };
+}
+
 interface CodedError {
   code: string;
   params: Record<string, string>;

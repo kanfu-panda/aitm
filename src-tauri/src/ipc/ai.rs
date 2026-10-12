@@ -427,8 +427,9 @@ struct PersistenceSink {
 /// T-B4：一次工具调用跨事件累积的元信息。
 ///
 /// `ai:tool_request`（仅 High/Destructive 触发）给出 name/args/risk/risk_reason/
-/// preview；`ai:tool_started`（Low 自动批也会触发）兜底补 name；`ai:tool_finished`
-/// 给出 result/status/auto_approved_reason/preview，合并后落盘。
+/// preview；`ai:tool_started`（Low 自动批也会触发）兜底补 name/args；`ai:tool_finished`
+/// 给出 result/status/auto_approved_reason/preview，并对既不审批也不执行的调用补 name/args，
+/// 合并后落盘。
 #[derive(Default, Clone)]
 struct ToolCallAccum {
     name: String,
@@ -436,6 +437,18 @@ struct ToolCallAccum {
     risk: Option<RiskClass>,
     risk_reason: Option<String>,
     preview: Option<ToolPreview>,
+}
+
+impl ToolCallAccum {
+    /// 名称 / 参数还空着时用后续事件补上；审批事件给过的不覆盖。
+    fn fill_missing(&mut self, name: &str, args_preview: &str) {
+        if self.name.is_empty() {
+            self.name = name.to_string();
+        }
+        if self.args_preview.is_empty() {
+            self.args_preview = args_preview.to_string();
+        }
+    }
 }
 
 impl PersistenceSink {
@@ -536,13 +549,12 @@ impl EventSink for PersistenceSink {
     }
 
     fn emit_tool_started(&self, e: &AiToolStartedEvent) {
-        // T-B4：Low 自动批不发 request 事件，靠 started 兜底补 name（不覆盖已有）
+        // T-B4：Low 自动批不发 request 事件，靠 started 兜底补 name / args（不覆盖已有）
         if e.conversation_id == self.cid {
             if let Ok(mut m) = self.pending_tools.lock() {
-                let a = m.entry(e.call_id.clone()).or_default();
-                if a.name.is_empty() {
-                    a.name = e.name.clone();
-                }
+                m.entry(e.call_id.clone())
+                    .or_default()
+                    .fill_missing(&e.name, &e.args_preview);
             }
         }
         self.inner.emit_tool_started(e);
@@ -554,12 +566,14 @@ impl EventSink for PersistenceSink {
         // （这种 case：assistant 说"我先看一下" → tool_call → assistant 继续）。
         if e.conversation_id == self.cid {
             self.flush_assistant_text();
-            let accum = self
+            let mut accum = self
                 .pending_tools
                 .lock()
                 .ok()
                 .and_then(|mut m| m.remove(&e.call_id))
                 .unwrap_or_default();
+            // 黑名单拦截 / 未知工具只有 finished 事件，名称与参数从这里补
+            accum.fill_missing(&e.name, &e.args_preview);
             // preview 优先用 finished 事件的，回退到 request 阶段攒的
             let preview = e.preview.as_ref().or(accum.preview.as_ref());
             let payload = build_tool_call_payload(
@@ -1745,6 +1759,24 @@ mod tests {
         assert!(v.get("risk_reason").is_none());
         assert!(v.get("auto_approved_reason").is_none());
         assert!(v.get("preview").is_none());
+    }
+
+    // 自动批准 / 被拦截的工具没有审批事件，名称与参数要从开始或结束事件补上
+    #[test]
+    fn 应该_当没有审批事件时_从后续事件补上名称与参数_已有的不覆盖() {
+        let mut a = ToolCallAccum::default();
+        a.fill_missing("run_command", "{\"cmd\":\"ls\"}");
+        assert_eq!(a.name, "run_command");
+        assert_eq!(a.args_preview, "{\"cmd\":\"ls\"}");
+
+        let mut b = ToolCallAccum {
+            name: "write_file".into(),
+            args_preview: "{\"path\":\"a\"}".into(),
+            ..Default::default()
+        };
+        b.fill_missing("other", "{}");
+        assert_eq!(b.name, "write_file");
+        assert_eq!(b.args_preview, "{\"path\":\"a\"}");
     }
 
     #[test]

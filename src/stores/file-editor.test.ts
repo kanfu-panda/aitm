@@ -27,6 +27,7 @@ import {
 // settings store 内部会调 settings_update IPC；测试用 noop mock 隔离。
 vi.mock("../lib/tauri", () => ({
   fsReadText: vi.fn(),
+  fsReadPdf: vi.fn(),
   fileWrite: vi.fn().mockResolvedValue(undefined),
   // v0.10.3 #10：openFile / saveFile 现在也调 fsStat 拿 mtime 作为外部改动基线
   fsStat: vi
@@ -184,6 +185,30 @@ describe("useFileEditorStore", () => {
       const s = useFileEditorStore.getState();
       expect(s.openFiles.filter((f) => f.id === "/race.ts")).toHaveLength(1);
       expect(s.activeId).toBe("/race.ts");
+    });
+  });
+
+  describe("PDF 标签页", () => {
+    it("应该_当打开_pdf_时_不读文本_以只读_pdf_标签页打开", async () => {
+      await useFileEditorStore.getState().openFile("/w/Report.PDF");
+      expect(fsReadTextMock).not.toHaveBeenCalled();
+      const f = useFileEditorStore.getState().openFiles[0];
+      expect(f.kind).toBe("pdf");
+      expect(f.dirty).toBe(false);
+      expect(f.lastMtimeMs).toBe(1);
+      expect(useFileEditorStore.getState().activeId).toBe("/w/Report.PDF");
+    });
+
+    it("应该_当保存_pdf_标签页时_不写盘", async () => {
+      await useFileEditorStore.getState().openFile("/w/a.pdf");
+      await useFileEditorStore.getState().saveFile("/w/a.pdf");
+      expect(fileWriteMock).not.toHaveBeenCalled();
+    });
+
+    it("应该_当打开普通文本时_kind_不是_pdf", async () => {
+      fsReadTextMock.mockResolvedValueOnce("hi");
+      await useFileEditorStore.getState().openFile("/w/a.txt");
+      expect(useFileEditorStore.getState().openFiles[0].kind).not.toBe("pdf");
     });
   });
 

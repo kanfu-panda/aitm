@@ -33,6 +33,7 @@ import { fsReadText, fsStat } from "../lib/tauri";
 import FileTabBar from "./FileTabBar";
 import FileEditorPane, { type FileEditorPaneHandle } from "./FileEditorPane";
 import CloseFileConfirmDialog from "./CloseFileConfirmDialog";
+import PdfViewer from "./pdf/PdfViewer";
 
 /** v0.10.3 #10：外部改动轮询间隔（ms）。3s 平衡及时性 + IPC 频率。 */
 const EXTERNAL_CHANGE_POLL_MS = 3_000;
@@ -178,7 +179,10 @@ export default function FilePreviewWorkspace() {
       const store = useFileEditorStore.getState();
       const fresh = store.openFiles.find((f) => f.path === activePath);
       if (!fresh) return; // tab 已关
-      if (fresh.dirty) {
+      if (fresh.kind === "pdf") {
+        // PDF 不读文本：只更新基线，PdfViewer 以 lastMtimeMs 为 reloadKey 重新加载
+        store.reloadFromDisk(fresh.id, "", meta.mtime_ms);
+      } else if (fresh.dirty) {
         store.markStale(fresh.id, meta.mtime_ms);
       } else {
         const content = await fsReadText(activePath, MAX_READ_BYTES).catch(
@@ -294,7 +298,11 @@ export default function FilePreviewWorkspace() {
         </div>
       )}
       <div className="flex-1 min-h-0 min-w-0 overflow-hidden">
-        {activeFile && <FileEditorPane ref={editorPaneRef} file={activeFile} />}
+        {activeFile?.kind === "pdf" ? (
+          <PdfViewer path={activeFile.path} reloadKey={activeFile.lastMtimeMs} />
+        ) : (
+          activeFile && <FileEditorPane ref={editorPaneRef} file={activeFile} />
+        )}
       </div>
       <CloseFileConfirmDialog
         pendingPath={pendingClose}

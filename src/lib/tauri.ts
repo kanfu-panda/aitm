@@ -430,11 +430,16 @@ export interface AiToolStartedEvent {
   conversation_id: string;
   call_id: string;
   name: string;
+  /** 已 pretty-print 的入参 JSON；自动批准的工具没有审批事件，靠这里显示参数。 */
+  args_preview: string;
 }
 
 export interface AiToolFinishedEvent {
   conversation_id: string;
   call_id: string;
+  /** 工具名与入参。黑名单拦截、未知工具只有结束事件，界面靠它们补出气泡。 */
+  name: string;
+  args_preview: string;
   /** 工具回执给 LLM 的内容（成功输出或错误描述）。 */
   content: string;
   is_error: boolean;
@@ -962,6 +967,11 @@ export type PreviewResult =
  *  v0.5.0-C T1：FilePreviewDialog 调它。 */
 export async function fsReadPreview(path: string): Promise<PreviewResult> {
   return await invoke<PreviewResult>("fs_read_preview", { path });
+}
+
+/** 读取 PDF 原始字节（二进制 IPC，上限 50MB；超限抛 `fs.pdfTooLarge` 编码）。 */
+export async function fsReadPdf(path: string): Promise<ArrayBuffer> {
+  return await invoke<ArrayBuffer>("fs_read_pdf", { path });
 }
 
 // === v0.9.1 HR3-3：StatusBar 重排（磁盘 / git 分支）===
