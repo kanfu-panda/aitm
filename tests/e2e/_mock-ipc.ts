@@ -855,6 +855,10 @@ export async function installTauriMock(
               message: "provider 未配置或已禁用",
             };
           }
+          // 用例可预置 window.__mockProviderTestResult 覆盖返回值（如长错误串）
+          const override = (window as unknown as { __mockProviderTestResult?: unknown })
+            .__mockProviderTestResult;
+          if (override) return override;
           return { ok: true, elapsed_ms: 42, message: "OK (42 ms)" };
         }
 

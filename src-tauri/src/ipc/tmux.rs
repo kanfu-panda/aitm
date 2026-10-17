@@ -372,6 +372,8 @@ struct TmuxClient {
     pid: u32,
     session_id: String,
     session_name: String,
+    /// 该客户端当前所在窗格的工作目录（`pane_current_path`）；老格式没有这个字段时为空。
+    pane_path: String,
 }
 
 /// 某个标签接入着的 tmux 会话，给前端的关标签确认框用。
@@ -381,7 +383,8 @@ pub struct TmuxSessionRef {
     pub name: String,
 }
 
-const CLIENTS_FORMAT: &str = "#{client_pid}\u{1f}#{session_id}\u{1f}#{session_name}";
+const CLIENTS_FORMAT: &str =
+    "#{client_pid}\u{1f}#{session_id}\u{1f}#{session_name}\u{1f}#{pane_current_path}";
 
 /// 解析 `tmux list-clients -F CLIENTS_FORMAT`。坏行跳过。
 fn parse_clients(stdout: &str) -> Vec<TmuxClient> {
@@ -396,6 +399,7 @@ fn parse_clients(stdout: &str) -> Vec<TmuxClient> {
                 pid: f[0].parse().ok()?,
                 session_id: f[1].to_string(),
                 session_name: f[2].to_string(),
+                pane_path: f.get(3).map(|s| s.to_string()).unwrap_or_default(),
             })
         })
         .collect()
@@ -405,34 +409,33 @@ fn parse_clients(stdout: &str) -> Vec<TmuxClient> {
 /// 中间隔了一层包装（如 `script`、`sudo`）的情况，同时防止进程表快照不一致时死循环。
 const MAX_ANCESTOR_DEPTH: usize = 8;
 
-/// 在客户端里找**挂在 `shell_pid` 之下**的那一个，返回它接入的会话。
+/// 在客户端里找**挂在 `shell_pid` 之下**的那一个。
 ///
 /// 按进程父子关系判断，而不是看标签标题——这样用户在任意标签里手敲
 /// `tmux attach` / `tmux new` 也能识别，不限于从面板点开的标签。
-fn find_client_session(
+fn find_client(
     clients: &[TmuxClient],
     shell_pid: u32,
     parent_of: impl Fn(u32) -> Option<u32>,
-) -> Option<TmuxSessionRef> {
-    clients.iter().find_map(|c| {
+) -> Option<&TmuxClient> {
+    clients.iter().find(|c| {
         let mut cur = c.pid;
         for _ in 0..MAX_ANCESTOR_DEPTH {
-            let parent = parent_of(cur)?;
+            let Some(parent) = parent_of(cur) else {
+                return false;
+            };
             if parent == shell_pid {
-                return Some(TmuxSessionRef {
-                    id: c.session_id.clone(),
-                    name: c.session_name.clone(),
-                });
+                return true;
             }
             cur = parent;
         }
-        None
+        false
     })
 }
 
-/// 查 `shell_pid` 下面有没有 tmux 客户端、接的是哪个会话。
+/// 查 `shell_pid` 下面有没有 tmux 客户端，有就返回它。
 /// tmux 没装、服务端没起来、或没有客户端时返回 `None`——都不是错误。
-async fn session_of_shell(shell_pid: u32) -> Option<TmuxSessionRef> {
+async fn client_of_shell(shell_pid: u32) -> Option<TmuxClient> {
     let out = run_tmux_output(vec![
         "list-clients".into(),
         "-F".into(),
@@ -452,15 +455,34 @@ async fn session_of_shell(shell_pid: u32) -> Option<TmuxSessionRef> {
             true,
             ProcessRefreshKind::nothing(),
         );
-        find_client_session(&clients, shell_pid, |pid| {
+        find_client(&clients, shell_pid, |pid| {
             sys.process(Pid::from_u32(pid))
                 .and_then(|p| p.parent())
                 .map(|pp| pp.as_u32())
         })
+        .cloned()
     })
     .await
     .ok()
     .flatten()
+}
+
+/// 查 `shell_pid` 下面接着哪个 tmux 会话。
+async fn session_of_shell(shell_pid: u32) -> Option<TmuxSessionRef> {
+    client_of_shell(shell_pid).await.map(|c| TmuxSessionRef {
+        id: c.session_id,
+        name: c.session_name,
+    })
+}
+
+/// `shell_pid` 下面接着 tmux 时，返回 tmux 当前窗格的工作目录；没接或取不到返回 `None`。
+///
+/// 标签里的 shell 启动 tmux 之后自己就停在原地，用户在 tmux 里 cd 改变的是 tmux
+/// 服务端下面的 shell，查标签 shell 的目录看不到。所以接着 tmux 时以窗格目录为准。
+pub(crate) async fn pane_cwd_of_shell(shell_pid: u32) -> Option<std::path::PathBuf> {
+    let c = client_of_shell(shell_pid).await?;
+    let p = std::path::PathBuf::from(c.pane_path);
+    p.is_dir().then_some(p)
 }
 
 /// 关标签前查询：这个标签（aitm 会话）里是否接着某个 tmux 会话。
@@ -1173,6 +1195,7 @@ mod tests {
             pid,
             session_id: id.into(),
             session_name: name.into(),
+            pane_path: String::new(),
         }
     }
 
@@ -1196,8 +1219,9 @@ mod tests {
             4242 => Some(100),
             _ => None,
         };
-        let got = find_client_session(&[client(4242, "$96", "work")], 100, parents);
-        assert_eq!(got.map(|r| r.id), Some("$96".to_string()));
+        let cs = [client(4242, "$96", "work")];
+        let got = find_client(&cs, 100, parents);
+        assert_eq!(got.map(|c| c.session_id.clone()), Some("$96".to_string()));
     }
 
     #[test]
@@ -1208,8 +1232,12 @@ mod tests {
             200 => Some(100),
             _ => None,
         };
-        let got = find_client_session(&[client(4242, "$96", "work")], 100, parents);
-        assert_eq!(got.map(|r| r.name), Some("work".to_string()));
+        let cs = [client(4242, "$96", "work")];
+        let got = find_client(&cs, 100, parents);
+        assert_eq!(
+            got.map(|c| c.session_name.clone()),
+            Some("work".to_string())
+        );
     }
 
     #[test]
@@ -1221,8 +1249,11 @@ mod tests {
             _ => None,
         };
         let cs = [client(5000, "$1", "elsewhere"), client(4242, "$96", "mine")];
-        let got = find_client_session(&cs, 100, parents);
-        assert_eq!(got.map(|r| r.name), Some("mine".to_string()));
+        let got = find_client(&cs, 100, parents);
+        assert_eq!(
+            got.map(|c| c.session_name.clone()),
+            Some("mine".to_string())
+        );
     }
 
     #[test]
@@ -1231,8 +1262,8 @@ mod tests {
             5000 => Some(900),
             _ => None,
         };
-        assert!(find_client_session(&[client(5000, "$1", "x")], 100, parents).is_none());
-        assert!(find_client_session(&[], 100, |_| None).is_none());
+        assert!(find_client(&[client(5000, "$1", "x")], 100, parents).is_none());
+        assert!(find_client(&[], 100, |_| None).is_none());
     }
 
     #[test]
@@ -1243,7 +1274,7 @@ mod tests {
             4343 => Some(4242),
             _ => None,
         };
-        assert!(find_client_session(&[client(4242, "$96", "w")], 100, parents).is_none());
+        assert!(find_client(&[client(4242, "$96", "w")], 100, parents).is_none());
     }
 
     /// 端到端（真实 tmux + 真实 PTY 会话）：在 aitm 的会话里敲 attach，应识别出接的是哪个。
@@ -1309,6 +1340,112 @@ mod tests {
                 list.iter().any(|s| s.id == tmux_id),
                 "关标签后 tmux 会话应当保留".into(),
             )?;
+            Ok(())
+        }
+        .await;
+
+        cleanup_names(&[&name]).await;
+        result.unwrap();
+    }
+
+    #[test]
+    fn ut_b43_解析客户端列表时带出当前窗格目录() {
+        let out = format!(
+            "{}\n{}\n",
+            ["4242", "$96", "work", "/Users/x/proj"].join(&FIELD_SEP.to_string()),
+            // 老格式（没有目录字段）照样能解析，目录记为空
+            ["4343", "$97", "other"].join(&FIELD_SEP.to_string()),
+        );
+        let cs = parse_clients(&out);
+        assert_eq!(cs.len(), 2);
+        assert_eq!(cs[0].pane_path, "/Users/x/proj");
+        assert_eq!(cs[1].pane_path, "");
+    }
+
+    /// 端到端（真实 tmux + 真实 PTY 会话）：标签里接着 tmux 时，取当前目录应当取 tmux
+    /// 活动窗格的目录（用户在 tmux 里 cd 到的地方），而不是标签 shell 启动 tmux 时的目录；
+    /// 断开 tmux 后回到标签 shell 自己的目录。
+    #[allow(clippy::await_holding_lock)]
+    #[tokio::test]
+    async fn ut_b44_端到端_接着_tmux_时当前目录跟随_tmux_窗格() {
+        let _g = crate::test_env_lock::ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if !tmux_available().await.unwrap_or(false) {
+            return;
+        }
+        let name = format!("{E2E_PREFIX}-cwd-{}", std::process::id());
+        let state = crate::ipc::session::SessionState::new();
+        let outer = tempfile::TempDir::new().unwrap();
+        let inner = tempfile::TempDir::new().unwrap();
+        let canon = |p: &std::path::Path| std::fs::canonicalize(p).unwrap();
+        let (outer_dir, inner_dir) = (canon(outer.path()), canon(inner.path()));
+
+        let result: Result<(), String> = async {
+            let tmux_id = tmux_new_session(name.clone(), None).await?;
+            let sid = state
+                .mgr
+                .open(crate::session::SessionConfig {
+                    shell: Some("/bin/sh".into()),
+                    cwd: Some(outer_dir.to_string_lossy().into_owned()),
+                    cols: 100,
+                    rows: 30,
+                })
+                .await
+                .map_err(|e| e.to_string())?;
+            let sid_str = sid.0.to_string();
+            let cwd_now = || async {
+                state
+                    .current_cwd(&sid_str)
+                    .await
+                    .map(|p| std::fs::canonicalize(&p).unwrap_or(p))
+            };
+
+            let cmd = build_attach_command(tmux_bin(), &tmux_id, false)?;
+            state
+                .mgr
+                .write(sid, format!("{cmd}\n").as_bytes())
+                .await
+                .map_err(|e| e.to_string())?;
+            run_tmux(vec![
+                "send-keys".into(),
+                "-t".into(),
+                pane_target(&tmux_id)?,
+                format!("cd '{}'", inner_dir.display()),
+                "Enter".into(),
+            ])
+            .await?;
+
+            // 接上 tmux 并在里面 cd 之后（最多 6 秒）：取到的应是 tmux 窗格的目录
+            let mut got = None;
+            for _ in 0..60 {
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                got = cwd_now().await;
+                if got.as_deref() == Some(inner_dir.as_path()) {
+                    break;
+                }
+            }
+            ensure(
+                got.as_deref() == Some(inner_dir.as_path()),
+                format!("接着 tmux 时应取窗格目录 {inner_dir:?}，实际 {got:?}"),
+            )?;
+
+            // 断开 tmux 客户端后：回到标签 shell 自己的目录
+            run_tmux(vec!["detach-client".into(), "-s".into(), tmux_id.clone()]).await?;
+            let mut got = None;
+            for _ in 0..60 {
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                got = cwd_now().await;
+                if got.as_deref() == Some(outer_dir.as_path()) {
+                    break;
+                }
+            }
+            ensure(
+                got.as_deref() == Some(outer_dir.as_path()),
+                format!("断开 tmux 后应回到 {outer_dir:?}，实际 {got:?}"),
+            )?;
+
+            let _ = state.mgr.close(sid).await;
             Ok(())
         }
         .await;

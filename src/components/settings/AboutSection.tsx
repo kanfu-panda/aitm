@@ -213,7 +213,10 @@ export default function AboutSection() {
         )}
 
         {phase === "failed" && (
-          <p className="text-[13px] text-[var(--c-error)]" data-testid="about-check-failed">
+          <p
+            className="text-[13px] text-[var(--c-error)] [overflow-wrap:anywhere]"
+            data-testid="about-check-failed"
+          >
             {t("about.checkFailed", { error: failure ?? "" })}
           </p>
         )}

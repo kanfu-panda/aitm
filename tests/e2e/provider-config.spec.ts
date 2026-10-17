@@ -63,6 +63,37 @@ test("测试连接 已配置的 qwen → 绿 ✓ + OK 文案", async ({ page }) 
   await expect(result).toContainText("OK");
 });
 
+test("测试连接返回很长的错误：不超出所在行，按钮保持单行", async ({ page }) => {
+  await page.addInitScript(() => {
+    (window as unknown as { __mockProviderTestResult: unknown }).__mockProviderTestResult = {
+      ok: false,
+      elapsed_ms: 50,
+      message:
+        'HTTP 404 Not Found: {"error":{"message":"Model not exist.","type":"invalid_request_error",' +
+        '"param":null,"code":"model_not_found"},"id":"f19622a3-ded4-9099-96db-7175d0ec25cd",' +
+        '"request_id":"f19622a3-ded4-9099-96db-7175d0ec25cd"}',
+    };
+  });
+  await page.goto("/");
+  await openProvidersTab(page);
+
+  const qwenRow = page
+    .getByText("Qwen (DashScope)", { exact: true })
+    .locator("xpath=ancestor::div[contains(@class, 'rounded')][1]");
+  const testBtn = qwenRow.getByRole("button", { name: "测试连接" });
+  await testBtn.click();
+  const result = qwenRow.getByRole("status");
+  await expect(result).toContainText("model_not_found");
+
+  const row = (await qwenRow.boundingBox())!;
+  const res = (await result.boundingBox())!;
+  const btn = (await testBtn.boundingBox())!;
+  // 结果完整落在 Provider 行内，不撑出右边界
+  expect(res.x + res.width).toBeLessThanOrEqual(row.x + row.width);
+  // 按钮横向排布、一行文字（被挤压时会变成一字一行，高远大于宽）
+  expect(btn.width).toBeGreaterThan(btn.height * 2);
+});
+
 test("输入新 key 保存 deepseek → mock 收到 api_key、再测试连接 ✓", async ({
   page,
 }) => {

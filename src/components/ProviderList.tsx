@@ -197,7 +197,7 @@ export function ProviderRow({ dto, onSaved }: ProviderRowProps) {
             type="button"
             onClick={save}
             disabled={!dirty || saving}
-            className="rounded bg-[var(--c-bg-elev-3)] px-3 py-1 text-xs text-[var(--c-text-base)] hover:opacity-90 disabled:cursor-not-allowed disabled:bg-[var(--c-bg-elev-2)] disabled:text-[var(--c-text-faint)]"
+            className="shrink-0 whitespace-nowrap rounded bg-[var(--c-bg-elev-3)] px-3 py-1 text-xs text-[var(--c-text-base)] hover:opacity-90 disabled:cursor-not-allowed disabled:bg-[var(--c-bg-elev-2)] disabled:text-[var(--c-text-faint)]"
           >
             {saving
               ? t("providers.saving")
@@ -209,7 +209,7 @@ export function ProviderRow({ dto, onSaved }: ProviderRowProps) {
             type="button"
             onClick={test}
             disabled={testDisabled}
-            className="rounded border border-[var(--c-border-strong)] px-3 py-1 text-xs text-[var(--c-text-muted)] hover:bg-[var(--c-bg-elev-2)] disabled:cursor-not-allowed disabled:text-[var(--c-text-faint)]"
+            className="shrink-0 whitespace-nowrap rounded border border-[var(--c-border-strong)] px-3 py-1 text-xs text-[var(--c-text-muted)] hover:bg-[var(--c-bg-elev-2)] disabled:cursor-not-allowed disabled:text-[var(--c-text-faint)]"
           >
             {testing ? t("providers.testing") : t("providers.testConnection")}
           </button>
@@ -222,18 +222,20 @@ export function ProviderRow({ dto, onSaved }: ProviderRowProps) {
               {t("providers.savedFlash")}
             </span>
           )}
-          {testResult && !savedFlash && (
-            <span
-              role="status"
-              className={
-                "text-xs " +
-                (testResult.ok ? "text-[var(--c-success-fg)]" : "text-[var(--c-error)]")
-              }
-            >
-              {testResult.ok ? "✓" : "✗"} {testResult.msg}
-            </span>
-          )}
         </div>
+        {/* 结果另起一行：服务端错误常带一长串无空格的 JSON，放在按钮同一行会把按钮挤成
+            一字一行，并撑出设置面板 */}
+        {testResult && !savedFlash && (
+          <div
+            role="status"
+            className={
+              "text-xs [overflow-wrap:anywhere] " +
+              (testResult.ok ? "text-[var(--c-success-fg)]" : "text-[var(--c-error)]")
+            }
+          >
+            {testResult.ok ? "✓" : "✗"} {testResult.msg}
+          </div>
+        )}
       </div>
     </div>
   );

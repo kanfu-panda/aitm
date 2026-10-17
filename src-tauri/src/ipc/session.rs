@@ -35,12 +35,14 @@ impl SessionState {
         self.mgr.recent_output(id, lines).await
     }
 
-    /// 给 ai_chat_send 用：实时查 active session 的 shell cwd，让 ToolContext.cwd
-    /// 跟着用户在 PTY 里 cd 走。失败（解析 / 不存在 / 平台不支持）返回 None
-    /// 由调用方兜底到 HOME。
+    /// 实时查 session 当前所在目录（目录树、AI 工具、tmux 新建会话都用它），跟着用户
+    /// 在 PTY 里 cd 走。标签里接着 tmux 时取 tmux 当前窗格的目录，见
+    /// [`crate::ipc::tmux::pane_cwd_of_shell`]。失败（解析 / 不存在 / 平台不支持）
+    /// 返回 None 由调用方兜底。
     pub async fn current_cwd(&self, session_id: &str) -> Option<std::path::PathBuf> {
         let id = parse_session_id(session_id)?;
-        self.mgr.current_cwd(id).await
+        let session = self.mgr.get(id).await.ok()?;
+        effective_cwd(&session).await
     }
 
     /// 给 `run_command` 用：查某个 session 跑的是哪个 shell，决定能否用 sentinel
@@ -94,6 +96,18 @@ impl SessionState {
     }
 }
 
+/// session 的当前目录：接着 tmux 时取窗格目录，否则取标签 shell 自己的目录。
+async fn effective_cwd(
+    session: &crate::session::pty_session::Session,
+) -> Option<std::path::PathBuf> {
+    if let Some(pid) = session.shell_pid()
+        && let Some(p) = crate::ipc::tmux::pane_cwd_of_shell(pid).await
+    {
+        return Some(p);
+    }
+    session.current_cwd()
+}
+
 fn parse_session_id(s: &str) -> Option<SessionId> {
     uuid::Uuid::parse_str(s).ok().map(SessionId)
 }
@@ -102,7 +116,7 @@ fn parse_session_id(s: &str) -> Option<SessionId> {
 /// 调 read_git_metadata + list_listening_ports 更新条目。
 ///
 /// 设计要点：
-/// - cwd 用 session.current_cwd()（sysinfo 实时 PID cwd 查询）
+/// - cwd 用 [`effective_cwd`]（接着 tmux 时取窗格目录，否则 sysinfo 实时查 shell 的 cwd）
 /// - git2 / lsof 调用都在 blocking 线程跑（用 tokio::task::spawn_blocking）
 ///   避免阻塞 tokio runtime
 /// - 找不到 session（已关闭）时 cache 已被 session_close remove，不会再访问
@@ -122,7 +136,7 @@ pub async fn start_metadata_refresh_loop(state: Arc<SessionState>) {
             let Ok(session) = state.mgr.get(id).await else {
                 continue;
             };
-            let cwd = session.current_cwd();
+            let cwd = effective_cwd(&session).await;
             let shell_pid = session.shell_pid();
 
             let cwd_clone = cwd.clone();
