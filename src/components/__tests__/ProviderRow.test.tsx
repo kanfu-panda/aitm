@@ -204,4 +204,26 @@ describe("ProviderRow", () => {
       await i18n.changeLanguage("zh-CN");
     }
   });
+
+  it("应该_当测试连接返回很长且无空格的错误时_按钮不被挤压且消息另起一行可折行", async () => {
+    const longMsg =
+      'HTTP 404 Not Found: {"error":{"message":"Model not exist.","code":"model_not_found"},' +
+      '"request_id":"f19622a3-ded4-9099-96db-7175d0ec25cd"}';
+    mockTest.mockResolvedValue({ ok: false, elapsed_ms: 50, message: longMsg });
+
+    render(<ProviderRow dto={makeDto()} onSaved={() => {}} />);
+    const testBtn = screen.getByRole("button", { name: "测试连接" });
+    fireEvent.click(testBtn);
+
+    const status = await screen.findByRole("status");
+    expect(status).toHaveTextContent("model_not_found");
+    // 按钮文字不换行、不被压缩（截图里"测试连接"被挤成一字一行）
+    for (const btn of [testBtn, screen.getByRole("button", { name: "已是最新" })]) {
+      expect(btn.className).toMatch(/\bshrink-0\b/);
+      expect(btn.className).toMatch(/\bwhitespace-nowrap\b/);
+    }
+    // 消息不和按钮挤在同一个 flex 行里，且长串可在任意处断行，不撑出设置面板
+    expect(status.parentElement).not.toBe(testBtn.parentElement);
+    expect(status.className).toMatch(/break-all|\[overflow-wrap:anywhere\]/);
+  });
 });

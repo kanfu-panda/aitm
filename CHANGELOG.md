@@ -2,6 +2,17 @@
 
 All notable changes to aitm will be documented in this file. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.9.0] — 2026-10-17
+
+### 新增
+
+- Windows 支持应用内自动更新：在「设置 → 关于」检查更新后可直接下载安装新版本（x64 与 ARM64），不必再去下载页手动安装
+
+### 修复
+
+- 修复 AI Provider 测试连接返回很长的错误时，文字超出设置面板、按钮被挤成一字一行；检查更新失败的提示同样可能溢出
+- 修复在 tmux 标签里 cd 之后，目录树仍显示启动 tmux 时的目录。现在接着 tmux 时以 tmux 当前窗格的目录为准，标签上的 git 信息、AI 工具的工作目录、tmux 面板新建会话的默认目录同样跟着变；断开 tmux 后回到标签自己的目录
+
 ## [1.8.0] — 2026-10-12
 
 ### 新增

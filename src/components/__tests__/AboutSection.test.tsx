@@ -106,6 +106,8 @@ describe("AboutSection（关于页）", () => {
     fireEvent.click(screen.getByTestId("about-install"));
     await waitFor(() => {
       expect(screen.getByTestId("about-check-failed").textContent).toContain("签名校验失败");
+      // 失败原因常含无空格的长 URL / JSON，必须能在任意处断行，不撑出设置面板
+      expect(screen.getByTestId("about-check-failed").className).toContain("[overflow-wrap:anywhere]");
     });
     expect(screen.queryByTestId("about-installing")).toBeNull();
   });
